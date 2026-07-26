@@ -34,6 +34,26 @@ uv sync          # 依存関係をインストール
 uv run fcenvelope --help
 ```
 
+## 使い方
+
+```bash
+uv run fcenvelope run input.json -o result.json --plot spectrum.png
+uv run fcenvelope plot result.json -o spectrum.png --title "300 K"
+```
+
+```python
+from fcenvelope import FCEnvelopeInput, compute_envelope, plot_result, save_result
+
+parsed = FCEnvelopeInput.from_path("input.json")
+result = compute_envelope(parsed.to_modes(), parsed.conditions)
+save_result(result, "result.json")
+plot_result(result).savefig("spectrum.png", dpi=300)
+```
+
+入力ファイルの書き方・E 軸の符号規約・診断値の読み方は
+[docs/readme/usage.md](docs/readme/usage.md) を参照。
+インターフェイスの一覧は [docs/dev/spec/interface.md](docs/dev/spec/interface.md)。
+
 ## テスト
 
 ```bash
