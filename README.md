@@ -40,3 +40,5 @@ uv run fcenvelope --help
 uv add --dev pytest   # 初回のみ
 uv run pytest
 ```
+
+<!-- permissions test: small edit to verify push/PR permissions -->
