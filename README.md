@@ -1,7 +1,7 @@
 # FC Envelopeの計算
 
 ## 概要
-VCC (g_α)、振動数(ω_α)、温度(T)の３点を元にFranck-Condon Enveropeを計算する。
+無次元化VCC (g_α)、振動数(ω_α)、温度(T)の３点を元にFranck-Condon Enveropeを計算する。
 
 ## 技術構成
 python+uvで実装。

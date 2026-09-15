@@ -1,6 +1,6 @@
 # 使い方
 
-VCC（g_α）・振動数（ω_α）・温度（T）から Franck-Condon エンベロープ F(E) を計算する。
+無次元化 VCC（g_α）・振動数（ω_α）・温度（T）から Franck-Condon エンベロープ F(E) を計算する。
 
 ## エネルギーの向き
 
@@ -133,7 +133,7 @@ for temperature in (0.0, 77.0, 300.0):
 ## 結果の中身
 
 `FCEnvelopeResult` は配列（`energy` / `intensity`）に加えて、入力エコー・
-再編成エネルギー λ・診断値・来歴（`fcenvelope_version` / `created_at`）を持つ。
+再配列エネルギー λ・診断値・来歴（`fcenvelope_version` / `created_at`）を持つ。
 `save_result` はこれらをすべて 1 つの JSON に書くため、そのファイルだけから
 `load_result` で完全に復元でき、後から信頼可否も判定できる。
 

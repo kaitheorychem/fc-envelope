@@ -60,7 +60,7 @@ def occupation_numbers(frequencies: np.ndarray, temperature: float) -> np.ndarra
 
 
 def reorganization_energy(modes: Sequence[VibrationalMode]) -> float:
-    """再編成エネルギー lambda = sum_alpha S_alpha * eps_alpha [cm^-1]。"""
+    """再配列エネルギー lambda = sum_alpha S_alpha * eps_alpha [cm^-1]。"""
     return float(sum(mode.huang_rhys * mode.frequency for mode in modes))
 
 
