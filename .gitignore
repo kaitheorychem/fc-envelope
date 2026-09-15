@@ -220,3 +220,11 @@ __marimo__/
 
 # for this project
 data
+
+# ai agent
+.agent
+.codex
+.gemini
+.claude
+
+
