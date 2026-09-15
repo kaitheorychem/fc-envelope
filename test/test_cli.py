@@ -87,6 +87,37 @@ def test_run_leaves_unspecified_conditions_untouched(tmp_path, input_file):
     assert conditions.de == 5.0
 
 
+def test_run_reads_modes_from_referenced_csv(tmp_path, input_payload):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "modes.csv").write_text(
+        "frequency,coupling\n1200.0,0.5\n450.0,0.8\n", encoding="utf-8"
+    )
+    input_payload["modes"] = {"path": "modes.csv"}
+    path = data_dir / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+    output = tmp_path / "result.json"
+
+    invocation = runner.invoke(app, ["run", str(path), "-o", str(output)])
+
+    assert invocation.exit_code == 0, invocation.output
+    modes = load_result(output).modes
+    assert [mode.frequency for mode in modes] == [1200.0, 450.0]
+    assert modes[0].huang_rhys == 0.25
+
+
+def test_broken_modes_csv_exits_with_one(tmp_path, input_payload):
+    (tmp_path / "modes.csv").write_text("frequency,coupling\n1200.0,oops\n", encoding="utf-8")
+    input_payload["modes"] = {"path": "modes.csv"}
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    invocation = runner.invoke(app, ["run", str(path), "-o", str(tmp_path / "out.json")])
+
+    assert invocation.exit_code == 1
+    assert "modes.csv:2" in invocation.output
+
+
 def test_plot_subcommand(tmp_path, input_file):
     output = tmp_path / "result.json"
     assert runner.invoke(app, ["run", str(input_file), "-o", str(output)]).exit_code == 0

@@ -69,7 +69,7 @@ def _report(result: FCEnvelopeResult, output: Path) -> None:
 def run(
     input_path: Annotated[
         Path,
-        typer.Argument(metavar="INPUT.json", help="Input JSON with modes and conditions."),
+        typer.Argument(metavar="INPUT.json", help="Input JSON with modes (inline or a CSV reference) and conditions."),
     ],
     output: Annotated[
         Path,

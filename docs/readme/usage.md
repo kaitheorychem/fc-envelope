@@ -44,6 +44,35 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 | `conditions.e_min` / `e_max` | 出力窓 [cm⁻¹] | `e_min` < `e_max` |
 | `conditions.de` | 出力グリッド間隔 [cm⁻¹] | > 0 |
 
+### モードを CSV で渡す
+
+モード数が多い場合や外部プログラムの出力を使う場合は、`modes` に CSV への参照を書ける。
+
+```json
+{
+  "schema_version": 1,
+  "frequency_unit": "cm^-1",
+  "coupling_convention": "g",
+  "modes": { "path": "modes.csv" },
+  "conditions": { "temperature": 300.0, "sigma": 150.0, "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 }
+}
+```
+
+```csv
+frequency,coupling
+1200.0,0.5
+450.0,0.8
+```
+
+- 相対パスは**入力 JSON ファイルの場所**が基準。
+- 書式は CSV の標準（RFC 4180）に従う。列は `frequency` と `coupling` の 2 列のみで、ほかの列があるとエラー。
+- ヘッダ行は省略できる。省略時は `frequency,coupling` の順。ヘッダを書く場合は 1 行目に置き、列の順序は自由。
+- RFC 4180 にはコメントの規定がないため、コメント行は書けない。空行もエラー（ファイル末尾の改行 1 つは可）。
+- 行の順序は計算結果に影響しない。縮重モードは同じ値の行を複数書く。
+- 単位と流儀は JSON 側の `frequency_unit` / `coupling_convention` に従う。
+- 区切りはカンマのみ。エラーは `modes.csv:3: ...` のように行番号付きで報告される。
+- 結果 JSON にはモードの値そのものが埋め込まれるので、CSV が後で変わっても結果ファイル単体で再現できる。
+
 E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 ここで λ = Σ S_α ε_α、Var = Σ S_α ε_α²(2n_α+1) + σ²。
 
@@ -77,7 +106,7 @@ conditions = Conditions(
 )
 result = compute_envelope(modes, conditions)
 
-# 入力ファイルから（流儀と単位はここで消費される）
+# 入力ファイルから（流儀と単位はここで消費される。modes の CSV 参照もここで解決）
 parsed = FCEnvelopeInput.from_path("input.json")
 result = compute_envelope(parsed.to_modes(), parsed.conditions)
 

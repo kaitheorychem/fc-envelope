@@ -1,7 +1,8 @@
 # インターフェイス仕様
 
 変更が行われにくい部分のみを簡潔に記す。詳細は実際のコード（`src/fcenvelope/`）を本体とする。
-設計の背景・判断理由は `docs/dev/agreement/io-and-class-design-20260725.md` を参照。
+設計の背景・判断理由は `docs/dev/agreement/io-and-class-design-20260725.md` と
+`docs/dev/agreement/modes-csv-20260915.md` を参照。
 
 ## 単位・規約
 
@@ -31,9 +32,9 @@ plot_result(result, *, ax=None, label=None, title=None) -> matplotlib.figure.Fig
 入力ファイルの読み込みは `FCEnvelopeInput` を経由する。
 
 ```python
-FCEnvelopeInput.from_path(path) -> FCEnvelopeInput
-FCEnvelopeInput.from_json(text) -> FCEnvelopeInput
-FCEnvelopeInput.from_obj(data)  -> FCEnvelopeInput
+FCEnvelopeInput.from_path(path)                  -> FCEnvelopeInput   # modes.path はファイル基準
+FCEnvelopeInput.from_json(text, *, base_dir=None) -> FCEnvelopeInput
+FCEnvelopeInput.from_obj(data, *, base_dir=None)  -> FCEnvelopeInput   # base_dir 省略時は cwd 基準
 FCEnvelopeInput.to_modes()      -> list[VibrationalMode]   # 流儀を消費して正準化
 ```
 
@@ -51,6 +52,7 @@ FCEnvelopeInput.to_modes()      -> list[VibrationalMode]   # 流儀を消費し�
 ## ファイル形式
 
 - 入力: `schema_version` = 1、`frequency_unit` = `"cm^-1"`、`coupling_convention` ∈ {`"g"`, `"huang_rhys"`}、`modes`（1 件以上）、`conditions`
+- `modes` は配列か `{"path": "<file>.csv"}`。CSV は RFC 4180 準拠で、列は `frequency` / `coupling` の 2 列のみ。ヘッダは省略可（省略時はこの順、ヘッダがあれば順序自由）。コメント行・空行なし
 - 出力: `kind` = `"fcenvelope.result"` の単一 JSON。入力エコーは常に正準形（`coupling_convention` = `"huang_rhys"`）
 - 両者の詳細スキーマは合意文書 §4.2 / §8.2
 
