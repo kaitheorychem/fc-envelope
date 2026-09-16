@@ -269,3 +269,104 @@ def test_lines_invalid_input_exits_with_one(tmp_path, input_payload):
     )
     assert invocation.exit_code == 1
     assert "error:" in invocation.output
+
+
+# --- plot による重ね描き ---
+
+
+@pytest.fixture
+def result_and_lines(tmp_path, input_file):
+    """`run` と `lines` を同じ入力で走らせ、2 つの結果 JSON を返す。"""
+    result = tmp_path / "result.json"
+    lines = tmp_path / "lines.json"
+    assert runner.invoke(app, ["run", str(input_file), "-o", str(result)]).exit_code == 0
+    assert (
+        runner.invoke(app, ["lines", str(input_file), "-o", str(lines)]).exit_code == 0
+    )
+    return result, lines
+
+
+def test_plot_overlays_an_envelope_and_a_line_list(tmp_path, result_and_lines):
+    result, lines = result_and_lines
+    figure = tmp_path / "overlay.png"
+    invocation = runner.invoke(
+        app, ["plot", str(result), str(lines), "-o", str(figure)]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert figure.is_file()
+    assert figure.stat().st_size > 0
+
+
+def test_plot_overlay_ignores_the_order_of_the_two_files(tmp_path, result_and_lines):
+    result, lines = result_and_lines
+    figure = tmp_path / "overlay.png"
+    invocation = runner.invoke(
+        app, ["plot", str(lines), str(result), "-o", str(figure)]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert figure.is_file()
+
+
+def test_plot_overlay_reports_lines_outside_the_energy_window(tmp_path, input_file):
+    result = tmp_path / "result.json"
+    lines = tmp_path / "lines.json"
+    # E 窓を ZPL 周辺だけに絞れば、サイドバンドの線は窓の外に落ちる。
+    runner.invoke(
+        app, ["run", str(input_file), "-o", str(result), "--e-min", "-300", "--e-max", "300"]
+    )
+    runner.invoke(app, ["lines", str(input_file), "-o", str(lines)])
+
+    invocation = runner.invoke(
+        app, ["plot", str(result), str(lines), "-o", str(tmp_path / "overlay.png")]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert "outside the E window" in invocation.output
+
+
+def test_plot_rejects_two_files_of_the_same_kind(tmp_path, result_and_lines):
+    result, _ = result_and_lines
+    invocation = runner.invoke(
+        app, ["plot", str(result), str(result), "-o", str(tmp_path / "overlay.png")]
+    )
+    assert invocation.exit_code == 2
+
+
+def test_plot_rejects_more_than_two_files(tmp_path, result_and_lines):
+    result, lines = result_and_lines
+    invocation = runner.invoke(
+        app,
+        ["plot", str(result), str(lines), str(lines), "-o", str(tmp_path / "overlay.png")],
+    )
+    assert invocation.exit_code == 2
+
+
+def test_plot_overlay_accepts_a_magnification(tmp_path, result_and_lines):
+    result, lines = result_and_lines
+    figure = tmp_path / "overlay.png"
+    invocation = runner.invoke(
+        app, ["plot", str(result), str(lines), "-o", str(figure), "--magnify", "5"]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert figure.is_file()
+
+
+def test_plot_overlay_bad_magnification_exits_with_one(tmp_path, result_and_lines):
+    result, lines = result_and_lines
+    invocation = runner.invoke(
+        app,
+        ["plot", str(result), str(lines), "-o", str(tmp_path / "x.png"), "--magnify", "0"],
+    )
+    assert invocation.exit_code == 1
+    assert "error:" in invocation.output
+
+
+def test_plot_rejects_magnification_without_an_overlay(tmp_path, result_and_lines):
+    result, _ = result_and_lines
+    invocation = runner.invoke(
+        app, ["plot", str(result), "-o", str(tmp_path / "x.png"), "--magnify", "5"]
+    )
+    assert invocation.exit_code == 2

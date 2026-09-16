@@ -6,14 +6,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
 
 import typer
+
+if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
+    import matplotlib.figure
 
 from .core import compute_envelope
 from .errors import FCEnvelopeError
 from .fcfactor import compute_fc_lines
-from .io import load_any, save_fc_lines, save_result
+from .io import FC_LINES_KIND, RESULT_KIND, load_any, save_fc_lines, save_result
 from .models import Conditions, FCEnvelopeInput
 from .result import FCEnvelopeResult, FCLine, FCLinesResult
 from .version import __version__
@@ -187,11 +190,14 @@ def lines(
 
 @app.command()
 def plot(
-    result_path: Annotated[
-        Path,
+    result_paths: Annotated[
+        list[Path],
         typer.Argument(
-            metavar="RESULT.json",
-            help="Result JSON written by `fcenvelope run` or `fcenvelope lines`.",
+            metavar="RESULT.json...",
+            help=(
+                "Result JSON written by `fcenvelope run` or `fcenvelope lines`. "
+                "Pass one of each to overlay the envelope and the stick spectrum."
+            ),
         ),
     ],
     output: Annotated[
@@ -201,18 +207,40 @@ def plot(
     title: Annotated[
         Optional[str], typer.Option("--title", help="Title drawn above the axes.")
     ] = None,
+    magnify: Annotated[
+        float,
+        typer.Option(
+            "--magnify",
+            help="Blow up the sticks by this factor when overlaying (shown in the legend).",
+        ),
+    ] = 1.0,
     dpi: Annotated[int, typer.Option("--dpi", help="Resolution of the output image.")] = 150,
 ) -> None:
-    """Render a stored result without recomputing it.
+    """Render stored results without recomputing them.
 
-    Accepts either an envelope result or an FC line list; the `kind` field decides.
+    One file draws either an envelope or a stick spectrum; the `kind` field decides.
+    Two files -- one envelope result and one FC line list, in either order -- are
+    drawn on one axes, with the lines scaled into the unit of F(E).
     """
     try:
-        result = load_any(result_path)
+        results = [load_any(result_path) for result_path in result_paths]
     except FCEnvelopeError as exc:
         raise _fail(exc) from exc
 
-    _save_figure(result, output, title=title, dpi=dpi)
+    if len(results) == 1:
+        if magnify != 1.0:
+            raise typer.BadParameter(
+                "--magnify only applies when overlaying two results",
+                param_hint="--magnify",
+            )
+        _save_figure(results[0], output, title=title, dpi=dpi)
+        return
+
+    envelope, line_list = _pair_for_overlay(results, result_paths)
+    try:
+        _save_overlay(envelope, line_list, output, title=title, magnify=magnify, dpi=dpi)
+    except FCEnvelopeError as exc:
+        raise _fail(exc) from exc
 
 
 def _transition_label(line: FCLine) -> str:
@@ -247,21 +275,73 @@ def _report_lines(result: FCLinesResult, output: Path, *, show: int) -> None:
         typer.secho(f"warning: {message}", fg=typer.colors.YELLOW, err=True)
 
 
+def _pair_for_overlay(
+    results: list[FCEnvelopeResult | FCLinesResult], paths: list[Path]
+) -> tuple[FCEnvelopeResult, FCLinesResult]:
+    """重ね描き用に、エンベロープと線リストを 1 つずつ取り出す。与える順序は問わない。"""
+    envelopes = [item for item in results if isinstance(item, FCEnvelopeResult)]
+    line_lists = [item for item in results if isinstance(item, FCLinesResult)]
+    if len(results) > 2 or len(envelopes) != 1 or len(line_lists) != 1:
+        found = ", ".join(
+            f"{path}: {FC_LINES_KIND if isinstance(item, FCLinesResult) else RESULT_KIND}"
+            for path, item in zip(paths, results)
+        )
+        raise typer.BadParameter(
+            f"overlaying takes exactly one {RESULT_KIND} and one {FC_LINES_KIND}, "
+            f"in either order (got {found})",
+            param_hint="RESULT.json...",
+        )
+    return envelopes[0], line_lists[0]
+
+
+def _write_figure(
+    figure: "matplotlib.figure.Figure", output: Path, *, dpi: int
+) -> None:
+    """`Figure` を画像として書き出し、後始末まで済ませる。"""
+    import matplotlib.pyplot as plt
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output, dpi=dpi)
+    plt.close(figure)
+    typer.echo(f"wrote {output}")
+
+
 def _save_figure(
     result: FCEnvelopeResult | FCLinesResult, output: Path, *, title: str | None, dpi: int
 ) -> None:
-    import matplotlib.pyplot as plt
-
     from .plotting import plot_fc_lines, plot_result
 
     if isinstance(result, FCLinesResult):
         figure = plot_fc_lines(result, title=title)
     else:
         figure = plot_result(result, title=title)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output, dpi=dpi)
-    plt.close(figure)
-    typer.echo(f"wrote {output}")
+    _write_figure(figure, output, dpi=dpi)
+
+
+def _save_overlay(
+    envelope: FCEnvelopeResult,
+    lines: FCLinesResult,
+    output: Path,
+    *,
+    title: str | None,
+    magnify: float,
+    dpi: int,
+) -> None:
+    from .plotting import plot_overlay
+
+    figure = plot_overlay(envelope, lines, magnify=magnify, title=title)
+    _write_figure(figure, output, dpi=dpi)
+
+    low = float(envelope.energy[0])
+    high = float(envelope.energy[-1])
+    dropped = sum(1 for line in lines.lines if not low <= line.energy <= high)
+    if dropped:
+        typer.secho(
+            f"warning: {dropped} of {len(lines.lines)} lines fall outside the "
+            f"E window [{low:g}, {high:g}] cm^-1 and are not drawn",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
 
 
 @app.callback(invoke_without_command=True)

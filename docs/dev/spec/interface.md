@@ -2,7 +2,8 @@
 
 変更が行われにくい部分のみを簡潔に記す。詳細は実際のコード（`src/fcenvelope/`）を本体とする。
 設計の背景・判断理由は `docs/dev/agreement/io-and-class-design-20260725.md`、
-`docs/dev/agreement/modes-csv-20260915.md`、`docs/dev/agreement/fc-factor-20260916.md` を参照。
+`docs/dev/agreement/modes-csv-20260915.md`、`docs/dev/agreement/fc-factor-20260916.md`、
+`docs/dev/agreement/overlay-plot-20260916.md` を参照。
 
 スペクトルには 2 つの表現があり、それぞれに「計算・保存・読み込み・描画」の 4 関数を持つ。
 
@@ -21,6 +22,7 @@
 | 振電相互作用の内部正準量 | S（Huang-Rhys 因子） |
 | F(E) の単位 | 1/cm⁻¹（∫F dE = 1） |
 | 線強度の単位 | 無次元（全遷移にわたる総和 = 1） |
+| 重ね描きでの棒の高さ | I·G_σ(0) = I/(σ√(2π))、単位は F(E) と同じ 1/cm⁻¹ |
 | E 軸 | E = 0 が ZPL。k 量子生成のサイドバンドは E = −k·ε（負側） |
 
 ## 公開 API
@@ -43,10 +45,15 @@ plot_fc_lines(result, *, ax=None, label=None, title=None) -> matplotlib.figure.F
 
 # 理論式そのもの: FC_mn = |<m|U(sqrt(S))|n>|^2 を (m_max+1, n_max+1) で返す
 fc_factor_matrix(huang_rhys: float, m_max: int, n_max: int = 0) -> np.ndarray
+
+# 2 つの表現を 1 枚に重ねる
+plot_overlay(envelope: FCEnvelopeResult, lines: FCLinesResult, *, ax=None,
+             envelope_label="envelope", lines_label="FC lines",
+             magnify=1.0, title=None) -> matplotlib.figure.Figure
 ```
 
 結果クラスは純粋なデータ容器で、I/O と描画の責務を持たない。
-`plot_result` / `plot_fc_lines` は `Figure` を返すのみでファイル保存はしない。
+`plot_result` / `plot_fc_lines` / `plot_overlay` は `Figure` を返すのみでファイル保存はしない。
 `compute_fc_lines` は `Conditions` を取らない（離散線に必要なのは温度だけ）。
 
 入力ファイルの読み込みは `FCEnvelopeInput` を経由する。
@@ -93,12 +100,15 @@ fcenvelope lines INPUT.json -o LINES.json [--plot FIG.png] [--dpi INT]
                           [--temperature FLOAT] [--min-intensity FLOAT]
                           [--max-lines INT] [--max-quanta INT] [--show INT]
 
-fcenvelope plot RESULT.json -o FIG.png [--title TEXT] [--dpi INT]
+fcenvelope plot RESULT.json [LINES.json] -o FIG.png [--title TEXT] [--dpi INT]
+                          [--magnify FLOAT]
 ```
 
 `run` が上書きできるのは `conditions` の 5 フィールドのみ。`modes` は上書きしない。
 `lines` は同じ入力 JSON を使い、`conditions` のうち `temperature` だけを読む。
-`plot` は `kind` を見てエンベロープと棒スペクトルのどちらかを描く。
+`plot` は `kind` を見てエンベロープと棒スペクトルのどちらかを描く。ファイルを 2 つ
+（エンベロープ 1 つと線リスト 1 つ、順序は任意）渡すと重ね描きになり、`--magnify` が
+効く。種類の組み合わせが違えば使用法エラー。
 終了コード: `0` 正常 / `1` `FCEnvelopeError` / `2` 使用法エラー。
 
 ## 例外・警告
