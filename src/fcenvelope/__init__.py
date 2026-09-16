@@ -39,7 +39,7 @@ from .models import (
     ModeSpec,
     VibrationalMode,
 )
-from .plotting import plot_fc_lines, plot_result
+from .plotting import plot_fc_lines, plot_overlay, plot_result
 from .result import (
     Diagnostics,
     FCEnvelopeResult,
@@ -62,6 +62,8 @@ __all__ = [
     "load_fc_lines",
     "plot_fc_lines",
     "fc_factor_matrix",
+    # 公開 API: 2 つの表現の重ね描き
+    "plot_overlay",
     # データモデル
     "Conditions",
     "CouplingConvention",

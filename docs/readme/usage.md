@@ -99,6 +99,9 @@ uv run fcenvelope lines input.json -o lines.json --min-intensity 1e-5
 # 計算をやり直さずに図だけ作り直す（エンベロープ・棒スペクトルのどちらでも）
 uv run fcenvelope plot result.json -o spectrum.png --title "300 K" --dpi 300
 uv run fcenvelope plot lines.json  -o sticks.png   --title "300 K"
+
+# 2 つを 1 枚に重ねる（与える順序は問わない）
+uv run fcenvelope plot result.json lines.json -o overlay.png --title "300 K"
 ```
 
 終了コードは 正常 `0` / 入力・計算エラー `1` / 使用法エラー `2`。
@@ -206,6 +209,14 @@ plot_fc_lines(lines).savefig("sticks.png", dpi=300)
 `lines.energies` / `lines.fc_factors` / `lines.intensities` で ndarray としても取れる。
 理論文書の行列そのものが要る場合は `fc_factor_matrix(S, m_max, n_max)` を使う。
 
+エンベロープと離散線を 1 枚に重ねるには `plot_overlay` を使う。
+
+```python
+from fcenvelope import plot_overlay
+
+plot_overlay(result, lines, title="300 K").savefig("overlay.png", dpi=300)
+```
+
 複数条件を 1 枚に重ねる場合は `ax` を渡す。
 
 ```python
@@ -218,6 +229,40 @@ for temperature in (0.0, 77.0, 300.0):
     )
     plot_result(result, ax=ax, label=f"{temperature:g} K")
 ```
+
+## エンベロープと離散線を重ねる
+
+`run` の曲線と `lines` の棒は同じ物理量の別表現で、E 軸の規約も共通しているので 1 枚に重ねられる。
+
+```bash
+uv run fcenvelope run   input.json -o result.json
+uv run fcenvelope lines input.json -o lines.json
+uv run fcenvelope plot  result.json lines.json -o overlay.png --title "300 K"
+```
+
+**縦軸は 1 本しかない。** 線強度 I は無次元だが、幅 σ の規格化ガウシアンの頂点
+G_σ(0) = 1/(σ√(2π)) を掛けて F(E) と同じ 1/cm⁻¹ に直してから描く。この高さは
+「その線が F(E) に立てる山の高さそのもの」なので、棒と曲線の高さをそのまま比べてよい。
+
+- 孤立した線では棒の先端が曲線の山にぴたりと一致する。
+- σ の中に線が何本も密集するところでは曲線が棒より高くなる。これは縮尺の都合ではなく、
+  その山が 1 本の遷移では説明できないことを意味する。
+
+σ は `result` 側の条件から取る（`lines` は σ を持たない）。
+
+線が密集して棒が潰れる場合は `--magnify` で棒だけを拡大できる。倍率は凡例に `(×N)` と
+出るので、拡大したことが図から失われない。
+
+```bash
+uv run fcenvelope plot result.json lines.json -o overlay.png --magnify 5
+```
+
+注意点が 2 つある。
+
+- 横軸は `result` の E 窓に合わせるので、窓の外に立つ線は描かれない。落ちた本数は
+  警告に出る。すべて見たいなら `run` の `--e-min` / `--e-max` を広げる。
+- 2 つの結果のモードか温度が食い違っていると警告が出る。棒と曲線の対応が
+  成り立つのは同じ系・同じ温度で計算した場合だけなので、図には出すが鵜呑みにしない。
 
 ## 結果の中身
 
