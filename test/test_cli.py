@@ -7,7 +7,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from fcenvelope import load_result
+from fcenvelope import load_fc_lines, load_result
 from fcenvelope.cli import app
 
 runner = CliRunner()
@@ -172,3 +172,100 @@ def test_help_and_version():
     version = runner.invoke(app, ["--version"])
     assert version.exit_code == 0
     assert version.output.strip()
+
+
+# --- lines サブコマンド ---
+
+
+def test_lines_writes_a_line_list(tmp_path, input_file):
+    output = tmp_path / "lines.json"
+    invocation = runner.invoke(app, ["lines", str(input_file), "-o", str(output)])
+
+    assert invocation.exit_code == 0, invocation.output
+    result = load_fc_lines(output)
+    assert result.diagnostics.n_lines > 0
+    assert result.temperature == 300.0
+    assert result.modes[0].huang_rhys == 0.25
+    assert result.lines[0].energy == 0.0
+
+
+def test_lines_prints_the_strongest_transitions(tmp_path, input_file):
+    output = tmp_path / "lines.json"
+    invocation = runner.invoke(
+        app, ["lines", str(input_file), "-o", str(output), "--show", "3"]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert "ZPL" in invocation.output
+    assert "more" in invocation.output
+    assert invocation.output.count("->") >= 1
+
+
+def test_lines_show_zero_prints_no_table(tmp_path, input_file):
+    output = tmp_path / "lines.json"
+    invocation = runner.invoke(
+        app, ["lines", str(input_file), "-o", str(output), "--show", "0"]
+    )
+    assert invocation.exit_code == 0, invocation.output
+    assert "ZPL" not in invocation.output
+
+
+def test_lines_overrides_the_temperature(tmp_path, input_file):
+    output = tmp_path / "lines.json"
+    invocation = runner.invoke(
+        app,
+        [
+            "lines", str(input_file), "-o", str(output),
+            "--temperature", "0", "--min-intensity", "1e-6", "--max-lines", "500",
+        ],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    result = load_fc_lines(output)
+    assert result.temperature == 0.0
+    assert result.min_intensity == 1e-6
+    assert result.max_lines == 500
+    assert result.diagnostics.max_initial_quanta == 0
+
+
+def test_lines_with_plot(tmp_path, input_file):
+    output = tmp_path / "lines.json"
+    figure = tmp_path / "sticks.png"
+    invocation = runner.invoke(
+        app, ["lines", str(input_file), "-o", str(output), "--plot", str(figure)]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert figure.is_file() and figure.stat().st_size > 0
+
+
+def test_plot_subcommand_renders_a_stored_line_list(tmp_path, input_file):
+    output = tmp_path / "lines.json"
+    assert runner.invoke(app, ["lines", str(input_file), "-o", str(output)]).exit_code == 0
+
+    figure = tmp_path / "sticks.png"
+    invocation = runner.invoke(app, ["plot", str(output), "-o", str(figure)])
+
+    assert invocation.exit_code == 0, invocation.output
+    assert figure.is_file()
+
+
+def test_lines_bad_threshold_exits_with_one(tmp_path, input_file):
+    invocation = runner.invoke(
+        app,
+        ["lines", str(input_file), "-o", str(tmp_path / "out.json"), "--min-intensity", "0"],
+    )
+    assert invocation.exit_code == 1
+    assert "error:" in invocation.output
+
+
+def test_lines_invalid_input_exits_with_one(tmp_path, input_payload):
+    input_payload["schema_version"] = 99
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    invocation = runner.invoke(
+        app, ["lines", str(path), "-o", str(tmp_path / "out.json")]
+    )
+    assert invocation.exit_code == 1
+    assert "error:" in invocation.output

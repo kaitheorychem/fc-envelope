@@ -9,7 +9,14 @@ import pytest
 
 matplotlib.use("Agg")
 
-from fcenvelope import Conditions, FCEnvelopeResult, VibrationalMode, compute_envelope
+from fcenvelope import (
+    Conditions,
+    FCEnvelopeResult,
+    FCLinesResult,
+    VibrationalMode,
+    compute_envelope,
+    compute_fc_lines,
+)
 from fcenvelope.errors import NumericalQualityWarning
 
 
@@ -20,6 +27,13 @@ def compute_quietly(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", NumericalQualityWarning)
         return compute_envelope(modes, conditions)
+
+
+def lines_quietly(modes: list[VibrationalMode], **kwargs) -> FCLinesResult:
+    """品質警告を抑制して離散 FC 因子を計算する。"""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", NumericalQualityWarning)
+        return compute_fc_lines(modes, **kwargs)
 
 
 def moments(result: FCEnvelopeResult) -> tuple[float, float, float]:
