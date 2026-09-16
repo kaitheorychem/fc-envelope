@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from .core import compute_envelope
+from .envelope import compute_envelope
 from .errors import (
     FCEnvelopeError,
     InvalidInputError,
@@ -30,8 +30,8 @@ from .errors import (
     SchemaVersionError,
     UnsupportedUnitError,
 )
-from .fcfactor import compute_fc_lines, fc_factor_matrix
-from .io import load_fc_lines, load_result, save_fc_lines, save_result
+from .io import load_envelope, load_lines, save_envelope, save_lines
+from .lines import compute_fc_lines, fc_factor_matrix
 from .models import (
     Conditions,
     CouplingConvention,
@@ -39,13 +39,13 @@ from .models import (
     ModeSpec,
     VibrationalMode,
 )
-from .plotting import plot_fc_lines, plot_overlay, plot_result
+from .plotting import plot_envelope, plot_lines, plot_overlay
 from .result import (
-    Diagnostics,
-    FCEnvelopeResult,
+    EnvelopeDiagnostics,
+    EnvelopeResult,
     FCLine,
-    FCLineDiagnostics,
-    FCLinesResult,
+    LinesDiagnostics,
+    LinesResult,
     ModeTransition,
 )
 from .version import __version__
@@ -53,26 +53,26 @@ from .version import __version__
 __all__ = [
     # 公開 API: エンベロープ F(E)
     "compute_envelope",
-    "save_result",
-    "load_result",
-    "plot_result",
+    "save_envelope",
+    "load_envelope",
+    "plot_envelope",
     # 公開 API: 離散 FC 因子
     "compute_fc_lines",
-    "save_fc_lines",
-    "load_fc_lines",
-    "plot_fc_lines",
+    "save_lines",
+    "load_lines",
+    "plot_lines",
     "fc_factor_matrix",
     # 公開 API: 2 つの表現の重ね描き
     "plot_overlay",
     # データモデル
     "Conditions",
     "CouplingConvention",
-    "Diagnostics",
+    "EnvelopeDiagnostics",
+    "EnvelopeResult",
     "FCEnvelopeInput",
-    "FCEnvelopeResult",
     "FCLine",
-    "FCLineDiagnostics",
-    "FCLinesResult",
+    "LinesDiagnostics",
+    "LinesResult",
     "ModeSpec",
     "ModeTransition",
     "VibrationalMode",

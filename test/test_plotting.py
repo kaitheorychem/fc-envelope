@@ -11,9 +11,9 @@ from conftest import compute_quietly, lines_quietly
 from fcenvelope import (
     Conditions,
     VibrationalMode,
-    plot_fc_lines,
+    plot_lines,
     plot_overlay,
-    plot_result,
+    plot_envelope,
 )
 from fcenvelope.errors import InvalidInputError
 
@@ -29,11 +29,11 @@ def result():
 
 
 def test_returns_a_figure_and_draws_the_spectrum(result):
-    figure = plot_result(result)
+    figure = plot_envelope(result)
     try:
         (line,) = figure.axes[0].lines[:1]
         np.testing.assert_array_equal(line.get_xdata(), result.energy)
-        np.testing.assert_array_equal(line.get_ydata(), result.intensity)
+        np.testing.assert_array_equal(line.get_ydata(), result.density)
     finally:
         plt.close(figure)
 
@@ -41,8 +41,8 @@ def test_returns_a_figure_and_draws_the_spectrum(result):
 def test_accepts_an_existing_axes_for_overlays(result):
     figure, ax = plt.subplots()
     try:
-        first = plot_result(result, ax=ax, label="300 K")
-        second = plot_result(result, ax=ax, label="0 K")
+        first = plot_envelope(result, ax=ax, label="300 K")
+        second = plot_envelope(result, ax=ax, label="0 K")
         assert first is figure and second is figure
         assert len([line for line in ax.lines if line.get_label() in {"300 K", "0 K"}]) == 2
         assert ax.get_legend() is not None
@@ -51,7 +51,7 @@ def test_accepts_an_existing_axes_for_overlays(result):
 
 
 def test_title_is_applied(result):
-    figure = plot_result(result, title="demo")
+    figure = plot_envelope(result, title="demo")
     try:
         assert figure.axes[0].get_title() == "demo"
     finally:
@@ -59,7 +59,7 @@ def test_title_is_applied(result):
 
 
 def test_saving_is_left_to_the_caller(result, tmp_path):
-    figure = plot_result(result)
+    figure = plot_envelope(result)
     try:
         assert not list(tmp_path.iterdir())
         target = tmp_path / "figure.png"
@@ -74,11 +74,11 @@ def test_saving_is_left_to_the_caller(result, tmp_path):
 
 @pytest.fixture
 def lines_result():
-    return lines_quietly(MODES, temperature=300.0, min_intensity=1e-4)
+    return lines_quietly(MODES, temperature=300.0, min_weight=1e-4)
 
 
 def test_fc_lines_draws_one_stick_per_line(lines_result):
-    figure = plot_fc_lines(lines_result)
+    figure = plot_lines(lines_result)
     try:
         (collection,) = figure.axes[0].collections
         segments = collection.get_segments()
@@ -86,7 +86,7 @@ def test_fc_lines_draws_one_stick_per_line(lines_result):
         # エネルギーが縮退した線もまとめずに 1 本ずつ描く。
         drawn = sorted((segment[0][0], segment[1][1]) for segment in segments)
         expected = sorted(
-            (line.energy, line.intensity) for line in lines_result.lines
+            (line.energy, line.weight) for line in lines_result.lines
         )
         np.testing.assert_allclose(drawn, expected)
         assert all(segment[0][1] == 0.0 for segment in segments)
@@ -97,14 +97,14 @@ def test_fc_lines_draws_one_stick_per_line(lines_result):
 def test_fc_lines_accepts_an_existing_axes(lines_result):
     figure, ax = plt.subplots()
     try:
-        assert plot_fc_lines(lines_result, ax=ax, label="300 K") is figure
+        assert plot_lines(lines_result, ax=ax, label="300 K") is figure
         assert ax.get_legend() is not None
     finally:
         plt.close(figure)
 
 
 def test_fc_lines_title_is_applied(lines_result):
-    figure = plot_fc_lines(lines_result, title="sticks")
+    figure = plot_lines(lines_result, title="sticks")
     try:
         assert figure.axes[0].get_title() == "sticks"
     finally:
@@ -123,7 +123,7 @@ OVERLAY_CONDITIONS = Conditions(
 def overlay_pair():
     """同じモード・同じ温度で求めたエンベロープと線リストの組。"""
     envelope = compute_quietly(MODES, OVERLAY_CONDITIONS)
-    lines = lines_quietly(MODES, temperature=0.0, min_intensity=1e-6)
+    lines = lines_quietly(MODES, temperature=0.0, min_weight=1e-6)
     return envelope, lines
 
 
@@ -140,7 +140,7 @@ def test_overlay_draws_both_on_a_single_axes(overlay_pair):
         (ax,) = figure.axes
         curve = _envelope_line(ax)
         np.testing.assert_array_equal(curve.get_xdata(), envelope.energy)
-        np.testing.assert_array_equal(curve.get_ydata(), envelope.intensity)
+        np.testing.assert_array_equal(curve.get_ydata(), envelope.density)
         (collection,) = ax.collections
         assert len(collection.get_segments()) == lines.diagnostics.n_lines
     finally:
@@ -157,7 +157,7 @@ def test_overlay_scales_sticks_into_the_unit_of_the_envelope(overlay_pair):
             [(segment[0][0], segment[1][1]) for segment in collection.get_segments()]
         )
         scale = 1.0 / (OVERLAY_CONDITIONS.sigma * np.sqrt(2.0 * np.pi))
-        expected = np.column_stack((lines.energies, lines.intensities * scale))
+        expected = np.column_stack((lines.energies, lines.weights * scale))
         np.testing.assert_allclose(sorted(map(tuple, drawn)), sorted(map(tuple, expected)))
         # 底辺は 0 で、曲線と同じゼロ線から立ち上がる。
         assert all(segment[0][1] == 0.0 for segment in collection.get_segments())
@@ -175,7 +175,7 @@ def test_overlay_stick_tips_touch_the_envelope_for_isolated_lines(overlay_pair):
             energy, height = segment[0][0], segment[1][1]
             if not envelope.energy[0] <= energy <= envelope.energy[-1]:
                 continue
-            peak = np.interp(energy, envelope.energy, envelope.intensity)
+            peak = np.interp(energy, envelope.energy, envelope.density)
             np.testing.assert_allclose(height, peak, rtol=1e-9)
     finally:
         plt.close(figure)
@@ -237,7 +237,7 @@ def test_overlay_accepts_an_existing_axes(overlay_pair):
 
 def test_overlay_warns_when_the_temperature_does_not_match(overlay_pair):
     envelope, _ = overlay_pair
-    hot = lines_quietly(MODES, temperature=300.0, min_intensity=1e-4)
+    hot = lines_quietly(MODES, temperature=300.0, min_weight=1e-4)
     with pytest.warns(UserWarning, match="temperature mismatch"):
         plt.close(plot_overlay(envelope, hot))
 

@@ -16,7 +16,7 @@ import pytest
 from scipy.special import eval_genlaguerre, factorial
 
 from fcenvelope import fc_factor_matrix
-from fcenvelope.fcfactor import RECURRENCE_TOLERANCE, displacement_matrix
+from fcenvelope.lines import RECURRENCE_TOLERANCE, displacement_matrix
 
 HUANG_RHYS = [0.0, 0.25, 1.0, 3.0, 6.0]
 

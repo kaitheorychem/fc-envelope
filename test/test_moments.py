@@ -12,7 +12,7 @@ import pytest
 from conftest import compute_quietly, moments
 
 from fcenvelope import Conditions, VibrationalMode
-from fcenvelope.core import occupation_numbers
+from fcenvelope.physics import occupation_numbers
 
 TEMPERATURES = [0.0, 77.0, 300.0]
 

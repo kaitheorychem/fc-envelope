@@ -11,8 +11,8 @@ matplotlib.use("Agg")
 
 from fcenvelope import (
     Conditions,
-    FCEnvelopeResult,
-    FCLinesResult,
+    EnvelopeResult,
+    LinesResult,
     VibrationalMode,
     compute_envelope,
     compute_fc_lines,
@@ -22,24 +22,24 @@ from fcenvelope.errors import NumericalQualityWarning
 
 def compute_quietly(
     modes: list[VibrationalMode], conditions: Conditions
-) -> FCEnvelopeResult:
+) -> EnvelopeResult:
     """品質警告を抑制して計算する（警告そのものは診断値で検証する）。"""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", NumericalQualityWarning)
         return compute_envelope(modes, conditions)
 
 
-def lines_quietly(modes: list[VibrationalMode], **kwargs) -> FCLinesResult:
+def lines_quietly(modes: list[VibrationalMode], **kwargs) -> LinesResult:
     """品質警告を抑制して離散 FC 因子を計算する。"""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", NumericalQualityWarning)
         return compute_fc_lines(modes, **kwargs)
 
 
-def moments(result: FCEnvelopeResult) -> tuple[float, float, float]:
+def moments(result: EnvelopeResult) -> tuple[float, float, float]:
     """出力配列から (面積, <E>, Var(E)) を数値積分で求める。"""
     de = result.conditions.de
-    weight = result.intensity * de
+    weight = result.density * de
     area = float(weight.sum())
     mean = float((result.energy * weight).sum())
     variance = float((((result.energy - mean) ** 2) * weight).sum())

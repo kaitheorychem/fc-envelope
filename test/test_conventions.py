@@ -45,7 +45,7 @@ def test_g_and_huang_rhys_agree():
     result_g = compute_quietly(from_g.to_modes(), from_g.conditions)
     result_s = compute_quietly(from_s.to_modes(), from_s.conditions)
 
-    np.testing.assert_array_equal(result_g.intensity, result_s.intensity)
+    np.testing.assert_array_equal(result_g.density, result_s.density)
     assert result_g.reorganization_energy == result_s.reorganization_energy
 
 

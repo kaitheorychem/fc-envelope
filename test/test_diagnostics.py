@@ -9,7 +9,8 @@ import pytest
 from conftest import compute_quietly
 
 from fcenvelope import Conditions, NumericalQualityWarning, VibrationalMode, compute_envelope
-from fcenvelope.core import K_B_CM, build_grids, occupation_numbers
+from fcenvelope.envelope import build_grids
+from fcenvelope.physics import K_B_CM, occupation_numbers
 
 MODES = [VibrationalMode(frequency=1200.0, huang_rhys=0.5)]
 
@@ -57,7 +58,7 @@ def test_diagnostics_of_a_healthy_calculation():
     assert diagnostics.messages == ()
     assert diagnostics.total_area == pytest.approx(1.0, abs=1e-12)
     assert diagnostics.window_captured_fraction > 0.999
-    assert diagnostics.edge_intensity_ratio < 1e-4
+    assert diagnostics.edge_density_ratio < 1e-4
     assert diagnostics.max_imaginary_ratio < 1e-8
     assert diagnostics.tau_max == pytest.approx(np.pi / conditions.de)
     assert diagnostics.sigma_tau_max == pytest.approx(conditions.sigma * diagnostics.tau_max)
@@ -75,17 +76,17 @@ def test_coarse_de_warns_about_truncation():
     assert _matching(result, "sigma*tau_max")
 
 
-def test_narrow_window_raises_the_edge_intensity_ratio():
+def test_narrow_window_raises_the_edge_density_ratio():
     """E 範囲が狭いとスペクトル重みが端に届き、エイリアシングの指標が上がる。"""
     wide = Conditions(temperature=300.0, sigma=150.0, e_min=-12000.0, e_max=12000.0, de=5.0)
     narrow = Conditions(temperature=300.0, sigma=150.0, e_min=-1500.0, e_max=1500.0, de=5.0)
 
     wide_result = compute_quietly(MODES, wide)
-    with pytest.warns(NumericalQualityWarning, match="edge_intensity_ratio"):
+    with pytest.warns(NumericalQualityWarning, match="edge_density_ratio"):
         narrow_result = compute_envelope(MODES, narrow)
 
-    assert narrow_result.diagnostics.edge_intensity_ratio > 1e-4
-    assert narrow_result.diagnostics.edge_intensity_ratio > wide_result.diagnostics.edge_intensity_ratio
+    assert narrow_result.diagnostics.edge_density_ratio > 1e-4
+    assert narrow_result.diagnostics.edge_density_ratio > wide_result.diagnostics.edge_density_ratio
 
 
 def test_narrow_window_warns_about_captured_fraction():
@@ -105,7 +106,7 @@ def test_aliasing_does_not_disturb_the_total_area():
     )
     result = compute_quietly([VibrationalMode(frequency=1200.0, huang_rhys=2.0)], conditions)
     assert result.diagnostics.total_area == pytest.approx(1.0, abs=1e-12)
-    assert result.diagnostics.edge_intensity_ratio > 1e-4
+    assert result.diagnostics.edge_density_ratio > 1e-4
 
 
 def test_no_warning_is_emitted_for_a_healthy_calculation():
@@ -144,11 +145,11 @@ def test_boltzmann_constant_value():
     assert K_B_CM == pytest.approx(0.6950348, rel=1e-6)
 
 
-def test_result_intensity_is_real_and_finite():
+def test_density_is_real_and_finite():
     conditions = Conditions(
         temperature=300.0, sigma=150.0, e_min=-8000.0, e_max=4000.0, de=4.0
     )
     result = compute_quietly(MODES, conditions)
-    assert result.intensity.dtype == np.float64
-    assert np.all(np.isfinite(result.intensity))
+    assert result.density.dtype == np.float64
+    assert np.all(np.isfinite(result.density))
     assert result.diagnostics.max_imaginary_ratio < 1e-12

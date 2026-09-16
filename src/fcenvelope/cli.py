@@ -13,12 +13,12 @@ import typer
 if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
     import matplotlib.figure
 
-from .core import compute_envelope
+from .envelope import compute_envelope
 from .errors import FCEnvelopeError
-from .fcfactor import compute_fc_lines
-from .io import FC_LINES_KIND, RESULT_KIND, load_any, save_fc_lines, save_result
+from .io import ENVELOPE_KIND, LINES_KIND, load_any, save_envelope, save_lines
+from .lines import compute_fc_lines
 from .models import Conditions, FCEnvelopeInput
-from .result import FCEnvelopeResult, FCLine, FCLinesResult
+from .result import EnvelopeResult, FCLine, LinesResult
 from .version import __version__
 
 __all__ = ["app"]
@@ -57,7 +57,7 @@ def _override_conditions(
     return Conditions.from_obj(merged)
 
 
-def _report(result: FCEnvelopeResult, output: Path) -> None:
+def _report(result: EnvelopeResult, output: Path) -> None:
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
@@ -117,7 +117,7 @@ def run(
             de=de,
         )
         result = compute_envelope(parsed.to_modes(), conditions)
-        save_result(result, output)
+        save_envelope(result, output)
     except FCEnvelopeError as exc:
         raise _fail(exc) from exc
 
@@ -148,9 +148,9 @@ def lines(
         Optional[float],
         typer.Option("--temperature", help="Override conditions.temperature [K]."),
     ] = None,
-    min_intensity: Annotated[
+    min_weight: Annotated[
         float,
-        typer.Option("--min-intensity", help="Keep every line at or above this intensity."),
+        typer.Option("--min-weight", help="Keep every line at or above this weight."),
     ] = 1e-4,
     max_lines: Annotated[
         int, typer.Option("--max-lines", help="Upper bound on the number of lines kept.")
@@ -162,7 +162,7 @@ def lines(
         ),
     ] = None,
     show: Annotated[
-        int, typer.Option("--show", help="Print this many of the strongest lines (0 disables).")
+        int, typer.Option("--show", help="Print this many of the heaviest lines (0 disables).")
     ] = 10,
     dpi: Annotated[int, typer.Option("--dpi", help="Resolution of --plot.")] = 150,
 ) -> None:
@@ -174,11 +174,11 @@ def lines(
             temperature=(
                 parsed.conditions.temperature if temperature is None else temperature
             ),
-            min_intensity=min_intensity,
+            min_weight=min_weight,
             max_lines=max_lines,
             max_quanta=max_quanta,
         )
-        save_fc_lines(result, output)
+        save_lines(result, output)
     except FCEnvelopeError as exc:
         raise _fail(exc) from exc
 
@@ -253,21 +253,21 @@ def _transition_label(line: FCLine) -> str:
     )
 
 
-def _report_lines(result: FCLinesResult, output: Path, *, show: int) -> None:
+def _report_lines(result: LinesResult, output: Path, *, show: int) -> None:
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
         f"({diagnostics.n_lines} lines, "
-        f"captured={diagnostics.captured_intensity:.6g}, "
+        f"captured={diagnostics.captured_weight:.6g}, "
         f"<E>={diagnostics.mean_energy:.6g} cm^-1, "
         f"lambda={result.reorganization_energy:.6g} cm^-1)"
     )
     if show > 0 and result.lines:
-        typer.echo(f"  {'E / cm^-1':>12}  {'FC':>12}  {'intensity':>12}  transition")
+        typer.echo(f"  {'E / cm^-1':>12}  {'FC':>12}  {'weight':>12}  transition")
     for line in result.lines[: max(show, 0)]:
         typer.echo(
             f"  {line.energy:12.4g}  {line.fc_factor:12.6g}  "
-            f"{line.intensity:12.6g}  {_transition_label(line)}"
+            f"{line.weight:12.6g}  {_transition_label(line)}"
         )
     if show > 0 and diagnostics.n_lines > show:
         typer.echo(f"  ... {diagnostics.n_lines - show} more (see {output})")
@@ -276,18 +276,18 @@ def _report_lines(result: FCLinesResult, output: Path, *, show: int) -> None:
 
 
 def _pair_for_overlay(
-    results: list[FCEnvelopeResult | FCLinesResult], paths: list[Path]
-) -> tuple[FCEnvelopeResult, FCLinesResult]:
+    results: list[EnvelopeResult | LinesResult], paths: list[Path]
+) -> tuple[EnvelopeResult, LinesResult]:
     """重ね描き用に、エンベロープと線リストを 1 つずつ取り出す。与える順序は問わない。"""
-    envelopes = [item for item in results if isinstance(item, FCEnvelopeResult)]
-    line_lists = [item for item in results if isinstance(item, FCLinesResult)]
+    envelopes = [item for item in results if isinstance(item, EnvelopeResult)]
+    line_lists = [item for item in results if isinstance(item, LinesResult)]
     if len(results) > 2 or len(envelopes) != 1 or len(line_lists) != 1:
         found = ", ".join(
-            f"{path}: {FC_LINES_KIND if isinstance(item, FCLinesResult) else RESULT_KIND}"
+            f"{path}: {LINES_KIND if isinstance(item, LinesResult) else ENVELOPE_KIND}"
             for path, item in zip(paths, results)
         )
         raise typer.BadParameter(
-            f"overlaying takes exactly one {RESULT_KIND} and one {FC_LINES_KIND}, "
+            f"overlaying takes exactly one {ENVELOPE_KIND} and one {LINES_KIND}, "
             f"in either order (got {found})",
             param_hint="RESULT.json...",
         )
@@ -307,20 +307,20 @@ def _write_figure(
 
 
 def _save_figure(
-    result: FCEnvelopeResult | FCLinesResult, output: Path, *, title: str | None, dpi: int
+    result: EnvelopeResult | LinesResult, output: Path, *, title: str | None, dpi: int
 ) -> None:
-    from .plotting import plot_fc_lines, plot_result
+    from .plotting import plot_envelope, plot_lines
 
-    if isinstance(result, FCLinesResult):
-        figure = plot_fc_lines(result, title=title)
+    if isinstance(result, LinesResult):
+        figure = plot_lines(result, title=title)
     else:
-        figure = plot_result(result, title=title)
+        figure = plot_envelope(result, title=title)
     _write_figure(figure, output, dpi=dpi)
 
 
 def _save_overlay(
-    envelope: FCEnvelopeResult,
-    lines: FCLinesResult,
+    envelope: EnvelopeResult,
+    lines: LinesResult,
     output: Path,
     *,
     title: str | None,
