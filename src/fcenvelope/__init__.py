@@ -36,7 +36,6 @@ from .io import load_envelope, load_lines, save_envelope, save_lines
 from .lines import compute_fc_lines, fc_factor_matrix
 from .models import (
     Broadening,
-    CouplingConvention,
     EnergyGrid,
     FCEnvelopeInput,
     ModeSpec,
@@ -52,6 +51,7 @@ from .result import (
     LinesResult,
     ModeTransition,
 )
+from .units import COUPLING_CONVENTIONS, CouplingConvention
 from .version import __version__
 
 __all__ = [
@@ -70,6 +70,7 @@ __all__ = [
     "plot_overlay",
     # データモデル
     "Broadening",
+    "COUPLING_CONVENTIONS",
     "CouplingConvention",
     "EnergyGrid",
     "EnvelopeDiagnostics",

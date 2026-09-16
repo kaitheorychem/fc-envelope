@@ -18,14 +18,13 @@ from pydantic import ValidationError
 
 from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
 from .models import (
-    CANONICAL_FREQUENCY_UNIT,
     SCHEMA_VERSION,
     Broadening,
-    CouplingConvention,
     EnergyGrid,
     Selection,
     VibrationalMode,
 )
+from .units import CANONICAL_FREQUENCY_UNIT, HUANG_RHYS, check_frequency_unit
 from .result import (
     EnvelopeDiagnostics,
     EnvelopeResult,
@@ -97,17 +96,11 @@ def _parse_input_echo(echo: Any) -> tuple[VibrationalMode, ...]:
     if not isinstance(echo, dict):
         raise InvalidInputError(f"input must be a JSON object, got {type(echo).__name__}")
 
-    frequency_unit = echo.get("frequency_unit", CANONICAL_FREQUENCY_UNIT)
-    if frequency_unit != CANONICAL_FREQUENCY_UNIT:
-        raise UnsupportedUnitError(
-            f"unsupported frequency_unit {frequency_unit!r} "
-            f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
-        )
-    convention = echo.get("coupling_convention", CouplingConvention.HUANG_RHYS.value)
-    if convention != CouplingConvention.HUANG_RHYS.value:
+    check_frequency_unit(echo.get("frequency_unit", CANONICAL_FREQUENCY_UNIT))
+    convention = echo.get("coupling_convention", HUANG_RHYS.key)
+    if convention != HUANG_RHYS.key:
         raise InvalidInputError(
-            f"input.coupling_convention must be "
-            f"{CouplingConvention.HUANG_RHYS.value!r} (got {convention!r})"
+            f"input.coupling_convention must be {HUANG_RHYS.key!r} (got {convention!r})"
         )
     try:
         return tuple(
@@ -129,7 +122,7 @@ def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
         "density_unit": result.density_unit,
         "input": {
             "frequency_unit": CANONICAL_FREQUENCY_UNIT,
-            "coupling_convention": CouplingConvention.HUANG_RHYS.value,
+            "coupling_convention": HUANG_RHYS.key,
             "modes": [
                 {"frequency": mode.frequency, "coupling": mode.huang_rhys}
                 for mode in result.modes
@@ -273,7 +266,7 @@ def lines_to_dict(result: LinesResult) -> dict[str, Any]:
         "energy_unit": result.energy_unit,
         "input": {
             "frequency_unit": CANONICAL_FREQUENCY_UNIT,
-            "coupling_convention": CouplingConvention.HUANG_RHYS.value,
+            "coupling_convention": HUANG_RHYS.key,
             "modes": [
                 {"frequency": mode.frequency, "coupling": mode.huang_rhys}
                 for mode in result.modes

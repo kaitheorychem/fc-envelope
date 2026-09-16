@@ -1,4 +1,4 @@
-"""入力の pydantic モデル、振電相互作用の流儀レジストリ、単位検証。
+"""入力の pydantic モデルとモード表 CSV の読み込み。
 
 入力ファイルのトップレベルにある `frequency_unit` / `coupling_convention` は
 パース時に消費され、`FCEnvelopeInput.to_modes()` を通った後の内部表現は常に
@@ -20,60 +20,50 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections.abc import Callable
-from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
+    PlainSerializer,
     ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
 )
 
-from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
+from .errors import InvalidInputError, SchemaVersionError
+from .units import (
+    CANONICAL_FREQUENCY_UNIT,
+    CouplingConvention,
+    check_frequency_unit,
+    coupling_convention,
+)
 
 __all__ = [
-    "CANONICAL_FREQUENCY_UNIT",
     "MODES_CSV_COLUMNS",
     "SCHEMA_VERSION",
     "Broadening",
-    "CouplingConvention",
     "EnergyGrid",
     "FCEnvelopeInput",
     "ModeSpec",
     "Selection",
     "VibrationalMode",
     "read_mode_specs_csv",
-    "to_huang_rhys",
 ]
 
 SCHEMA_VERSION = 2
-CANONICAL_FREQUENCY_UNIT = "cm^-1"
 
-
-class CouplingConvention(str, Enum):
-    """入力ファイルが用いる振電相互作用パラメータの流儀。"""
-
-    G = "g"
-    HUANG_RHYS = "huang_rhys"
-
-
-#: 流儀 -> Huang-Rhys 因子 S への変換関数。
-#: 流儀の追加は 1 エントリの追加で済む。
-COUPLING_REGISTRY: dict[CouplingConvention, Callable[[float], float]] = {
-    CouplingConvention.G: lambda g: g * g,
-    CouplingConvention.HUANG_RHYS: lambda s: s,
-}
-
-
-def to_huang_rhys(value: float, convention: CouplingConvention) -> float:
-    """流儀に従った coupling 値を Huang-Rhys 因子 S に変換する。"""
-    return COUPLING_REGISTRY[convention](value)
+#: 入力ファイルでは流儀名の文字列、モデルの上では流儀オブジェクトとして扱う。
+#: 書き出しでは名前に戻る（ADR-0033）。
+_Convention = Annotated[
+    CouplingConvention,
+    BeforeValidator(coupling_convention),
+    PlainSerializer(lambda convention: convention.key, return_type=str),
+]
 
 
 class _ValueModel(BaseModel):
@@ -226,11 +216,11 @@ def read_mode_specs_csv(path: str | Path) -> list[ModeSpec]:
 class FCEnvelopeInput(BaseModel):
     """入力ファイル全体。"""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     schema_version: Literal[2] = SCHEMA_VERSION
     frequency_unit: str = CANONICAL_FREQUENCY_UNIT
-    coupling_convention: CouplingConvention = CouplingConvention.G
+    coupling_convention: _Convention = CouplingConvention.G
     modes: list[ModeSpec] = Field(min_length=1)
     temperature: float = Field(ge=0.0, description="T [K]")
     broadening: Broadening
@@ -264,20 +254,24 @@ class FCEnvelopeInput(BaseModel):
     @field_validator("frequency_unit", mode="before")
     @classmethod
     def _check_frequency_unit(cls, value: Any) -> Any:
-        if value != CANONICAL_FREQUENCY_UNIT:
-            raise UnsupportedUnitError(
-                f"unsupported frequency_unit {value!r} "
-                f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
-            )
-        return value
+        return check_frequency_unit(value)
+
+    @property
+    def coupling_unit(self) -> str | None:
+        """`modes[].coupling` が持つ単位。無次元の流儀では None。"""
+        return self.coupling_convention.coupling_unit(self.frequency_unit)
 
     def to_modes(self) -> list[VibrationalMode]:
-        """流儀を消費して正準表現のモード列を返す。"""
+        """流儀を消費して正準表現のモード列を返す。
+
+        単位変換も流儀変換も情報を失わない可逆な写像なので、失敗しないという契約を
+        置ける（ADR-0037）。数値計算である対角化をここに入れないのはこのためである。
+        """
         convention = self.coupling_convention
         return [
             VibrationalMode(
                 frequency=spec.frequency,
-                huang_rhys=to_huang_rhys(spec.coupling, convention),
+                huang_rhys=convention.to_huang_rhys(spec.coupling, spec.frequency),
             )
             for spec in self.modes
         ]
