@@ -291,3 +291,58 @@ def test_fc_lines_round_trip_carries_max_quanta(multi_mode, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(result, path)
     assert load_lines(path).selection == result.selection
+
+
+@pytest.mark.parametrize(
+    ("dumper", "diagnostics_type", "fixture"),
+    [
+        ("envelope_to_dict", "EnvelopeDiagnostics", "result"),
+        ("lines_to_dict", "LinesDiagnostics", "lines_result"),
+    ],
+)
+def test_every_diagnostic_field_reaches_the_file(
+    request, dumper, diagnostics_type, fixture
+):
+    """診断値のフィールド表は dataclass から導出する（ADR-0036）。
+
+    手書きのタプルと二重に持っていた頃は、dataclass にフィールドを足して
+    タプルに足し忘れれば静かに落ちた。この 1 本がその類の重複を禁じる。
+    """
+    import dataclasses
+
+    from fcenvelope import io as io_module
+
+    payload = getattr(io_module, dumper)(request.getfixturevalue(fixture))
+    expected = {
+        entry.name for entry in dataclasses.fields(getattr(io_module, diagnostics_type))
+    }
+    assert set(payload["diagnostics"]) == expected
+
+
+def test_both_kinds_share_the_same_skeleton(result, lines_result):
+    """2 系統のファイルは同じ骨格を持つ。差はペイロードの節だけ。"""
+    from fcenvelope.io import envelope_to_dict, lines_to_dict
+
+    skeleton = {
+        "schema_version",
+        "kind",
+        "fcenvelope_version",
+        "created_at",
+        "energy_unit",
+        "input",
+        "derived",
+        "diagnostics",
+    }
+    envelope_payload = envelope_to_dict(result)
+    lines_payload = lines_to_dict(lines_result)
+
+    assert skeleton <= set(envelope_payload)
+    assert skeleton <= set(lines_payload)
+    assert set(envelope_payload) - skeleton == {"density_unit", "spectrum"}
+    assert set(lines_payload) - skeleton == {"selection", "lines"}
+
+    for payload in (envelope_payload, lines_payload):
+        assert payload["input"]["coupling_convention"] == "huang_rhys"
+        assert payload["input"]["frequency_unit"] == "cm^-1"
+        assert "temperature" in payload["input"]
+        assert set(payload["derived"]) == {"reorganization_energy"}
