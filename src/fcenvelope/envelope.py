@@ -2,7 +2,14 @@
 
 理論は `docs/theory/time-ft.md` の式そのもの:
 
-    F(E) = (1 / 2pi) * int dtau rho(tau) exp(i E tau - sigma^2 tau^2 / 2)
+    F(E) = (1 / 2pi) * int dtau rho(tau) exp(i E tau) D(tau)
+
+線形状は時間領域では実数の減衰因子 D(tau) にすぎない（ADR-0034）。
+
+    D(tau) = exp(-sigma^2 tau^2 / 2 - gamma |tau|)
+
+sigma だけならガウス、gamma だけならローレンツ、両方あれば Voigt になる。
+畳み込みがそのまま積になるので、3 つの「種類」ではなく 2 パラメータの 1 つの族である。
 
     rho(tau) = prod_alpha exp( -S_a (2 n_a + 1)
                                + S_a (n_a + 1) exp(+i eps_a tau)
@@ -33,7 +40,10 @@ __all__ = [
 ]
 
 # --- 診断値の警告閾値（§7 の表） ---
-MIN_SIGMA_TAU_MAX = 6.0
+#: tau_max における減衰因子の上限。e^-18 は gamma = 0 での「sigma*tau_max >= 6」と
+#: 等価であり、閾値をこう置くことで純ガウスにおける従来の挙動が完全に保たれる
+#: （ADR-0038）。
+MAX_DAMPING_AT_TAU_MAX = math.exp(-18.0)
 MAX_EDGE_DENSITY_RATIO = 1e-4
 MAX_AREA_DEVIATION = 1e-6
 MIN_WINDOW_CAPTURED_FRACTION = 0.99
@@ -111,8 +121,8 @@ def compute_envelope(
     energy_full, tau, n_fft, d_tau = build_grids(grid)
 
     log_rho = _log_rho(tau, modes, temperature)
-    damping = -0.5 * broadening.sigma**2 * tau**2
-    m_tau = np.exp(log_rho + damping)
+    log_damping = -0.5 * broadening.sigma**2 * tau**2 - broadening.gamma * np.abs(tau)
+    m_tau = np.exp(log_rho + log_damping)
 
     # F(E_j) = (1 / dE) * ifft(M)_j （tau・E ともに FFT 標準順序のため位相因子は不要）
     spectrum_full = np.fft.ifft(m_tau) / grid.de
@@ -139,10 +149,12 @@ def compute_envelope(
     window_captured_fraction = window_area / total_area if total_area != 0.0 else 0.0
 
     tau_max = math.pi / grid.de
-    sigma_tau_max = broadening.sigma * tau_max
+    damping_at_tau_max = math.exp(
+        -0.5 * broadening.sigma**2 * tau_max**2 - broadening.gamma * tau_max
+    )
 
     messages = _quality_messages(
-        sigma_tau_max=sigma_tau_max,
+        damping_at_tau_max=damping_at_tau_max,
         edge_density_ratio=edge_density_ratio,
         total_area=total_area,
         window_captured_fraction=window_captured_fraction,
@@ -155,7 +167,7 @@ def compute_envelope(
         n_fft=n_fft,
         d_tau=d_tau,
         tau_max=tau_max,
-        sigma_tau_max=sigma_tau_max,
+        damping_at_tau_max=damping_at_tau_max,
         total_area=total_area,
         window_captured_fraction=window_captured_fraction,
         edge_density_ratio=edge_density_ratio,
@@ -179,7 +191,7 @@ def compute_envelope(
 
 def _quality_messages(
     *,
-    sigma_tau_max: float,
+    damping_at_tau_max: float,
     edge_density_ratio: float,
     total_area: float,
     window_captured_fraction: float,
@@ -188,11 +200,12 @@ def _quality_messages(
     """閾値を超えた診断値について警告文言を組み立てる。"""
     messages: list[str] = []
 
-    if sigma_tau_max < MIN_SIGMA_TAU_MAX:
+    if damping_at_tau_max > MAX_DAMPING_AT_TAU_MAX:
         messages.append(
-            f"sigma*tau_max = {sigma_tau_max:.3g} < {MIN_SIGMA_TAU_MAX:g}: "
-            "the tau window is truncated before the Gaussian damping completes; "
-            "ringing is likely. Use de smaller than sigma/2."
+            f"damping_at_tau_max = {damping_at_tau_max:.3g} > "
+            f"{MAX_DAMPING_AT_TAU_MAX:.4g}: the tau window is truncated before the "
+            "lineshape damping completes; ringing is likely. Use a smaller de "
+            "(de below sigma/2 suffices when gamma = 0)."
         )
     if edge_density_ratio > MAX_EDGE_DENSITY_RATIO:
         messages.append(

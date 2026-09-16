@@ -181,6 +181,44 @@ def test_overlay_stick_tips_touch_the_envelope_for_isolated_lines(overlay_pair):
         plt.close(figure)
 
 
+def test_overlay_stick_heights_follow_the_voigt_peak():
+    """gamma > 0 でも棒の高さは「その線が F(E) に立てる山の高さ」（ADR-0039）。"""
+    from fcenvelope.physics import lineshape_peak
+
+    sigma, gamma = 80.0, 40.0
+    envelope = compute_quietly(
+        MODES,
+        **conditions(
+            temperature=0.0, sigma=sigma, gamma=gamma, e_min=-6000.0, e_max=2000.0, de=2.0
+        ),
+    )
+    lines = lines_quietly(MODES, temperature=0.0, min_weight=1e-6)
+    figure = plot_overlay(envelope, lines)
+    try:
+        (collection,) = figure.axes[0].collections
+        segments = collection.get_segments()
+        drawn = sorted((segment[0][0], segment[1][1]) for segment in segments)
+        expected = sorted(
+            (line.energy, line.weight * lineshape_peak(sigma, gamma))
+            for line in lines.lines
+        )
+        np.testing.assert_allclose(drawn, expected)
+
+        # 他の線の寄与は必ず正なので、曲線は棒の先端を下回らない。これは線形状に
+        # よらず成り立つ。等号に近づくのは孤立した線のときで、ローレンツ成分の裾は
+        # 1/E^2 でしか落ちないためガウスのときより「孤立」の条件が厳しくなる。
+        strongest = max(height for _, height in drawn)
+        for energy, height in drawn:
+            if not envelope.energy[0] <= energy <= envelope.energy[-1]:
+                continue
+            peak = float(np.interp(energy, envelope.energy, envelope.density))
+            assert peak >= height * (1.0 - 1e-9)
+            if height >= 0.1 * strongest:
+                np.testing.assert_allclose(height, peak, rtol=0.02)
+    finally:
+        plt.close(figure)
+
+
 def test_overlay_frames_the_energy_window_of_the_envelope(overlay_pair):
     envelope, lines = overlay_pair
     figure = plot_overlay(envelope, lines)

@@ -18,12 +18,14 @@ from collections.abc import Sequence
 
 import numpy as np
 from scipy import constants
+from scipy.special import wofz
 
 from .models import VibrationalMode
 
 __all__ = [
     "K_B_CM",
     "boltzmann_populations",
+    "lineshape_peak",
     "occupation_numbers",
     "reorganization_energy",
 ]
@@ -62,3 +64,24 @@ def boltzmann_populations(frequency: float, temperature: float, n_max: int) -> n
 def reorganization_energy(modes: Sequence[VibrationalMode]) -> float:
     """再配列エネルギー lambda = sum_alpha S_alpha * eps_alpha [cm^-1]。"""
     return float(sum(mode.huang_rhys * mode.frequency for mode in modes))
+
+
+def lineshape_peak(sigma: float, gamma: float) -> float:
+    """規格化された線形状の頂点 V(0; sigma, gamma) [1/cm^-1] を返す。
+
+    時間領域の減衰因子 exp(-sigma^2 tau^2 / 2 - gamma |tau|) を E へ戻したものが
+    線形状であり、その E = 0 での値がこれにあたる（ADR-0039）。
+
+        V(0; sigma, gamma) = Re[w(i a)] / (sigma sqrt(2 pi)),  a = gamma / (sigma sqrt 2)
+
+    w は Faddeeva 関数。両極限で正しく帰着する。
+
+    * gamma -> 0: 1 / (sigma sqrt(2 pi))  — 規格化ガウシアンの頂点
+    * sigma -> 0: 1 / (pi gamma)          — 規格化ローレンツ関数の頂点
+
+    sigma = 0 は上の式が 0/0 になるので分岐して後者を直接与える。
+    """
+    if sigma == 0.0:
+        return 1.0 / (math.pi * gamma)
+    a = gamma / (sigma * math.sqrt(2.0))
+    return float(wofz(1j * a).real) / (sigma * math.sqrt(2.0 * math.pi))

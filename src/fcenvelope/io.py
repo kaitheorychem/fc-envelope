@@ -53,7 +53,7 @@ CANONICAL_DENSITY_UNIT = "1/cm^-1"
 _DIAGNOSTIC_FLOAT_FIELDS = (
     "d_tau",
     "tau_max",
-    "sigma_tau_max",
+    "damping_at_tau_max",
     "total_area",
     "window_captured_fraction",
     "edge_density_ratio",

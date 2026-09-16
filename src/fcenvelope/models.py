@@ -122,8 +122,14 @@ class Broadening(_ValueModel):
     （ADR-0034）。
     """
 
-    sigma: float = Field(gt=0.0, description="ガウス幅 sigma [cm^-1]")
+    sigma: float = Field(ge=0.0, description="ガウス幅 sigma [cm^-1]")
     gamma: float = Field(default=0.0, ge=0.0, description="ローレンツ幅 gamma [cm^-1]")
+
+    @model_validator(mode="after")
+    def _check_width(self) -> "Broadening":
+        if self.sigma == 0.0 and self.gamma == 0.0:
+            raise ValueError("at least one of sigma and gamma must be positive")
+        return self
 
 
 class EnergyGrid(_ValueModel):

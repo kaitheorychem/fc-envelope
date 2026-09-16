@@ -36,8 +36,12 @@ class EnvelopeDiagnostics:
     tau_max: float
     """tau の絶対値の最大 = pi / de [cm]。"""
 
-    sigma_tau_max: float
-    """sigma * tau_max。打ち切りリンギングの指標。"""
+    damping_at_tau_max: float
+    """exp(-sigma^2 tau_max^2 / 2 - gamma tau_max)。打ち切りリンギングの指標。
+
+    tau 窓が閉じる時点で線形状の減衰がどこまで進んだかを、sigma と gamma の
+    どちらの寄与かを問わずに 1 つの数で表す（ADR-0038）。
+    """
 
     total_area: float
     """全域グリッドでの sum(F) * de。理論上は厳密に 1。"""

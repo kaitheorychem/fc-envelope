@@ -56,19 +56,41 @@ def test_diagnostics_of_a_healthy_calculation():
     assert diagnostics.edge_density_ratio < 1e-4
     assert diagnostics.max_imaginary_ratio < 1e-8
     assert diagnostics.tau_max == pytest.approx(np.pi / setup["grid"].de)
-    assert diagnostics.sigma_tau_max == pytest.approx(
-        setup["broadening"].sigma * diagnostics.tau_max
+    assert diagnostics.damping_at_tau_max == pytest.approx(
+        np.exp(-0.5 * (setup["broadening"].sigma * diagnostics.tau_max) ** 2)
     )
 
 
 def test_coarse_de_warns_about_truncation():
-    """de が sigma に対して粗いと tau 窓が短く、打ち切りリンギングが起きる。"""
+    """de が線形状の幅に対して粗いと tau 窓が短く、打ち切りリンギングが起きる。"""
     setup = conditions(temperature=300.0, sigma=10.0, e_min=-2000.0, e_max=2000.0, de=20.0)
-    with pytest.warns(NumericalQualityWarning, match="sigma\\*tau_max"):
+    with pytest.warns(NumericalQualityWarning, match="damping_at_tau_max"):
         result = compute_envelope(MODES, **setup)
 
-    assert result.diagnostics.sigma_tau_max < 6.0
-    assert _matching(result, "sigma*tau_max")
+    assert result.diagnostics.damping_at_tau_max > np.exp(-18.0)
+    assert _matching(result, "damping_at_tau_max")
+
+
+def test_truncation_threshold_matches_the_old_sigma_tau_rule():
+    """gamma = 0 では「sigma*tau_max >= 6」と完全に等価（ADR-0038）。"""
+    for sigma, de in [(10.0, 20.0), (150.0, 2.0), (30.0, 15.0), (60.0, 30.0)]:
+        setup = conditions(
+            temperature=300.0, sigma=sigma, e_min=-2000.0, e_max=2000.0, de=de
+        )
+        result = compute_quietly(MODES, **setup)
+        sigma_tau_max = sigma * np.pi / de
+        warned = bool(_matching(result, "damping_at_tau_max"))
+        assert warned == (sigma_tau_max < 6.0)
+
+
+def test_pure_lorentzian_does_not_false_alarm():
+    """sigma = 0 でも gamma が減衰させていれば警告は出ない（ADR-0038）。"""
+    setup = conditions(
+        temperature=300.0, sigma=0.0, gamma=150.0, e_min=-12000.0, e_max=12000.0, de=2.0
+    )
+    result = compute_quietly(MODES, **setup)
+    assert result.diagnostics.damping_at_tau_max < np.exp(-18.0)
+    assert not _matching(result, "damping_at_tau_max")
 
 
 def test_narrow_window_raises_the_edge_density_ratio():
