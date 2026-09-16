@@ -94,7 +94,7 @@ def fc_factor_matrix(huang_rhys: float, m_max: int, n_max: int = 0) -> np.ndarra
     """FC 因子 FC_mn = |<m|U(g)|n>|^2 を (m_max+1, n_max+1) で返す。
 
     引数は正準量 S（Huang-Rhys 因子）で受ける。g = sqrt(S) であり、g の符号は
-    FC 因子に効かない（`docs/dev/agreement/io-and-class-design-20260725.md` §2.2）。
+    FC 因子に効かない（`docs/adr/0003-canonical-coupling-huang-rhys.md`）。
     """
     if huang_rhys < 0.0:
         raise ValueError(f"huang_rhys must be non-negative (got {huang_rhys})")

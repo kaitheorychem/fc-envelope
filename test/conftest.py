@@ -70,7 +70,7 @@ def wide_conditions() -> Conditions:
 
 @pytest.fixture
 def input_payload() -> dict:
-    """`docs/dev/agreement/io-and-class-design-20260725.md` §4.2 のスキーマ。"""
+    """`docs/dev/spec/interface.md`「ファイル形式 / 入力」のスキーマ。"""
     return {
         "schema_version": 1,
         "frequency_unit": "cm^-1",

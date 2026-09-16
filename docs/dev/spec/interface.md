@@ -1,9 +1,7 @@
 # インターフェイス仕様
 
 変更が行われにくい部分のみを簡潔に記す。詳細は実際のコード（`src/fcenvelope/`）を本体とする。
-設計の背景・判断理由は `docs/dev/agreement/io-and-class-design-20260725.md`、
-`docs/dev/agreement/modes-csv-20260915.md`、`docs/dev/agreement/fc-factor-20260916.md`、
-`docs/dev/agreement/overlay-plot-20260916.md` を参照。
+設計の背景・判断理由は `docs/adr/` の各 ADR を参照。
 
 スペクトルには 2 つの表現があり、それぞれに「計算・保存・読み込み・描画」の 4 関数を持つ。
 
@@ -82,12 +80,108 @@ FCEnvelopeInput.to_modes()      -> list[VibrationalMode]   # 流儀を消費し�
 
 ## ファイル形式
 
-- 入力: `schema_version` = 1、`frequency_unit` = `"cm^-1"`、`coupling_convention` ∈ {`"g"`, `"huang_rhys"`}、`modes`（1 件以上）、`conditions`
-- `modes` は配列か `{"path": "<file>.csv"}`。CSV は RFC 4180 準拠で、列は `frequency` / `coupling` の 2 列のみ。ヘッダは省略可（省略時はこの順、ヘッダがあれば順序自由）。コメント行・空行なし
-- 出力（エンベロープ）: `kind` = `"fcenvelope.result"` の単一 JSON
-- 出力（離散 FC 因子）: `kind` = `"fcenvelope.fc_lines"` の単一 JSON。`conditions` ではなく `temperature` のみをエコーする
-- どちらの出力も入力エコーは常に正準形（`coupling_convention` = `"huang_rhys"`）
-- 詳細スキーマは `io-and-class-design-20260725.md` §4.2 / §8.2 と `fc-factor-20260916.md` §5.3
+### 入力
+
+```json
+{
+  "schema_version": 1,
+  "frequency_unit": "cm^-1",
+  "coupling_convention": "g",
+  "modes": [
+    { "frequency": 1200.0, "coupling": 0.5 },
+    { "frequency":  450.0, "coupling": 0.8 }
+  ],
+  "conditions": {
+    "temperature": 300.0,
+    "sigma": 150.0,
+    "e_min": -4000.0,
+    "e_max": 1000.0,
+    "de": 5.0
+  }
+}
+```
+
+| フィールド | 型 | 制約 | 意味 |
+|---|---|---|---|
+| `schema_version` | int | `1` 固定 | 不一致は `SchemaVersionError` |
+| `frequency_unit` | str | `"cm^-1"` 固定 | 他は `UnsupportedUnitError` |
+| `coupling_convention` | str | `"g"` \| `"huang_rhys"` | 既定 `"g"` |
+| `modes[].frequency` | float | > 0 | ε_α [cm⁻¹] |
+| `modes[].coupling` | float | ≥ 0 | convention に従う値 |
+| `conditions.temperature` | float | ≥ 0 | T [K]。0 は許可（n_α = 0） |
+| `conditions.sigma` | float | > 0 | σ [cm⁻¹] |
+| `conditions.e_min` | float | < `e_max` | 出力窓の下端 [cm⁻¹] |
+| `conditions.e_max` | float | > `e_min` | 出力窓の上端 [cm⁻¹] |
+| `conditions.de` | float | > 0 | 出力グリッド間隔 [cm⁻¹] |
+
+`modes` は最低 1 要素。配列の代わりに `{"path": "<file>.csv"}` を置くと外部 CSV を参照する
+（相対パスは入力 JSON のディレクトリ基準）。CSV は RFC 4180 準拠で、列は `frequency` /
+`coupling` の 2 列のみ。ヘッダは省略可（省略時はこの順、ヘッダがあれば順序自由）。
+コメント行・空行・補助列は受け付けない。
+
+### 出力（エンベロープ）
+
+```json
+{
+  "schema_version": 1,
+  "kind": "fcenvelope.result",
+  "fcenvelope_version": "0.1.0",
+  "created_at": "2026-07-25T03:21:44Z",
+  "energy_unit": "cm^-1",
+  "intensity_unit": "1/cm^-1",
+  "input": {
+    "frequency_unit": "cm^-1",
+    "coupling_convention": "huang_rhys",
+    "modes": [{ "frequency": 1200.0, "coupling": 0.25 }],
+    "conditions": {
+      "temperature": 300.0, "sigma": 150.0,
+      "e_min": -4000.0, "e_max": 1000.0, "de": 5.0
+    }
+  },
+  "derived": { "reorganization_energy": 300.0 },
+  "diagnostics": {
+    "n_fft": 2048, "d_tau": 6.13e-4, "tau_max": 0.628,
+    "sigma_tau_max": 94.2, "total_area": 0.9999999998,
+    "window_captured_fraction": 0.9993,
+    "edge_intensity_ratio": 3.1e-12,
+    "max_imaginary_ratio": 8.4e-17,
+    "messages": []
+  },
+  "spectrum": {
+    "energy": [-4000.0, -3995.0, "..."],
+    "intensity": [1.2e-9, 1.4e-9, "..."]
+  }
+}
+```
+
+### 出力（離散 FC 因子）
+
+```json
+{
+  "schema_version": 1,
+  "kind": "fcenvelope.fc_lines",
+  "fcenvelope_version": "0.1.0",
+  "created_at": "2026-09-16T01:23:45Z",
+  "energy_unit": "cm^-1",
+  "input": {
+    "frequency_unit": "cm^-1",
+    "coupling_convention": "huang_rhys",
+    "modes": [{ "frequency": 1200.0, "coupling": 0.25 }],
+    "temperature": 300.0
+  },
+  "selection": { "min_intensity": 0.0001, "max_lines": 10000 },
+  "derived": { "reorganization_energy": 300.0 },
+  "diagnostics": { "n_lines": 58, "captured_intensity": 0.997, "...": "..." },
+  "lines": [
+    { "energy": 0.0, "fc_factor": 0.41, "intensity": 0.36, "transitions": [] },
+    { "energy": -450.0, "fc_factor": 0.26, "intensity": 0.23,
+      "transitions": [{ "mode": 1, "initial": 0, "final": 1 }] }
+  ]
+}
+```
+
+`conditions` ではなく `temperature` だけをエコーする。どちらの出力も入力エコーは常に
+正準形（`coupling_convention` = `"huang_rhys"`）で、それ以外は読み込み時に reject する。
 
 ## CLI
 
