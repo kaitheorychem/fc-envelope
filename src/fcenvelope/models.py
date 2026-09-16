@@ -5,6 +5,12 @@
 (frequency [cm^-1], huang_rhys) に正準化されている。以降のコードは流儀も
 単位も知らない。
 
+条件は性質ごとに 4 つに分かれる（ADR-0035）。`temperature` は物理（答えが変わる）、
+`Broadening` は現象論的なモデルパラメータ、`EnergyGrid` と `Selection` は数値
+（どこを標本するか・どれを保持するか）である。エンベロープは temperature /
+broadening / grid を、離散線は temperature / selection を読み、互いに相手の節を
+無視する。
+
 `modes` はモードの配列を直接書くか、`{"path": "modes.csv"}` で CSV のモード表を
 参照する。参照はパース時に解決され、パース後は配列で書いた場合と区別がない。
 """
@@ -35,16 +41,18 @@ __all__ = [
     "CANONICAL_FREQUENCY_UNIT",
     "MODES_CSV_COLUMNS",
     "SCHEMA_VERSION",
+    "Broadening",
     "CouplingConvention",
-    "Conditions",
+    "EnergyGrid",
     "FCEnvelopeInput",
     "ModeSpec",
+    "Selection",
     "VibrationalMode",
     "read_mode_specs_csv",
     "to_huang_rhys",
 ]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 CANONICAL_FREQUENCY_UNIT = "cm^-1"
 
 
@@ -68,34 +76,31 @@ def to_huang_rhys(value: float, convention: CouplingConvention) -> float:
     return COUPLING_REGISTRY[convention](value)
 
 
-class VibrationalMode(BaseModel):
-    """正準表現の振動モード。"""
+class _ValueModel(BaseModel):
+    """凍結された値型の基底。検証の失敗を `InvalidInputError` に揃える。
+
+    pydantic の `ValidationError` をそのまま外へ出すと、利用側が
+    `except FCEnvelopeError` で一括捕捉できなくなる（ADR-0013）。直接構築でも
+    辞書からの生成でも、送出される例外は `InvalidInputError` に統一する。
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    frequency: float = Field(gt=0.0, description="epsilon_alpha [cm^-1]")
-    huang_rhys: float = Field(ge=0.0, description="S_alpha (無次元)")
+    def __init__(self, **data: Any) -> None:
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            raise InvalidInputError(str(exc)) from exc
 
-
-class Conditions(BaseModel):
-    """計算条件。正準表現とファイル表現が一致するため共用する。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    temperature: float = Field(ge=0.0, description="T [K]")
-    sigma: float = Field(gt=0.0, description="sigma [cm^-1]")
-    e_min: float = Field(description="出力窓の下端 [cm^-1]")
-    e_max: float = Field(description="出力窓の上端 [cm^-1]")
-    de: float = Field(gt=0.0, description="出力グリッド間隔 [cm^-1]")
-
-    @model_validator(mode="after")
-    def _check_window(self) -> "Conditions":
-        if not self.e_min < self.e_max:
-            raise ValueError(f"e_min must be smaller than e_max (got {self.e_min} >= {self.e_max})")
-        return self
+    # pydantic は `__init__` の上書きを見つけると、入れ子の検証もそれを経由させる。
+    # そうなると入れ子のモデルが 1 つ落ちた時点で `ValidationError` の積み上げが
+    # 止まり、入力ファイル全体の誤りを 1 度に報告できなくなる。この印を付けると
+    # `model_validate` は基底の検証器を直に使い、上の `__init__` は Python から
+    # 直接構築したときだけ働く。`test_validation.py` がこの両立を固定している。
+    __init__.__pydantic_base_init__ = True  # type: ignore[attr-defined]
 
     @classmethod
-    def from_obj(cls, data: Any) -> "Conditions":
+    def from_obj(cls, data: Any):
         """辞書から生成する。pydantic の検証失敗は `InvalidInputError` になる。"""
         try:
             return cls.model_validate(data)
@@ -103,10 +108,54 @@ class Conditions(BaseModel):
             raise InvalidInputError(str(exc)) from exc
 
 
-class ModeSpec(BaseModel):
-    """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。"""
+class VibrationalMode(_ValueModel):
+    """正準表現の振動モード。"""
 
-    model_config = ConfigDict(frozen=True)
+    frequency: float = Field(gt=0.0, description="epsilon_alpha [cm^-1]")
+    huang_rhys: float = Field(ge=0.0, description="S_alpha (無次元)")
+
+
+class Broadening(_ValueModel):
+    """線形状。時間領域の減衰因子 exp(-sigma^2 tau^2 / 2 - gamma |tau|) の 2 パラメータ。
+
+    ガウス・ローレンツ・Voigt は別の「種類」ではなく、この 1 つの族の中の点である
+    （ADR-0034）。
+    """
+
+    sigma: float = Field(gt=0.0, description="ガウス幅 sigma [cm^-1]")
+    gamma: float = Field(default=0.0, ge=0.0, description="ローレンツ幅 gamma [cm^-1]")
+
+
+class EnergyGrid(_ValueModel):
+    """エンベロープを標本する E 軸上の点列。省略値・自動推定は置かない。"""
+
+    e_min: float = Field(description="出力窓の下端 [cm^-1]")
+    e_max: float = Field(description="出力窓の上端 [cm^-1]")
+    de: float = Field(gt=0.0, description="出力グリッド間隔 [cm^-1]")
+
+    @model_validator(mode="after")
+    def _check_window(self) -> "EnergyGrid":
+        if not self.e_min < self.e_max:
+            raise ValueError(f"e_min must be smaller than e_max (got {self.e_min} >= {self.e_max})")
+        return self
+
+
+class Selection(_ValueModel):
+    """離散線のうちどれを保持するかを決めるつまみの組。
+
+    `LinesResult` はこのオブジェクトを丸ごとエコーする。つまみを足したがエコーを
+    足し忘れる、というバグのクラス自体がそれで消える（ADR-0035）。
+    """
+
+    min_weight: float = Field(default=1e-4, gt=0.0, le=1.0, description="保持する重みの下限")
+    max_lines: int = Field(default=10000, ge=1, description="保持・列挙する線数の上限")
+    max_quanta: int | None = Field(
+        default=None, ge=0, description="1 モードあたりの振動量子数の上限（既定は自動）"
+    )
+
+
+class ModeSpec(_ValueModel):
+    """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。"""
 
     frequency: float = Field(gt=0.0)
     coupling: float = Field(ge=0.0)
@@ -163,7 +212,7 @@ def read_mode_specs_csv(path: str | Path) -> list[ModeSpec]:
             )
         try:
             specs.append(ModeSpec.model_validate(dict(zip(columns, fields))))
-        except ValidationError as exc:
+        except (ValidationError, InvalidInputError) as exc:
             raise InvalidInputError(f"{location}: {exc}{hint}") from exc
     return specs
 
@@ -173,11 +222,14 @@ class FCEnvelopeInput(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    schema_version: Literal[1] = SCHEMA_VERSION
+    schema_version: Literal[2] = SCHEMA_VERSION
     frequency_unit: str = CANONICAL_FREQUENCY_UNIT
     coupling_convention: CouplingConvention = CouplingConvention.G
     modes: list[ModeSpec] = Field(min_length=1)
-    conditions: Conditions
+    temperature: float = Field(ge=0.0, description="T [K]")
+    broadening: Broadening
+    grid: EnergyGrid
+    selection: Selection = Selection()
 
     @field_validator("schema_version", mode="before")
     @classmethod

@@ -35,7 +35,7 @@ import numpy as np
 from scipy.special import gammaln
 
 from .errors import InvalidInputError, NumericalQualityWarning
-from .models import VibrationalMode
+from .models import Selection, VibrationalMode
 from .physics import K_B_CM, boltzmann_populations, reorganization_energy
 from .result import FCLine, LinesDiagnostics, LinesResult, ModeTransition
 from .version import __version__
@@ -213,53 +213,39 @@ def _mode_candidates(
     )
 
 
-def _validate(
-    temperature: float, min_weight: float, max_lines: int, max_quanta: int | None
-) -> None:
-    """公開関数の引数を検証する。違反は `InvalidInputError`。"""
-    if temperature < 0.0:
-        raise InvalidInputError(f"temperature must be non-negative (got {temperature})")
-    if not 0.0 < min_weight <= 1.0:
-        raise InvalidInputError(f"min_weight must lie in (0, 1] (got {min_weight})")
-    if max_lines < 1:
-        raise InvalidInputError(f"max_lines must be at least 1 (got {max_lines})")
-    if max_quanta is not None and max_quanta < 0:
-        raise InvalidInputError(f"max_quanta must be non-negative (got {max_quanta})")
-
-
 def compute_fc_lines(
     modes: Sequence[VibrationalMode],
     *,
     temperature: float,
-    min_weight: float = 1e-4,
-    max_lines: int = 10000,
-    max_quanta: int | None = None,
+    selection: Selection = Selection(),
 ) -> LinesResult:
     """離散 FC 因子と対応するエネルギーを、重みの大きい順に列挙する。
 
-    `min_weight` 以上の線を**すべて**返す（`diagnostics.beam_truncated` が
-    False である限り）。1 モードあたりの寄与 P(n) * FC_mn は 1 以下なので、
+    `selection.min_weight` 以上の線を**すべて**返す（`diagnostics.beam_truncated`
+    が False である限り）。1 モードあたりの寄与 P(n) * FC_mn は 1 以下なので、
     完成した線の重みは途中経過の積を超えない。したがってモードを 1 つずつ
     合成しながら閾値で枝刈りしても、閾値以上の線を取りこぼさない。
 
     Args:
         modes: 正準表現の振動モード列（frequency [cm^-1], huang_rhys）。
         temperature: T [K]。始状態の熱占有に効く。0 なら始状態は振動基底状態のみ。
-        min_weight: 保持する重みの下限（0 < x <= 1）。
-        max_lines: 保持・列挙する線数の上限。超えると重みの上位のみを残して警告する。
-        max_quanta: 1 モードあたりの振動量子数の上限。省略時は打ち切り残差が
-            `min_weight` を下回るまで自動で伸ばす（上限 `MAX_QUANTA_PER_MODE`）。
+        selection: どの線を保持するかのつまみ。結果へ丸ごとエコーされる。
 
     Returns:
         線の列と、入力エコー・診断値・来歴を含む結果クラス。
     """
-    _validate(temperature, min_weight, max_lines, max_quanta)
+    if temperature < 0.0:
+        raise InvalidInputError(f"temperature must be non-negative (got {temperature})")
     modes = tuple(modes)
     if not modes:
         raise InvalidInputError("modes must not be empty")
 
+    min_weight = selection.min_weight
+    max_lines = selection.max_lines
+
     candidates = [
-        _mode_candidates(mode, temperature, min_weight, max_quanta) for mode in modes
+        _mode_candidates(mode, temperature, min_weight, selection.max_quanta)
+        for mode in modes
     ]
 
     # suffix_bound[i] = 未処理のモード i.. が到達しうる重みの積の上限。
@@ -307,8 +293,7 @@ def compute_fc_lines(
         lines=tuple(lines),
         modes=modes,
         temperature=temperature,
-        min_weight=min_weight,
-        max_lines=max_lines,
+        selection=selection,
         reorganization_energy=reorganization_energy(modes),
         diagnostics=LinesDiagnostics(messages=messages, **diagnostics_kwargs),
         fcenvelope_version=__version__,

@@ -11,7 +11,7 @@ from datetime import datetime
 
 import numpy as np
 
-from .models import Conditions, VibrationalMode
+from .models import Broadening, EnergyGrid, Selection, VibrationalMode
 
 __all__ = [
     "EnvelopeDiagnostics",
@@ -68,8 +68,14 @@ class EnvelopeResult:
     modes: tuple[VibrationalMode, ...]
     """入力エコー（正準形）。"""
 
-    conditions: Conditions
-    """入力エコー。"""
+    temperature: float
+    """入力エコー。T [K]。"""
+
+    broadening: Broadening
+    """入力エコー。線形状 (sigma, gamma)。"""
+
+    grid: EnergyGrid
+    """入力エコー。出力 E グリッド。"""
 
     reorganization_energy: float
     """lambda = sum_alpha S_alpha * epsilon_alpha [cm^-1]。"""
@@ -163,11 +169,8 @@ class LinesResult:
     temperature: float
     """T [K]。始状態の熱占有に効く。"""
 
-    min_weight: float
-    """この重み以上の線をすべて保持する（`beam_truncated` が False である限り網羅的）。"""
-
-    max_lines: int
-    """保持・列挙する線数の上限。"""
+    selection: Selection
+    """入力エコー。どの線を保持したかのつまみを丸ごと持つ（ADR-0035）。"""
 
     reorganization_energy: float
     """lambda = sum_alpha S_alpha * epsilon_alpha [cm^-1]。"""

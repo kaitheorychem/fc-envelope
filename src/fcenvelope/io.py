@@ -20,8 +20,10 @@ from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
 from .models import (
     CANONICAL_FREQUENCY_UNIT,
     SCHEMA_VERSION,
+    Broadening,
     CouplingConvention,
-    FCEnvelopeInput,
+    EnergyGrid,
+    Selection,
     VibrationalMode,
 )
 from .result import (
@@ -86,6 +88,36 @@ def _parse_timestamp(text: Any) -> datetime:
     return moment.astimezone(timezone.utc)
 
 
+def _parse_input_echo(echo: Any) -> tuple[VibrationalMode, ...]:
+    """入力エコーの単位と流儀を検査し、正準表現のモード列を取り出す。
+
+    エコーは常に正準形（`coupling_convention` = `"huang_rhys"`）で書き出される。
+    他の流儀は読み込み側に曖昧さを残すので受け付けない。
+    """
+    if not isinstance(echo, dict):
+        raise InvalidInputError(f"input must be a JSON object, got {type(echo).__name__}")
+
+    frequency_unit = echo.get("frequency_unit", CANONICAL_FREQUENCY_UNIT)
+    if frequency_unit != CANONICAL_FREQUENCY_UNIT:
+        raise UnsupportedUnitError(
+            f"unsupported frequency_unit {frequency_unit!r} "
+            f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
+        )
+    convention = echo.get("coupling_convention", CouplingConvention.HUANG_RHYS.value)
+    if convention != CouplingConvention.HUANG_RHYS.value:
+        raise InvalidInputError(
+            f"input.coupling_convention must be "
+            f"{CouplingConvention.HUANG_RHYS.value!r} (got {convention!r})"
+        )
+    try:
+        return tuple(
+            VibrationalMode(frequency=spec["frequency"], huang_rhys=spec["coupling"])
+            for spec in _require(echo, "modes", "input.modes")
+        )
+    except (KeyError, TypeError, ValidationError, InvalidInputError) as exc:
+        raise InvalidInputError(f"malformed input.modes: {exc}") from exc
+
+
 def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
     """結果クラスを出力 JSON の構造（§8.2）へ写す。"""
     return {
@@ -102,7 +134,9 @@ def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
                 {"frequency": mode.frequency, "coupling": mode.huang_rhys}
                 for mode in result.modes
             ],
-            "conditions": result.conditions.model_dump(),
+            "temperature": result.temperature,
+            "broadening": result.broadening.model_dump(),
+            "grid": result.grid.model_dump(),
         },
         "derived": {"reorganization_energy": result.reorganization_energy},
         "diagnostics": {
@@ -169,9 +203,10 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
             f"(only {CANONICAL_DENSITY_UNIT!r} is supported)"
         )
 
-    echo = dict(_require(data, "input", "input"))
-    echo.setdefault("schema_version", SCHEMA_VERSION)
-    parsed_input = FCEnvelopeInput.from_obj(echo)
+    echo = _require(data, "input", "input")
+    modes = _parse_input_echo(echo)
+    broadening = Broadening.from_obj(_require(echo, "broadening", "input.broadening"))
+    grid = EnergyGrid.from_obj(_require(echo, "grid", "input.grid"))
 
     diagnostics_data = _require(data, "diagnostics", "diagnostics")
     try:
@@ -197,8 +232,10 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
     return EnvelopeResult(
         energy=energy,
         density=density,
-        modes=tuple(parsed_input.to_modes()),
-        conditions=parsed_input.conditions,
+        modes=modes,
+        temperature=float(_require(echo, "temperature", "input.temperature")),
+        broadening=broadening,
+        grid=grid,
         reorganization_energy=float(_require(derived, "reorganization_energy", "derived.reorganization_energy")),
         diagnostics=diagnostics,
         fcenvelope_version=str(_require(data, "fcenvelope_version", "fcenvelope_version")),
@@ -243,10 +280,7 @@ def lines_to_dict(result: LinesResult) -> dict[str, Any]:
             ],
             "temperature": result.temperature,
         },
-        "selection": {
-            "min_weight": result.min_weight,
-            "max_lines": result.max_lines,
-        },
+        "selection": result.selection.model_dump(),
         "derived": {"reorganization_energy": result.reorganization_energy},
         "diagnostics": {
             **{
@@ -323,25 +357,7 @@ def lines_from_dict(data: Any) -> LinesResult:
         )
 
     echo = _require(data, "input", "input")
-    frequency_unit = echo.get("frequency_unit", CANONICAL_FREQUENCY_UNIT)
-    if frequency_unit != CANONICAL_FREQUENCY_UNIT:
-        raise UnsupportedUnitError(
-            f"unsupported frequency_unit {frequency_unit!r} "
-            f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
-        )
-    convention = echo.get("coupling_convention", CouplingConvention.HUANG_RHYS.value)
-    if convention != CouplingConvention.HUANG_RHYS.value:
-        raise InvalidInputError(
-            f"input.coupling_convention must be "
-            f"{CouplingConvention.HUANG_RHYS.value!r} (got {convention!r})"
-        )
-    try:
-        modes = tuple(
-            VibrationalMode(frequency=spec["frequency"], huang_rhys=spec["coupling"])
-            for spec in _require(echo, "modes", "input.modes")
-        )
-    except (KeyError, TypeError, ValidationError) as exc:
-        raise InvalidInputError(f"malformed input.modes: {exc}") from exc
+    modes = _parse_input_echo(echo)
 
     diagnostics_data = _require(data, "diagnostics", "diagnostics")
     try:
@@ -377,8 +393,7 @@ def lines_from_dict(data: Any) -> LinesResult:
         lines=lines,
         modes=modes,
         temperature=float(_require(echo, "temperature", "input.temperature")),
-        min_weight=float(_require(selection, "min_weight", "selection.min_weight")),
-        max_lines=int(_require(selection, "max_lines", "selection.max_lines")),
+        selection=Selection.from_obj(selection),
         reorganization_energy=float(
             _require(derived, "reorganization_energy", "derived.reorganization_energy")
         ),

@@ -12,12 +12,12 @@ import warnings
 
 import numpy as np
 import pytest
-from conftest import lines_quietly
+from conftest import conditions, lines_quietly
 
 from fcenvelope import (
-    Conditions,
     InvalidInputError,
     NumericalQualityWarning,
+    Selection,
     VibrationalMode,
     compute_fc_lines,
 )
@@ -73,9 +73,9 @@ def test_zero_phonon_line_comes_first_and_sits_at_zero(multi_mode, temperature):
 
 def test_lines_are_sorted_by_weight(multi_mode, temperature):
     result = lines_quietly(multi_mode, temperature=temperature, min_weight=1e-6)
-    intensities = result.weights
-    assert np.all(np.diff(intensities) <= 0.0)
-    assert np.all(intensities >= result.min_weight)
+    weights = result.weights
+    assert np.all(np.diff(weights) <= 0.0)
+    assert np.all(weights >= result.selection.min_weight)
 
 
 def test_broadened_lines_reproduce_the_envelope(multi_mode, temperature):
@@ -83,10 +83,12 @@ def test_broadened_lines_reproduce_the_envelope(multi_mode, temperature):
     from conftest import compute_quietly
 
     sigma = 150.0
-    conditions = Conditions(
-        temperature=temperature, sigma=sigma, e_min=-12000.0, e_max=12000.0, de=4.0
+    envelope = compute_quietly(
+        multi_mode,
+        **conditions(
+            temperature=temperature, sigma=sigma, e_min=-12000.0, e_max=12000.0, de=4.0
+        ),
     )
-    envelope = compute_quietly(multi_mode, conditions)
     result = lines_quietly(
         multi_mode, temperature=temperature, min_weight=1e-7, max_lines=200000
     )
@@ -184,7 +186,9 @@ def test_temperature_zero_keeps_the_initial_state_in_the_ground_state(multi_mode
 def test_max_lines_truncates_and_warns(multi_mode):
     with pytest.warns(NumericalQualityWarning, match="max_lines"):
         result = compute_fc_lines(
-            multi_mode, temperature=300.0, min_weight=1e-8, max_lines=50
+            multi_mode,
+            temperature=300.0,
+            selection=Selection(min_weight=1e-8, max_lines=50),
         )
     assert result.diagnostics.n_lines == 50
     assert result.diagnostics.beam_truncated is True
@@ -193,21 +197,27 @@ def test_max_lines_truncates_and_warns(multi_mode):
 def test_low_coverage_warns(multi_mode):
     """線は拾えているが強度の大半を取りこぼしている場合。"""
     with pytest.warns(NumericalQualityWarning, match="captured_weight"):
-        result = compute_fc_lines(multi_mode, temperature=300.0, min_weight=0.02)
+        result = compute_fc_lines(
+            multi_mode, temperature=300.0, selection=Selection(min_weight=0.02)
+        )
     assert result.diagnostics.n_lines > 0
     assert result.diagnostics.captured_weight < 0.9
 
 
 def test_no_line_above_the_threshold_reports_the_strongest(multi_mode):
     with pytest.warns(NumericalQualityWarning, match="strongest possible line"):
-        result = compute_fc_lines(multi_mode, temperature=300.0, min_weight=1.0)
+        result = compute_fc_lines(
+            multi_mode, temperature=300.0, selection=Selection(min_weight=1.0)
+        )
     assert result.lines == ()
     assert result.diagnostics.captured_weight == 0.0
 
 
 def test_max_quanta_caps_the_ladder_and_warns(single_mode):
     with pytest.warns(NumericalQualityWarning, match="min_mode_completeness"):
-        result = compute_fc_lines(single_mode, temperature=0.0, max_quanta=1)
+        result = compute_fc_lines(
+            single_mode, temperature=0.0, selection=Selection(max_quanta=1)
+        )
     assert result.diagnostics.max_final_quanta == 1
     assert result.diagnostics.min_mode_completeness < 1.0
 
@@ -217,24 +227,47 @@ def test_recurrence_limited_initial_state_warns():
     modes = [VibrationalMode(frequency=40.0, huang_rhys=25.0)]
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        result = compute_fc_lines(modes, temperature=300.0, min_weight=1e-4)
+        result = compute_fc_lines(
+            modes, temperature=300.0, selection=Selection(min_weight=1e-4)
+        )
     assert result.diagnostics.recurrence_limited is True
     assert any("recurrence" in str(entry.message) for entry in caught)
+
+
+def test_negative_temperature_is_rejected(single_mode):
+    with pytest.raises(InvalidInputError):
+        compute_fc_lines(single_mode, temperature=-1.0)
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"temperature": -1.0},
-        {"temperature": 0.0, "min_weight": 0.0},
-        {"temperature": 0.0, "min_weight": 2.0},
-        {"temperature": 0.0, "max_lines": 0},
-        {"temperature": 0.0, "max_quanta": -1},
+        {"min_weight": 0.0},
+        {"min_weight": 2.0},
+        {"max_lines": 0},
+        {"max_quanta": -1},
     ],
 )
-def test_invalid_arguments(single_mode, kwargs):
+def test_invalid_selection(kwargs):
+    """つまみの検証は `Selection` に宿る。構築の時点で弾かれる。"""
     with pytest.raises(InvalidInputError):
-        compute_fc_lines(single_mode, **kwargs)
+        Selection(**kwargs)
+
+
+def test_selection_defaults_match_the_documented_values():
+    selection = Selection()
+    assert (selection.min_weight, selection.max_lines, selection.max_quanta) == (
+        1e-4,
+        10000,
+        None,
+    )
+
+
+def test_selection_is_echoed_whole(single_mode):
+    """max_quanta を含め、結果ファイルから計算を再現できる（ADR-0035）。"""
+    selection = Selection(min_weight=1e-5, max_lines=500, max_quanta=12)
+    result = lines_quietly(single_mode, temperature=300.0, selection=selection)
+    assert result.selection == selection
 
 
 def test_empty_modes_are_rejected():

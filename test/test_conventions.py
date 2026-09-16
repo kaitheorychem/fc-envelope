@@ -9,23 +9,25 @@ from conftest import compute_quietly
 from fcenvelope import CouplingConvention, FCEnvelopeInput, VibrationalMode
 from fcenvelope.models import to_huang_rhys
 
-CONDITIONS = {
-    "temperature": 300.0,
-    "sigma": 150.0,
-    "e_min": -4000.0,
-    "e_max": 1000.0,
-    "de": 5.0,
-}
-
-
 def _payload(convention: str, coupling: float) -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "frequency_unit": "cm^-1",
         "coupling_convention": convention,
         "modes": [{"frequency": 1200.0, "coupling": coupling}],
-        "conditions": CONDITIONS,
+        "temperature": 300.0,
+        "broadening": {"sigma": 150.0},
+        "grid": {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0},
     }
+
+
+def _envelope(parsed):
+    return compute_quietly(
+        parsed.to_modes(),
+        temperature=parsed.temperature,
+        broadening=parsed.broadening,
+        grid=parsed.grid,
+    )
 
 
 def test_registry_conversions():
@@ -42,8 +44,8 @@ def test_g_and_huang_rhys_agree():
         VibrationalMode(frequency=1200.0, huang_rhys=0.25)
     ]
 
-    result_g = compute_quietly(from_g.to_modes(), from_g.conditions)
-    result_s = compute_quietly(from_s.to_modes(), from_s.conditions)
+    result_g = _envelope(from_g)
+    result_s = _envelope(from_s)
 
     np.testing.assert_array_equal(result_g.density, result_s.density)
     assert result_g.reorganization_energy == result_s.reorganization_energy

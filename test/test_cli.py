@@ -27,7 +27,7 @@ def test_run_writes_a_result(tmp_path, input_file):
     assert invocation.exit_code == 0, invocation.output
     result = load_envelope(output)
     assert result.energy.size > 0
-    assert result.conditions.temperature == 300.0
+    assert result.temperature == 300.0
     assert result.modes[0].huang_rhys == 0.25
 
 
@@ -56,6 +56,8 @@ def test_run_overrides_conditions(tmp_path, input_file):
             "0",
             "--sigma",
             "80",
+            "--gamma",
+            "30",
             "--e-min",
             "-6000",
             "--e-max",
@@ -66,12 +68,13 @@ def test_run_overrides_conditions(tmp_path, input_file):
     )
 
     assert invocation.exit_code == 0, invocation.output
-    conditions = load_envelope(output).conditions
-    assert conditions.temperature == 0.0
-    assert conditions.sigma == 80.0
-    assert conditions.e_min == -6000.0
-    assert conditions.e_max == 2000.0
-    assert conditions.de == 4.0
+    result = load_envelope(output)
+    assert result.temperature == 0.0
+    assert result.broadening.sigma == 80.0
+    assert result.broadening.gamma == 30.0
+    assert result.grid.e_min == -6000.0
+    assert result.grid.e_max == 2000.0
+    assert result.grid.de == 4.0
 
 
 def test_run_leaves_unspecified_conditions_untouched(tmp_path, input_file):
@@ -81,10 +84,10 @@ def test_run_leaves_unspecified_conditions_untouched(tmp_path, input_file):
     )
 
     assert invocation.exit_code == 0, invocation.output
-    conditions = load_envelope(output).conditions
-    assert conditions.temperature == 77.0
-    assert conditions.sigma == 150.0
-    assert conditions.de == 5.0
+    result = load_envelope(output)
+    assert result.temperature == 77.0
+    assert result.broadening.sigma == 150.0
+    assert result.grid.de == 5.0
 
 
 def test_run_reads_modes_from_referenced_csv(tmp_path, input_payload):
@@ -223,8 +226,8 @@ def test_lines_overrides_the_temperature(tmp_path, input_file):
     assert invocation.exit_code == 0, invocation.output
     result = load_lines(output)
     assert result.temperature == 0.0
-    assert result.min_weight == 1e-6
-    assert result.max_lines == 500
+    assert result.selection.min_weight == 1e-6
+    assert result.selection.max_lines == 500
     assert result.diagnostics.max_initial_quanta == 0
 
 
@@ -370,3 +373,25 @@ def test_plot_rejects_magnification_without_an_overlay(tmp_path, result_and_line
         app, ["plot", str(result), "-o", str(tmp_path / "x.png"), "--magnify", "5"]
     )
     assert invocation.exit_code == 2
+
+
+def test_lines_reads_the_selection_from_the_input_file(tmp_path, input_payload):
+    """つまみは入力ファイルにも書ける。CLI は指定されたものだけを上書きする。"""
+    input_payload["selection"] = {
+        "min_weight": 1e-5,
+        "max_lines": 4321,
+        "max_quanta": 7,
+    }
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+    output = tmp_path / "lines.json"
+
+    invocation = runner.invoke(
+        app, ["lines", str(path), "-o", str(output), "--max-lines", "99"]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    selection = load_lines(output).selection
+    assert selection.min_weight == 1e-5
+    assert selection.max_lines == 99
+    assert selection.max_quanta == 7

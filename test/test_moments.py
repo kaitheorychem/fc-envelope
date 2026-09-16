@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from conftest import compute_quietly, moments
+from conftest import compute_quietly, conditions, moments
 
-from fcenvelope import Conditions, VibrationalMode
+from fcenvelope import VibrationalMode
 from fcenvelope.physics import occupation_numbers
 
 TEMPERATURES = [0.0, 77.0, 300.0]
@@ -33,27 +33,30 @@ def temperature(request: pytest.FixtureRequest) -> float:
     return request.param
 
 
-def _conditions(temperature: float) -> Conditions:
-    return Conditions(
-        temperature=temperature, sigma=150.0, e_min=-12000.0, e_max=12000.0, de=2.0
+SIGMA = 150.0
+
+
+def _conditions(temperature: float) -> dict:
+    return conditions(
+        temperature=temperature, sigma=SIGMA, e_min=-12000.0, e_max=12000.0, de=2.0
     )
 
 
 def test_normalization_over_full_grid(multi_mode, temperature):
     """全域グリッドでの面積は離散和として厳密に 1 になる。"""
-    result = compute_quietly(multi_mode, _conditions(temperature))
+    result = compute_quietly(multi_mode, **_conditions(temperature))
     assert result.diagnostics.total_area == pytest.approx(1.0, abs=1e-12)
 
 
 def test_zeroth_moment(multi_mode, temperature):
-    result = compute_quietly(multi_mode, _conditions(temperature))
+    result = compute_quietly(multi_mode, **_conditions(temperature))
     area, _, _ = moments(result)
     assert area == pytest.approx(1.0, abs=1e-9)
 
 
 def test_first_moment_is_minus_reorganization_energy(multi_mode, temperature):
     """<E> = -lambda。温度に依存しない。"""
-    result = compute_quietly(multi_mode, _conditions(temperature))
+    result = compute_quietly(multi_mode, **_conditions(temperature))
     _, mean, _ = moments(result)
     expected = -sum(mode.huang_rhys * mode.frequency for mode in multi_mode)
     assert result.reorganization_energy == pytest.approx(-expected)
@@ -62,11 +65,10 @@ def test_first_moment_is_minus_reorganization_energy(multi_mode, temperature):
 
 def test_second_moment_carries_the_temperature(multi_mode, temperature):
     """Var(E) にのみ温度が効く。"""
-    conditions = _conditions(temperature)
-    result = compute_quietly(multi_mode, conditions)
+    result = compute_quietly(multi_mode, **_conditions(temperature))
     _, _, variance = moments(result)
     assert variance == pytest.approx(
-        expected_variance(multi_mode, temperature, conditions.sigma), rel=1e-8
+        expected_variance(multi_mode, temperature, SIGMA), rel=1e-8
     )
 
 
@@ -75,7 +77,7 @@ def test_first_moment_is_temperature_independent(multi_mode):
     means = []
     variances = []
     for temperature in TEMPERATURES:
-        _, mean, variance = moments(compute_quietly(multi_mode, _conditions(temperature)))
+        _, mean, variance = moments(compute_quietly(multi_mode, **_conditions(temperature)))
         means.append(mean)
         variances.append(variance)
 
@@ -85,11 +87,10 @@ def test_first_moment_is_temperature_independent(multi_mode):
 
 
 def test_single_mode_moments(single_mode, temperature):
-    conditions = _conditions(temperature)
-    result = compute_quietly(single_mode, conditions)
+    result = compute_quietly(single_mode, **_conditions(temperature))
     area, mean, variance = moments(result)
     assert area == pytest.approx(1.0, abs=1e-9)
     assert mean == pytest.approx(-single_mode[0].huang_rhys * single_mode[0].frequency, rel=1e-8)
     assert variance == pytest.approx(
-        expected_variance(single_mode, temperature, conditions.sigma), rel=1e-8
+        expected_variance(single_mode, temperature, SIGMA), rel=1e-8
     )

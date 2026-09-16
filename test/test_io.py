@@ -6,18 +6,18 @@ import json
 
 import numpy as np
 import pytest
-from conftest import compute_quietly, lines_quietly
+from conftest import compute_quietly, conditions, lines_quietly
 
 from fcenvelope import (
-    Conditions,
     FCEnvelopeInput,
     SchemaVersionError,
+    Selection,
     UnsupportedUnitError,
     VibrationalMode,
-    load_lines,
     load_envelope,
-    save_lines,
+    load_lines,
     save_envelope,
+    save_lines,
 )
 from fcenvelope.errors import InvalidInputError
 from fcenvelope.io import load_any
@@ -25,10 +25,10 @@ from fcenvelope.io import load_any
 
 @pytest.fixture
 def result(multi_mode):
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-6000.0, e_max=2000.0, de=5.0
+    return compute_quietly(
+        multi_mode,
+        **conditions(temperature=300.0, sigma=150.0, e_min=-6000.0, e_max=2000.0, de=5.0),
     )
-    return compute_quietly(multi_mode, conditions)
 
 
 def test_round_trip_is_exact(result, tmp_path):
@@ -39,7 +39,9 @@ def test_round_trip_is_exact(result, tmp_path):
     np.testing.assert_array_equal(restored.energy, result.energy)
     np.testing.assert_array_equal(restored.density, result.density)
     assert restored.modes == result.modes
-    assert restored.conditions == result.conditions
+    assert restored.temperature == result.temperature
+    assert restored.broadening == result.broadening
+    assert restored.grid == result.grid
     assert restored.reorganization_energy == result.reorganization_energy
     assert restored.diagnostics == result.diagnostics
     assert restored.fcenvelope_version == result.fcenvelope_version
@@ -61,26 +63,33 @@ def test_written_input_echo_is_canonical(tmp_path):
     """入力エコーは常に huang_rhys 流儀で書き出される。"""
     parsed = FCEnvelopeInput.from_obj(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "coupling_convention": "g",
             "modes": [{"frequency": 1200.0, "coupling": 0.5}],
-            "conditions": {
-                "temperature": 300.0,
-                "sigma": 150.0,
-                "e_min": -4000.0,
-                "e_max": 1000.0,
-                "de": 5.0,
-            },
+            "temperature": 300.0,
+            "broadening": {"sigma": 150.0},
+            "grid": {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0},
         }
     )
     path = tmp_path / "result.json"
-    save_envelope(compute_quietly(parsed.to_modes(), parsed.conditions), path)
+    save_envelope(
+        compute_quietly(
+            parsed.to_modes(),
+            temperature=parsed.temperature,
+            broadening=parsed.broadening,
+            grid=parsed.grid,
+        ),
+        path,
+    )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["kind"] == "fcenvelope.envelope"
     assert payload["input"]["coupling_convention"] == "huang_rhys"
     assert payload["input"]["frequency_unit"] == "cm^-1"
     assert payload["input"]["modes"] == [{"frequency": 1200.0, "coupling": 0.25}]
+    assert payload["input"]["temperature"] == 300.0
+    assert payload["input"]["broadening"] == {"sigma": 150.0, "gamma": 0.0}
+    assert payload["input"]["grid"] == {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0}
     assert payload["energy_unit"] == "cm^-1"
     assert payload["density_unit"] == "1/cm^-1"
     assert payload["derived"]["reorganization_energy"] == 300.0
@@ -112,7 +121,7 @@ def _corrupt(path, mutate):
 def test_schema_version_mismatch(result, tmp_path):
     path = tmp_path / "result.json"
     save_envelope(result, path)
-    _corrupt(path, lambda p: p.update(schema_version=2))
+    _corrupt(path, lambda p: p.update(schema_version=1))
     with pytest.raises(SchemaVersionError):
         load_envelope(path)
 
@@ -158,7 +167,7 @@ def test_load_input_file(tmp_path, input_payload):
     path.write_text(json.dumps(input_payload), encoding="utf-8")
     parsed = FCEnvelopeInput.from_path(path)
     assert parsed.to_modes()[0] == VibrationalMode(frequency=1200.0, huang_rhys=0.25)
-    assert parsed.conditions.temperature == 300.0
+    assert parsed.temperature == 300.0
 
 
 # --- 離散 FC 因子の save -> load ---
@@ -189,11 +198,15 @@ def test_fc_lines_payload_shape(lines_result, tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["kind"] == "fcenvelope.fc_lines"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["energy_unit"] == "cm^-1"
     assert payload["input"]["coupling_convention"] == "huang_rhys"
     assert payload["input"]["temperature"] == 300.0
-    assert payload["selection"] == {"min_weight": 1e-4, "max_lines": 10000}
+    assert payload["selection"] == {
+        "min_weight": 1e-4,
+        "max_lines": 10000,
+        "max_quanta": None,
+    }
     assert len(payload["lines"]) == lines_result.diagnostics.n_lines
     first = payload["lines"][0]
     assert set(first) == {"energy", "fc_factor", "weight", "transitions"}
@@ -229,7 +242,7 @@ def test_load_any_dispatches_on_kind(result, lines_result, tmp_path):
 def test_fc_lines_schema_version_mismatch(lines_result, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p.update(schema_version=2))
+    _corrupt(path, lambda p: p.update(schema_version=1))
     with pytest.raises(SchemaVersionError):
         load_lines(path)
 
@@ -266,3 +279,15 @@ def test_fc_lines_malformed_transition(lines_result, tmp_path):
     _corrupt(path, lambda p: p["lines"][1].update(transitions=[{"mode": 0}]))
     with pytest.raises(InvalidInputError):
         load_lines(path)
+
+
+def test_fc_lines_round_trip_carries_max_quanta(multi_mode, tmp_path):
+    """`Selection` を丸ごと持つので max_quanta も結果から再現できる（ADR-0035）。"""
+    result = lines_quietly(
+        multi_mode,
+        temperature=300.0,
+        selection=Selection(min_weight=1e-4, max_lines=5000, max_quanta=9),
+    )
+    path = tmp_path / "lines.json"
+    save_lines(result, path)
+    assert load_lines(path).selection == result.selection
