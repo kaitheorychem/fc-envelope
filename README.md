@@ -2,6 +2,7 @@
 
 ## 概要
 無次元化VCC (g_α)、振動数(ω_α)、温度(T)の３点を元にFranck-Condon Enveropeを計算する。
+併せて、主要な離散FC因子とその遷移エネルギーの一覧も出力できる。
 
 ## 技術構成
 python+uvで実装。
@@ -38,16 +39,23 @@ uv run fcenvelope --help
 
 ```bash
 uv run fcenvelope run input.json -o result.json --plot spectrum.png
+uv run fcenvelope lines input.json -o lines.json --plot sticks.png
 uv run fcenvelope plot result.json -o spectrum.png --title "300 K"
 ```
 
 ```python
-from fcenvelope import FCEnvelopeInput, compute_envelope, plot_result, save_result
+from fcenvelope import (
+    FCEnvelopeInput, compute_envelope, compute_fc_lines,
+    plot_result, save_fc_lines, save_result,
+)
 
 parsed = FCEnvelopeInput.from_path("input.json")
 result = compute_envelope(parsed.to_modes(), parsed.conditions)
 save_result(result, "result.json")
 plot_result(result).savefig("spectrum.png", dpi=300)
+
+lines = compute_fc_lines(parsed.to_modes(), temperature=parsed.conditions.temperature)
+save_fc_lines(lines, "lines.json")
 ```
 
 入力ファイルの書き方・E 軸の符号規約・診断値の読み方は
