@@ -97,7 +97,7 @@ def test_broadened_lines_reproduce_the_envelope(multi_mode, temperature):
     reconstructed = broadened(result, envelope.energy, sigma)
     peak = float(np.max(envelope.density))
     residual = float(np.max(np.abs(reconstructed - envelope.density)))
-    # 取りこぼした強度（1 - captured）が誤差の上限を与える。
+    # 取りこぼした重み（1 - captured）が誤差の上限を与える。
     assert residual / peak < 10.0 * (1.0 - result.diagnostics.captured_weight) + 1e-9
 
 
@@ -160,7 +160,7 @@ def test_zero_coupling_puts_every_line_at_the_zero_phonon_energy():
     """S = 0 では n -> n しか起きない。
 
     始状態が熱的に分布するぶん線は複数本になるが、どれも E = 0 で FC = 1 であり、
-    強度の総和は 1 になる。エネルギーが縮退した遷移はまとめずに別の線として残す。
+    重みの総和は 1 になる。エネルギーが縮退した遷移はまとめずに別の線として残す。
     """
     result = lines_quietly(
         [VibrationalMode(frequency=800.0, huang_rhys=0.0)], temperature=300.0
@@ -195,7 +195,7 @@ def test_max_lines_truncates_and_warns(multi_mode):
 
 
 def test_low_coverage_warns(multi_mode):
-    """線は拾えているが強度の大半を取りこぼしている場合。"""
+    """線は拾えているが重みの大半を取りこぼしている場合。"""
     with pytest.warns(NumericalQualityWarning, match="captured_weight"):
         result = compute_fc_lines(
             multi_mode, temperature=300.0, selection=Selection(min_weight=0.02)
