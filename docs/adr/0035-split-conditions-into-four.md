@@ -1,18 +1,18 @@
 # `Conditions` を廃し、温度・線形状・グリッド・選択条件に分ける
 
 - 日付: 2026-09-16
-- 状態: 受理（ADR-0005 / ADR-0012 / ADR-0021 の該当部分を改める）
+- 状態: 受理（ADR-0005 / ADR-0012 / ADR-0021 の該当部分を改める。`system` の型は ADR-0044）
 
 `Conditions(temperature, sigma, e_min, e_max, de)` は性質の違う 3 種を束ねていた。温度は
-**物理**（答えが変わる）、σ・γ は**現象論的なモデルパラメータ**、E グリッドは**数値**
+**物理**（答えが変わる）、σ は**現象論的なモデルパラメータ**、E グリッドは**数値**
 （どこを標本するかだけ）である。`compute_fc_lines` が `Conditions` を取らないのは必要な
 ものが最初の 1 つだけだからで（ADR-0021）、分割線はすでに実装側から示唆されていた。
 
 ```python
-compute_envelope(modes, *, temperature, broadening: Broadening, grid: EnergyGrid) -> EnvelopeResult
-compute_fc_lines(modes, *, temperature, selection: Selection)                     -> LinesResult
+compute_envelope(system, *, temperature, broadening: Broadening, grid: EnergyGrid) -> EnvelopeResult
+compute_fc_lines(system, *, temperature, selection: Selection)                     -> LinesResult
 
-Broadening(sigma, gamma)                       # ADR-0034
+Broadening(sigma)                              # ADR-0034。線形状に依存する計算を持つ
 EnergyGrid(e_min, e_max, de)
 Selection(min_weight, max_lines, max_quanta)
 ```

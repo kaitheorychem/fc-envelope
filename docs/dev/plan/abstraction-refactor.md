@@ -1,52 +1,88 @@
 # 抽象化リファクタリング 作業計画
 
 コア機能の実装が一巡したため、実装済みの概念を整理し、不変な部分を抽象化した形へ
-置き換える。**この文書は実装者への引き継ぎ用**であり、決定そのものは `docs/adr/` に、
-語彙は `CONTEXT.md` に、現行の仕様は `docs/dev/spec/interface.md` にある。
+置き換える。**この文書は実装者への引き継ぎ用**である。決定そのものは `docs/adr/`、語彙は
+`CONTEXT.md`、現行の仕様は `docs/dev/spec/interface.md` にある。
 
 ## 前提
 
-- **破壊的変更は自由**。公開 API もファイル形式も互換を保つ必要はない。v1 は実運用に
-  上げていない。
-- **物理モデルは固定**。変位型調和振動子から出ない。振動数変化も Duschinsky 回転も
-  将来にわたり対象外。したがって `VibrationalMode` と ρ(τ) の間に継ぎ目を作らない。
-- **拡張軸は線形状のみ**（ガウス → ローレンツ / Voigt）。
-- 決定の根拠は ADR-0031〜0043。各段階の冒頭に該当 ADR を記す。
+- **目的は抽象化であって、新機能の実装ではない。** 将来入れる予定の機能（下表）は、
+  抽象化の形を決めるための判断材料として使う。新しい構造から自然に出てくる機能を無理に
+  止める必要はないが、機能の追加を作業の目標にはしない。
+- **今の振る舞いを厳密に保つ必要はない。** 下表の完成形に近づく変更であれば、公開 API も
+  ファイル形式も変わってよい。v1 は実運用に上げていない。
+- **物理モデルは固定**。変位型調和振動子から出ない。振動数変化も Duschinsky 回転も将来に
+  わたり対象外。
+
+| 将来の機能 | このリファクタリングで用意すること | 実装時の検討材料 |
+|---|---|---|
+| ローレンツ型・Voigt 型の線形状 | ガウス型の知識を `Broadening` に集める。数値計算と診断値の判定を分ける | ADR-0038, 0039（提案） |
+| 入力の単位変換、流儀 V・λ | 流儀をオブジェクトにする。入力ファイルの型と計算用の値の型を分ける | `docs/theory/vcc.md` |
+| 入力フォーマットの見直し | 入力ファイルの型を `inputs.py` に分離する | — |
+| 非対角な基底からの入力（対角化） | 正準化の行き先を `VibrationalSystem` 1 つに決める。パーサに計算を入れない | ADR-0037（提案） |
+| 結果の種類の追加（予定はないがありうる） | 種類による振り分けを表にする | — |
 
 ## 非目的
 
+- 上表の機能そのものの実装。
 - 数値アルゴリズムの改良（漸化式を Laguerre 陽形式へ置き換える等）。ADR-0024 の方針は
   維持する。
 - 性能改善。
-- 吸収／発光の区別（ADR-0001）。
 
 ---
 
-## 目標インターフェイス
+## 目標の形
+
+### 計算用の値（`models.py`、frozen dataclass、ADR-0044, 0045, 0051）
 
 ```python
-# 計算
-compute_envelope(modes, *, temperature: float,
-                 broadening: Broadening, grid: EnergyGrid) -> EnvelopeResult
-compute_fc_lines(modes, *, temperature: float,
-                 selection: Selection = Selection()) -> LinesResult
+VibrationalMode(frequency, huang_rhys)
+VibrationalSystem(modes: tuple[VibrationalMode, ...])
+    .frequencies                 # ndarray
+    .huang_rhys                  # ndarray
+    .reorganization_energy       # λ（ADR-0047）
+    .occupations(temperature)    # n_α。式は physics.py
+Broadening(sigma)                # ガウス型の知識を持つ: 減衰因子・頂点値・打ち切りの指標（ADR-0034）
+EnergyGrid(e_min, e_max, de)
+Selection(min_weight=1e-4, max_lines=10000, max_quanta=None)   # 既定値はここだけ（ADR-0050）
+```
 
-# 永続化・描画（系統ごとに 4 関数）
+どの型も `__post_init__` で自分の不変条件を検証し、違反は `InvalidInputError` にする
+（ADR-0051）。pydantic には依存しない。
+
+### 結果（`result.py`、ADR-0031, 0032, 0046, 0047）
+
+```python
+Provenance(fcenvelope_version, created_at)          # 来歴
+
+EnvelopeResult(system, temperature, broadening, grid,
+               energy, density, diagnostics, provenance)
+LinesResult(system, temperature, selection,
+            lines, diagnostics, provenance)
+FCLine(energy, fc_factor, weight, transitions)
+```
+
+結果クラスは λ も単位も持たない。λ は `system.reorganization_energy` から得る。単位と
+`derived` の書き出しは io の責務。
+
+共通部分は意味でまとめる（ADR-0046）。来歴は `Provenance`、系は `VibrationalSystem`、
+温度は独立したフィールド。両系統で共有する計算の補助（閾値など）は今は存在しないので、
+そのためのクラスは作らない。
+
+### 公開 API（ADR-0011, 0048）
+
+```python
+compute_envelope(system, *, temperature, broadening, grid) -> EnvelopeResult
+compute_fc_lines(system, *, temperature, selection=Selection()) -> LinesResult
+
 save_envelope / load_envelope / plot_envelope
 save_lines    / load_lines    / plot_lines
 plot_overlay(envelope, lines, *, ax=None, magnify=1.0, ...)
 
-# 理論式そのもの
 fc_factor_matrix(huang_rhys, m_max, n_max=0) -> np.ndarray
-
-# 値型
-VibrationalMode(frequency, huang_rhys)
-Broadening(sigma, gamma)            # 少なくとも一方 > 0、両方 >= 0
-EnergyGrid(e_min, e_max, de)
-Selection(min_weight=1e-4, max_lines=10000, max_quanta=None)
 ```
 
-入力 JSON（`schema_version` = 2）:
+### 入力ファイル（`inputs.py`、pydantic、ADR-0040, 0045）
 
 ```json
 {
@@ -55,21 +91,33 @@ Selection(min_weight=1e-4, max_lines=10000, max_quanta=None)
   "coupling_convention": "g",
   "modes": [{ "frequency": 1200.0, "coupling": 0.5 }],
   "temperature": 300.0,
-  "broadening": { "sigma": 150.0, "gamma": 0.0 },
+  "broadening": { "sigma": 150.0 },
   "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 },
   "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
 }
 ```
 
+入力ファイルの型は構造・単位・流儀を検査し、正準化して計算用の値を返す。範囲の検査は
+値の型に任せ、値の型が送出したエラーにフィールドの位置を添える（ADR-0051）。
+
 `run` は `temperature` / `broadening` / `grid` を、`lines` は `temperature` / `selection` を
-読む。互いに相手の節を無視する。`modes` は上書きしない（ADR-0012）。
+読む。`selection` は省略でき、省略時は `Selection` の既定値を使う。
 
-モジュール階層（ADR-0041）:
+### モジュール（ADR-0041）
 
-```
-errors → units → models → physics → result → { envelope, lines } → { io, plotting } → cli
-                              normalmodes ↗
-```
+| モジュール | 依存先 |
+|---|---|
+| `errors.py` | — |
+| `physics.py` | errors |
+| `models.py` | errors, physics |
+| `units.py` | errors |
+| `inputs.py` | errors, units, models |
+| `result.py` | models |
+| `envelope.py` / `lines.py` | physics, models, result（互いに依存しない） |
+| `io.py` / `plotting.py` | models, result（`io` は `inputs` に依存しない） |
+| `cli.py` | 上記すべて |
+
+`physics.py` は配列と数値だけを扱い、モデルの型を知らない。
 
 ---
 
@@ -82,21 +130,21 @@ errors → units → models → physics → result → { envelope, lines } → {
 現在 `test_fc_factor.py::test_recurrence_matches_the_closed_form[6.0]` が
 1.488e-11 < 1e-11 で落ちている。**リファクタリング前に緑にしておく**。
 
-判定を `max|rec − ana| / max|ana| < 1e-9` に変える。要素ごとの相対誤差は使えない
-（要素の大半がほぼ 0 で 0/0 になる）。許容誤差の根拠と、これが ADR-0024 の破綻とは
-別物であることをコメントに残す。
+判定を `max|rec − ana| / max|ana| < 1e-9` に変える。要素ごとの相対誤差は使えない（要素の
+大半がほぼ 0 で 0/0 になる）。許容誤差の根拠と、これが ADR-0024 の破綻とは別物である
+ことをコメントに残す。
 
 > 検算値: S=6, m≤25, n≤12 で 1.488e-11 / 0.4008 = 3.7e-11。破綻は S=25・n=29 から始まり、
 > そこでの列和のずれは −0.26 と桁違いに大きい。
 
-### 段階 1 — 改名とモジュール再配置（ADR-0031, 0032, 0041）
+### 段階 1 — 改名とモジュールの分割（ADR-0031, 0032, 0041）
 
-**振る舞いを一切変えない。** 純粋な機械的置換。
+振る舞いを変えない機械的な置換。
 
 | 旧 | 新 |
 |---|---|
-| `core.py` | `physics.py`（K_B_CM, `occupation_numbers`, `boltzmann_populations`, `reorganization_energy`）と `envelope.py`（`build_grids`, `compute_envelope`）に分割 |
-| `fcfactor.py` | `lines.py`。`boltzmann_populations` は `physics.py` へ移す |
+| `core.py` | `physics.py`（`K_B_CM`, `occupation_numbers`, `boltzmann_populations`）と `envelope.py`（`build_grids`, `compute_envelope`） |
+| `fcfactor.py` | `lines.py`。`boltzmann_populations` は `physics.py` へ |
 | `FCEnvelopeResult` / `FCLinesResult` | `EnvelopeResult` / `LinesResult` |
 | `EnvelopeResult.intensity` | `.density` |
 | `FCLine.intensity` | `.weight` |
@@ -104,97 +152,105 @@ errors → units → models → physics → result → { envelope, lines } → {
 | `save_result` / `load_result` / `plot_result` | `save_envelope` / `load_envelope` / `plot_envelope` |
 | `save_fc_lines` / `load_fc_lines` / `plot_fc_lines` | `save_lines` / `load_lines` / `plot_lines` |
 | `kind = "fcenvelope.result"` | `"fcenvelope.envelope"` |
-| JSON `spectrum.intensity` | `spectrum.density` |
-| JSON `lines[].intensity` | `lines[].weight` |
+| JSON `spectrum.intensity` / `lines[].intensity` | `spectrum.density` / `lines[].weight` |
 
-`lines.py` が `physics.py` だけを見て `envelope.py` を見ないことを確認する（現在
-`fcfactor → core` という向きがあり、これが歪みの本体）。
+`lines.py` が `envelope.py` を import しないことを確認する（現在の `fcfactor → core` の
+向きが、この段階で解消すべき歪み）。
 
-### 段階 2 — `Conditions` の 4 分割（ADR-0035, 0040）
+### 段階 2 — 計算用の値の型と入力ファイルの型を分ける（ADR-0035, 0040, 0044, 0045, 0050, 0051）
 
-`Conditions` を削除し、`Broadening` / `EnergyGrid` / `Selection` を `models.py` に置く。
-この段階では `Broadening.gamma` を受け取って保持するが、まだ計算には効かせない
-（既定 0.0）。`schema_version` を 2 に上げ、1 は `SchemaVersionError` で拒否する。
+1. `models.py` に `VibrationalMode`, `VibrationalSystem`, `Broadening`, `EnergyGrid`,
+   `Selection` を frozen dataclass として置く。各型は `__post_init__` で不変条件を検証する。
+   `Conditions` は削除する。
+2. `physics.py` からモデルの型への依存を取り除く（`reorganization_energy(modes)` は
+   `VibrationalSystem.reorganization_energy` に置き換える）。
+3. `models.py` の入力ファイル部分（`FCEnvelopeInput`, `ModeSpec`, CSV の読み込み）を
+   `inputs.py` へ移し、入力ファイルの形を `schema_version` 2 にする。1 は
+   `SchemaVersionError` で拒否する。範囲の検査は値の型に任せ、エラーにフィールドの位置を
+   添える。
+4. `compute_envelope` / `compute_fc_lines` の引数を目標の形にする。
+5. CLI の上書きを入力ファイルの型に対して行い、その後で正準化する。CLI の既定値は
+   `None`（上書きしない）にし、`Selection` の既定値との二重定義をなくす。
+6. `data/*.json` を再生成する。
 
-**`LinesResult` は `Selection` を丸ごとエコーする**こと。従来 `max_quanta` だけが結果に
-記録されず、結果ファイルから計算を再現できない穴があった。オブジェクトごと持たせれば
-この穴は構造的に閉じる（ADR-0035）。
+### 段階 3 — 結果クラスの形を変える（ADR-0046, 0047）
 
-`data/*.json` は再生成する。
+1. `result.py` に `Provenance` を置き、結果クラスの `fcenvelope_version` / `created_at` を
+   まとめる。
+2. 結果クラスを目標の形にする。`modes` → `system`、条件は `temperature` と
+   `broadening` / `grid`、または `selection` をそのまま持つ。
+3. `reorganization_energy` と単位のフィールドを結果クラスから外す。io は保存時に `derived`
+   と単位を書き出し、読み込み時は `derived` を読み飛ばす。
+4. `io` の読み込みで、入力エコーから `inputs.py` を経由せず値の型を直接作る。
+5. 重ね描きの前提チェック（ADR-0029）を `system` と `temperature` の比較にする。
 
-### 段階 3 — 線形状の 2 パラメータ化（ADR-0034, 0038, 0039）
+`LinesResult` が `Selection` を丸ごと持つことで、`max_quanta` が結果に記録されていなかった
+穴が閉じる。
 
-1. `envelope.py` の減衰項を `exp(-0.5*σ²τ² - γ*|τ|)` にする。
-2. 検証を `sigma > 0` から「σ ≥ 0, γ ≥ 0 かつ少なくとも一方 > 0」に変える。
-3. 診断値 `sigma_tau_max` を `damping_at_tau_max = exp(−σ²τ_max²/2 − γ·τ_max)` に差し替え、
-   閾値を `> 1.523e-8`（= e⁻¹⁸）で警告とする。γ=0 では現行の「σ·τ_max ≥ 6」と等価。
-4. `plot_overlay` の棒の高さを Voigt の頂点へ一般化する。
+### 段階 4 — 計算の中を分け、ガウス型の知識を `Broadening` に集める（ADR-0034, 0048）
 
-   ```python
-   from scipy.special import wofz
-   def lineshape_peak(sigma: float, gamma: float) -> float:
-       a = gamma / (sigma * math.sqrt(2.0))
-       return wofz(1j * a).real / (sigma * math.sqrt(2.0 * math.pi))
-   ```
-   σ → 0 の分岐（純ローレンツ）では `1 / (math.pi * gamma)` を直接返す。
+1. 各計算関数の中を「数値計算」「診断値の判定」「結果の組み立て」に分ける。警告を発報して
+   `messages` に記録する処理は共通の補助関数にする。メッセージ本文は各系統に手書きで残す
+   （ADR-0036）。
+2. ガウス型であることに依存したコードを `Broadening` に移し、`envelope.py` と
+   `plotting.py` が線形状の種類を知らなくてよい形にする。
 
-追加すべきテスト:
+   | 現在の場所 | 中身 |
+   |---|---|
+   | `core.py` の `damping = -0.5 * sigma**2 * tau**2` | 時間領域の減衰因子 |
+   | `plotting._gaussian_peak` | 規格化された線形状の頂点値 1/(σ√(2π)) |
+   | `core.py` の `sigma_tau_max` と閾値 6 | τ 窓の打ち切りの指標 |
 
-- γ = 0 で段階 2 までと完全一致（回帰）
-- σ → 0 の純ローレンツで `lineshape_peak` が 1/(πγ) に一致
-- Voigt の頂点値が、減衰因子の逆フーリエ変換の E=0 値と一致（検証済み: 相対差 ~1e-11）
-- Voigt でも 0 次モーメント ∫F dE = 1 が成り立つ
-- 2 次モーメントはローレンツ成分では発散するため、**σ 成分のみで検証する**か、
-  γ > 0 では 2 次モーメントの検証を行わない
+計算するのはガウス型だけで、γ を足すことはこの段階の目的ではない。
 
-> 注意: ADR-0015 の 2 次モーメント恒等式 Var(E) = Σ S_α ε_α²(2n_α+1) + σ² は、ローレンツ
-> 成分を入れると成立しない（ローレンツ分布は分散を持たない）。γ > 0 のテストでは 0 次と
-> 1 次だけを使うこと。
+### 段階 5 — 流儀をオブジェクトにする（ADR-0033）
 
-### 段階 4 — 流儀のオブジェクト化（ADR-0033）
-
-`units.py` を作り、`CouplingConvention` を Enum + 関数表からオブジェクトへ昇格させる。
-各流儀が持つべき情報:
+`units.py` を作り、`CouplingConvention` を Enum と関数表からオブジェクトにする。各流儀が
+持つべき情報は次のとおり。
 
 - S への変換（coupling と frequency を受け取る）
 - 単位を持つか（g, Δ, S は無次元。V, λ は持つ）
 - 持つ場合、frequency の単位とどう組み合わさるか
 
-現在の型 `Callable[[float], float]` は V（S = V²/2ħω³）と λ（S = λ/ħω）を**構造的に
-表現できない**。関係式は `docs/theory/vcc.md` の表にある。V と λ を実際に足すかは任意
-だが、**足せる構造にすること**がこの段階の目的。
+現在の型 `Callable[[float], float]` は V（S = V²/2ħω³）と λ（S = λ/ħω）を構造的に表現
+できない。関係式は `docs/theory/vcc.md` の表にある。V と λ を足すことはこの段階の目的
+ではない。足せる構造にすることが目的。
 
-### 段階 5 — `io.py` の機械的重複の除去（ADR-0036）
+### 段階 6 — 振り分けの表と機械的な重複の除去（ADR-0036, 0049）
 
-- `_DIAGNOSTIC_FLOAT_FIELDS` 等の手書きタプルを `dataclasses.fields()` から導出する。
-- 共通ヘッダ（`schema_version` / `kind` / 単位 / 来歴 / 入力エコー / `derived` /
-  `diagnostics`）の読み書きを 1 箇所にまとめる。
+1. `io.py` に `kind` → 保存・読み込みの表、`plotting.py` に結果の型 → 描画の表、`cli.py`
+   に結果の型 → 報告の表を置く。`load_any`、`_save_figure` などの if 文と `isinstance` を
+   表引きに置き換える。
+2. すべての表が同じ種類を網羅していることを確かめるテストを足す。
+3. 重ね描きは表に載せず専用の関数のまま。CLI の組み合わせ判定のエラー文は、種類名を表から
+   引き、`kind` 文字列を直接書かない。
+4. `io.py` のフィールド名タプルを `dataclasses.fields()` から導出し、共通ヘッダの読み書きを
+   1 箇所にまとめる。
+5. `plotting.py` の軸の用意・表題・凡例の重複をまとめる。
 
-**`_quality_messages` は統合しない。** 構造は似ているが、閾値の向きも型も違い、メッセージ
-本文がすべて違う。本文は「どう直すか」というその項目固有の知識を持っており、雛形に
-押し込めると診断機能の価値が失われる（ADR-0036）。
+### 段階 7 — 文書の追随
 
-### 段階 6 — 文書の追随
-
-- `docs/dev/spec/interface.md` を実装後の姿に更新する（現在は段階 0 時点の記述）。
+- `docs/dev/spec/interface.md` を実装後の姿に更新する。
 - `README.md` の使用例を新しい API に合わせる。
-- `CONTEXT.md` に定義した語と、コード中の識別子・docstring・警告文言が食い違っていない
-  ことを確認する。特に「線強度」→「重み」。
-
-### 段階 7 — `diagonalize`（別タスク。今回のスコープ外）
-
-非対角項を含む基底からの入力（ADR-0037）。`normalmodes.py` と `fcenvelope diagonalize`
-サブコマンドを足す。出力は現行のモード表 CSV とし、`modes` の参照形態は増やさない。
-並進・回転を落とす閾値は既定値を置かず引数で明示必須にする。
+- `CONTEXT.md` の語と、コード中の識別子・docstring・警告文言が食い違っていないことを
+  確認する。特に「線強度」→「重み」、「モード列」→「系」。
 
 ---
 
 ## 検証
 
-`uv run pytest`。既存のテストは ADR-0015 / ADR-0026 の恒等式を軸にしており、改名に
-追随させれば数値の検証はそのまま生き残る。特に強いのは次の 1 本で、リファクタリング中は
-これを壊さないことを最優先にする。
+`uv run pytest`。既存のテストは ADR-0015 / ADR-0026 の恒等式を軸にしており、改名と構造の
+変更に追随させれば数値の検証はそのまま生き残る。特に強いのは次の 1 本で、リファクタリング
+中はこれを壊さないことを最優先にする。
 
 > **線をガウシアンで畳んだものがエンベロープに一致する** — エンベロープ（FFT）と
 > 離散線（漸化式）は共通コードをほとんど持たない独立な 2 実装なので、両者の一致は片方
 > だけを見ていては気づけない誤りを捕まえる（ADR-0026）。
+
+段階 2 以降で新しく足すテスト:
+
+- 値の型が不変条件の違反で `InvalidInputError` を送出する（ライブラリから直接作った場合）
+- 入力ファイル経由の範囲違反で、エラーにフィールドの位置が含まれる
+- CLI の上書きが入力ファイルと同じ単位で解釈される
+- `LinesResult` の保存・読み込みで `max_quanta` が往復する
+- 振り分けの表がすべて同じ種類を網羅している
