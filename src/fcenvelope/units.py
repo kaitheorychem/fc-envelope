@@ -10,17 +10,18 @@
 `docs/theory/vcc.md` の 5 流儀のうち、S への変換に振動数を要するのは V と lambda の
 2 つで、この 2 つだけが単位を持つ。
 
-| 流儀 | S への変換 | omega が要るか | coupling の次元 |
-|---|---|---|---|
-| g | S = g^2 | 不要 | 無次元 |
-| Delta | S = Delta^2 / 2 | 不要 | 無次元 |
-| huang_rhys | 恒等 | 不要 | 無次元 |
-| vcc (V) | S = V^2 / (2 h_bar omega^3) | 必要 | エネルギー^(3/2) |
-| lambda | S = lambda / (h_bar omega) | 必要 | エネルギー |
+| 流儀 | S への変換 | omega が要るか | coupling の次元 | 登録 |
+|---|---|---|---|---|
+| g | S = g^2 | 不要 | 無次元 | 済 |
+| Delta | S = Delta^2 / 2 | 不要 | 無次元 | 済 |
+| huang_rhys | 恒等 | 不要 | 無次元 | 済 |
+| lambda | S = lambda / (h_bar omega) | 必要 | エネルギー^1 | 済 |
+| vcc (V) | S = V^2 / (2 h_bar omega^3) | 必要 | 未確定 | 保留 |
 
-流儀は無次元のものから順に足す（ADR-0055）。有次元のうち lambda は次元が
-energy^1 で確定しているので登録済み、V は相手プログラムの単位が判明するまで保留
-している（V の次元は単一のべき指数で表せない可能性がある）。
+V の次元が energy^1.5 に見えるのは h_bar = 1 の単位系に限った話で、相手が
+eV/(A*sqrt(amu)) のような単位で出す場合は質量の次元が残る。`energy_power` が保証
+するのは lambda までである（ADR-0055）。
+
 """
 
 from __future__ import annotations
@@ -95,10 +96,13 @@ class CouplingConvention:
     energy_power: float | None
     """coupling の次元を「エネルギーの何乗か」で表したもの。None なら無次元。
 
-    g / Delta / huang_rhys は None、V は 1.5、lambda は 1.0。単位を持つ流儀では
-    coupling と frequency を同じエネルギー単位で表しておけば、変換式の中で次元が
-    打ち消し合う（V なら V^2 / omega^3、lambda なら lambda / omega）。これが
-    「frequency の単位とどう組み合わさるか」の中身である。
+    g / Delta / huang_rhys は None、lambda は 1.0。V は保留で、単一のべき指数で
+    表せるかどうかも未確定である（ADR-0055）。
+
+    coupling と frequency の単位が揃うことは前提にできない（ADR-0053）。frequency は
+    ほぼ常に cm^-1 である一方、coupling の単位は値を出した相手プログラムの都合で
+    決まるためである。したがって両者はそれぞれの単位から別々に正準単位へ直してから
+    変換式に入る。`energy_power` はそのとき coupling の換算係数に乗せるべきである。
     """
 
     converter: Callable[[float, float], float]
@@ -112,8 +116,8 @@ class CouplingConvention:
     def to_huang_rhys(self, coupling: float, frequency: float) -> float:
         """coupling を Huang-Rhys 因子 S に変換する。
 
-        `frequency` は正準な単位（cm^-1）で与える。単位を持つ流儀では `coupling` も
-        同じエネルギー単位に揃えてから渡す。
+        `coupling` も `frequency` も正準な単位（cm^-1）で与える。coupling の換算は
+        `coupling_to_canonical` が行う。
         """
         return self.converter(coupling, frequency)
 

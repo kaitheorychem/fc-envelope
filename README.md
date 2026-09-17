@@ -1,7 +1,10 @@
 # FC Envelopeの計算
 
 ## 概要
-無次元化VCC (g_α)、振動数(ω_α)、温度(T)の３点を元にFranck-Condon Enveropeを計算する。
+振電相互作用、振動数(ω_α)、温度(T)の３点を元にFranck-Condon Enveropeを計算する。
+振電相互作用は g・Δ・S・λ の 4 つの流儀のいずれで書いてもよく、エネルギーの単位も
+cm⁻¹・eV・hartree・THz・kJ/mol・kcal/mol から選べる。どちらも入力を読む時点で
+内部の正準形（ε [cm⁻¹] と Huang-Rhys 因子 S）へ畳まれる。
 併せて、主要な離散FC因子とその遷移エネルギーの一覧も出力できる。
 両者は同じ縦軸で1枚に重ねてグラフ化できる。
 
@@ -29,6 +32,7 @@ CLI（typer）から入力 JSON の読み込み・結果 JSON の書き出し・
     - plan/: 実行が決まった作業の段取り。完了したら削除するか spec/ に畳む。
     - idea/: 考え中のアイデア・思いつきなど。実行に写すかどうか未確定のメモ。
   - readme/: READMEの補助ドキュメント。ユーザとして使う人のための資料。
+    - examples/: そのまま動く入力ファイルの実例。文書の説明と食い違わないことをテストで見る。
   - theory/: 実装のための元になる理論
 - test/: テスト用。pytestによる実装
 
@@ -82,8 +86,9 @@ plot_overlay(result, lines).savefig("overlay.png", dpi=300)
 `--log` を指定しなければログファイルは作らない。エラーで終わったときだけ、そこまでの
 節目の記録を出力ファイルの隣（`result.log`）に残す。
 
-入力ファイルの書き方・E 軸の符号規約・診断値の読み方・ログの読み方は
-[docs/readme/usage.md](docs/readme/usage.md) を参照。
+入力ファイルの書き方・流儀と単位の選び方・E 軸の符号規約・診断値の読み方・ログの
+読み方は [docs/readme/usage.md](docs/readme/usage.md) を参照。
+単位を書いた入力の実例は [docs/readme/examples/](docs/readme/examples/) にある。
 インターフェイスの一覧は [docs/dev/spec/interface.md](docs/dev/spec/interface.md)。
 
 ## テスト
