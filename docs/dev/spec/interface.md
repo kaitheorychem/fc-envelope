@@ -113,6 +113,8 @@ V（1.5）と λ（1.0）は**まだ登録していない**が、型はこれら
 - `FCLine(energy, fc_factor, weight, transitions)`
 - `ModeTransition(mode_index, initial, final)` — 1 モードの n_α → m_α
 - `Diagnostics` / `FCLineDiagnostics` — 数値品質の診断値
+- `Result = EnvelopeResult | LinesResult` / `AnyDiagnostics = Diagnostics | FCLineDiagnostics`
+  — 種類によらず扱う関数が使う別名
 
 結果クラスが持つのは**計算で決まったものだけ**である（ADR-0047）。λ は
 `system.reorganization_energy` から得る。`LinesResult` は `.energies` / `.fc_factors` /
@@ -251,6 +253,26 @@ fcenvelope plot RESULT.json [LINES.json] -o FIG.png [--title TEXT] [--dpi INT]
 （エンベロープ 1 つと線リスト 1 つ、順序は任意）渡すと重ね描きになり、`--magnify` が
 効く。種類の組み合わせが違えば使用法エラー。
 終了コード: `0` 正常 / `1` `FCEnvelopeError` / `2` 使用法エラー。
+
+## 型注釈の方針
+
+`Any` は「構造が分からないことが分かっている」位置にだけ置き、それ以外は具体的な型を書く。
+分からなさには 2 種類あるので、置き場も 2 つに分ける。
+
+| 位置 | 書き方 | 理由 |
+|---|---|---|
+| 検証前の JSON の値で、そのまま先へ渡すもの | `io.JsonValue`（= `Any`） | `json.loads` の戻りそのもの。ファイルの中身は外部のもので狭められない |
+| 検証前の値を、その場で調べて返すだけのもの | `object` | 何も仮定しないことを型で言える。pydantic の `mode="before"` 検証器がこれ |
+| 種類によらず結果を扱うもの | `Result` | 種類が 2 つであることを型から消さない |
+| 種類ごとに要素の型が違う表 | `_ResultKind[_R]` を `dict[str, _ResultKind[Any]]` に | 行の組み立ては型で検査され、`Any` は入れ物にだけ残る |
+
+**計算の途中の測定値は `dict[str, Any]` に入れない。** 診断値クラスをそのまま組み立て、
+判定で決まる `messages` だけを `dataclasses.replace` で後から入れる。測定値用の入れ物を
+別に作るとフィールド名を 2 箇所に書くことになり、ADR-0036 が消したはずの重複が戻る。
+
+JSON は型を保証しないので、読み込み側は数のつもりの位置に文字列・真偽値・辞書が来ることを
+前提にする。どの位置に何が入っていても、送出するのは `FCEnvelopeError` の派生だけである
+（ADR-0013）。真偽値は Python では `int` なので、数を期待する位置では明示的に弾く。
 
 ## 例外・警告
 

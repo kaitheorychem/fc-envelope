@@ -147,6 +147,21 @@ def test_missing_conditions(input_payload, block):
         FCEnvelopeInput.from_obj(payload)
 
 
+@pytest.mark.parametrize(
+    "convention", [{"a": 1}, ["g"], 5, None, True]
+)
+def test_non_string_convention_is_an_input_error(input_payload, convention):
+    """名前でない値も、未知の名前と同じ形で報告される。
+
+    辞書やリストは辞書のキーにできないので、素朴に引くと `TypeError` が漏れる。
+    本パッケージが送出する例外はすべて `FCEnvelopeError` の派生である（ADR-0013）。
+    """
+    payload = copy.deepcopy(input_payload)
+    payload["coupling_convention"] = convention
+    with pytest.raises(InvalidInputError, match="coupling_convention"):
+        FCEnvelopeInput.from_obj(payload)
+
+
 def test_invalid_json_text():
     with pytest.raises(InvalidInputError):
         FCEnvelopeInput.from_json("{oops")

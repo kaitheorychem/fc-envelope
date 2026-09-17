@@ -40,18 +40,18 @@ __all__ = [
 CANONICAL_FREQUENCY_UNIT = "cm^-1"
 
 
-def check_frequency_unit(unit: str) -> str:
+def check_frequency_unit(unit: object) -> str:
     """振動数の単位を検証して返す。
 
-    単位変換を入れるときに、ここが変換係数の引き当てになる。今は正準な単位しか
-    受け付けない。
+    受けるのは検証前のファイルの値なので `object` で取り、正準な単位そのものを返す。
+    単位変換を入れるときに、ここが変換係数の引き当てになる。
     """
     if unit != CANONICAL_FREQUENCY_UNIT:
         raise UnsupportedUnitError(
             f"unsupported frequency_unit {unit!r} "
             f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
         )
-    return unit
+    return CANONICAL_FREQUENCY_UNIT
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,10 +123,14 @@ COUPLING_CONVENTIONS: dict[str, CouplingConvention] = {
 DEFAULT_COUPLING_CONVENTION = G
 
 
-def coupling_convention(name: str) -> CouplingConvention:
-    """名前から流儀を引く。未知の名前は `InvalidInputError`。"""
+def coupling_convention(name: object) -> CouplingConvention:
+    """名前から流儀を引く。未知の名前は `InvalidInputError`。
+
+    受けるのは検証前のファイルの値なので `object` で取る。ハッシュできない値
+    （辞書やリスト）も、`TypeError` ではなく他の未知の名前と同じ形で報告する。
+    """
     try:
-        return COUPLING_CONVENTIONS[name]
+        return COUPLING_CONVENTIONS[name]  # type: ignore[index]
     except (KeyError, TypeError) as exc:
         known = ", ".join(sorted(COUPLING_CONVENTIONS))
         raise InvalidInputError(

@@ -18,8 +18,8 @@ D(tau) は線形状に由来する減衰因子で、その形は `Broadening` �
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any
 
 import numpy as np
 
@@ -108,8 +108,8 @@ def compute_envelope(
         窓へ切り出した F(E) と、入力エコー・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
-    energy, density, measurements = _transform(system, temperature, broadening, grid)
-    messages = report_quality(_quality_messages(broadening, measurements))
+    energy, density, measured = _transform(system, temperature, broadening, grid)
+    messages = report_quality(_quality_messages(broadening, measured))
 
     return EnvelopeResult(
         system=system,
@@ -118,7 +118,7 @@ def compute_envelope(
         grid=grid,
         energy=energy,
         density=density,
-        diagnostics=Diagnostics(messages=messages, **measurements),
+        diagnostics=replace(measured, messages=messages),
         provenance=Provenance(
             fcenvelope_version=__version__,
             created_at=datetime.now(timezone.utc).replace(microsecond=0),
@@ -131,11 +131,13 @@ def _transform(
     temperature: float,
     broadening: Broadening,
     grid: EnergyGrid,
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+) -> tuple[np.ndarray, np.ndarray, Diagnostics]:
     """数値計算。窓へ切り出した (energy, density) と、そこから読める測定値を返す。
 
     測定値は判定を含まない生の数値で、閾値との突き合わせは `_quality_messages` が
-    行う（ADR-0048）。
+    行う（ADR-0048）。**返す `Diagnostics` の `messages` は空**で、判定の結果は
+    組み立ての段階で `dataclasses.replace` により入る。測定値の入れ物を別に作らない
+    のは、フィールド名を 2 箇所に書くことになるからである（ADR-0036）。
     """
     energy_full, tau, n_fft, d_tau = build_grids(grid)
 
@@ -167,33 +169,31 @@ def _transform(
     window_captured_fraction = window_area / total_area if total_area != 0.0 else 0.0
 
     tau_max = math.pi / grid.de
-    measurements = {
-        "n_fft": n_fft,
-        "d_tau": d_tau,
-        "tau_max": tau_max,
+    measured = Diagnostics(
+        n_fft=n_fft,
+        d_tau=d_tau,
+        tau_max=tau_max,
         # 名前はガウス型の名残。減衰因子そのもので測る形への一般化は ADR-0038（提案）。
-        "sigma_tau_max": broadening.truncation_indicator(tau_max),
-        "total_area": total_area,
-        "window_captured_fraction": window_captured_fraction,
-        "edge_intensity_ratio": edge_intensity_ratio,
-        "max_imaginary_ratio": max_imaginary_ratio,
-    }
-    return energy, density, measurements
+        sigma_tau_max=broadening.truncation_indicator(tau_max),
+        total_area=total_area,
+        window_captured_fraction=window_captured_fraction,
+        edge_intensity_ratio=edge_intensity_ratio,
+        max_imaginary_ratio=max_imaginary_ratio,
+    )
+    return energy, density, measured
 
 
-def _quality_messages(
-    broadening: Broadening, measurements: dict[str, Any]
-) -> tuple[str, ...]:
+def _quality_messages(broadening: Broadening, measured: Diagnostics) -> tuple[str, ...]:
     """診断値の判定。閾値を超えた項目について警告文言を組み立てる。
 
     文言は「何が起きたか」に加えて「どう直すか」を持つので、雛形に押し込めず手書きで
     残す（ADR-0036）。発報そのものは `errors.report_quality` が行う。
     """
-    sigma_tau_max = measurements["sigma_tau_max"]
-    edge_intensity_ratio = measurements["edge_intensity_ratio"]
-    total_area = measurements["total_area"]
-    window_captured_fraction = measurements["window_captured_fraction"]
-    max_imaginary_ratio = measurements["max_imaginary_ratio"]
+    sigma_tau_max = measured.sigma_tau_max
+    edge_intensity_ratio = measured.edge_intensity_ratio
+    total_area = measured.total_area
+    window_captured_fraction = measured.window_captured_fraction
+    max_imaginary_ratio = measured.max_imaginary_ratio
 
     messages: list[str] = []
 

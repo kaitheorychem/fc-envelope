@@ -14,6 +14,7 @@ import numpy as np
 from .models import Broadening, EnergyGrid, Selection, VibrationalSystem
 
 __all__ = [
+    "AnyDiagnostics",
     "Diagnostics",
     "EnvelopeResult",
     "FCLine",
@@ -21,6 +22,7 @@ __all__ = [
     "LinesResult",
     "ModeTransition",
     "Provenance",
+    "Result",
 ]
 
 
@@ -210,3 +212,12 @@ class LinesResult:
     def weights(self) -> np.ndarray:
         """(L,) float64, 無次元。`lines` と同じ順序。"""
         return np.array([line.weight for line in self.lines], dtype=np.float64)
+
+
+#: 結果クラスの全体。種類は 2 つで打ち止めではないが、増えるときは表に 1 行足す形に
+#: なっている（ADR-0049）。`Any` で受けるとその 2 つしかないことが型から消えるので、
+#: 種類によらず結果を扱う関数はこの別名を使う。
+Result = EnvelopeResult | LinesResult
+
+#: 診断値クラスの全体。指標は系統ごとに違うので共通の基底クラスは作らない（ADR-0046）。
+AnyDiagnostics = Diagnostics | FCLineDiagnostics

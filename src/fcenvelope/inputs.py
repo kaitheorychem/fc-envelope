@@ -18,7 +18,7 @@ import csv
 import io
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -40,7 +40,6 @@ from .models import (
 )
 from .units import (
     CANONICAL_FREQUENCY_UNIT,
-    COUPLING_CONVENTIONS,
     DEFAULT_COUPLING_CONVENTION,
     CouplingConvention,
     check_frequency_unit,
@@ -64,7 +63,7 @@ __all__ = [
 
 #: 入力ファイルの版（`docs/adr/0040-schema-version-2-without-a-compatibility-layer.md`）。
 #: 1 は互換層を置かずに拒否する。
-SCHEMA_VERSION = 2
+SCHEMA_VERSION: Final = 2
 
 
 def _at(location: str, exc: InvalidInputError) -> InvalidInputError:
@@ -190,18 +189,21 @@ class FCEnvelopeInput(BaseModel):
     grid: EnergyGridSpec
     selection: SelectionSpec = SelectionSpec()
 
+    # pydantic の `mode="before"` の検証器は**検証前**の値を受ける。構造が分からない
+    # 位置なので `object` で取り、pydantic に渡し返すものだけを返す。
+
     @field_validator("schema_version", mode="before")
     @classmethod
-    def _check_schema_version(cls, value: Any) -> Any:
+    def _check_schema_version(cls, value: object) -> Literal[2]:
         if value != SCHEMA_VERSION:
             raise SchemaVersionError(
                 f"unsupported schema_version {value!r} (this build supports {SCHEMA_VERSION})"
             )
-        return value
+        return SCHEMA_VERSION
 
     @field_validator("modes", mode="before")
     @classmethod
-    def _resolve_modes_file(cls, value: Any, info: ValidationInfo) -> Any:
+    def _resolve_modes_file(cls, value: object, info: ValidationInfo) -> object:
         """`{"path": ...}` を CSV から読んだモードの並びに置き換える。
 
         相対パスは検証コンテキストの `base_dir`（`from_path` では入力ファイルの
@@ -209,22 +211,23 @@ class FCEnvelopeInput(BaseModel):
         """
         if not isinstance(value, dict):
             return value
-        if set(value) != {"path"} or not isinstance(value["path"], str) or not value["path"]:
+        path = value.get("path")
+        if set(value) != {"path"} or not isinstance(path, str) or not path:
             raise ValueError('modes must be a list of modes or {"path": "<modes>.csv"}')
         base_dir = Path((info.context or {}).get("base_dir") or ".")
-        return read_mode_specs_csv(base_dir / value["path"])
+        return read_mode_specs_csv(base_dir / path)
 
     @field_validator("frequency_unit", mode="before")
     @classmethod
-    def _check_frequency_unit(cls, value: Any) -> Any:
+    def _check_frequency_unit(cls, value: object) -> str:
         return check_frequency_unit(value)
 
     @field_validator("coupling_convention", mode="before")
     @classmethod
-    def _check_coupling_convention(cls, value: Any) -> Any:
-        if value not in COUPLING_CONVENTIONS:
-            coupling_convention(value)  # 未知の名前をここで報告させる
-        return value
+    def _check_coupling_convention(cls, value: object) -> str:
+        """名前が既知の流儀を指すことを確かめる。保つのは名前のままである。"""
+        coupling_convention(value)  # 未知の名前・型はここで報告される
+        return str(value)
 
     @property
     def convention(self) -> CouplingConvention:
@@ -288,7 +291,7 @@ class FCEnvelopeInput(BaseModel):
 
     @classmethod
     def from_obj(
-        cls, data: Any, *, base_dir: str | Path | None = None
+        cls, data: object, *, base_dir: str | Path | None = None
     ) -> "FCEnvelopeInput":
         """辞書から生成する。pydantic の検証失敗は `InvalidInputError` になる。
 

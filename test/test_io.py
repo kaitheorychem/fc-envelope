@@ -22,7 +22,7 @@ from fcenvelope import (
     save_lines,
 )
 from fcenvelope import inputs as inputs_module
-from fcenvelope.errors import InvalidInputError
+from fcenvelope.errors import FCEnvelopeError, InvalidInputError
 from fcenvelope.io import SCHEMA_VERSION, load_any
 
 
@@ -333,3 +333,53 @@ def test_fc_lines_malformed_transition(lines_result, tmp_path):
     _corrupt(path, lambda p: p["lines"][1].update(transitions=[{"mode": 0}]))
     with pytest.raises(InvalidInputError):
         load_lines(path)
+
+
+# --- 壊れた結果ファイルは必ず FCEnvelopeError になる（ADR-0013） ---
+
+
+#: 位置 -> そこに置くと不正になる値。JSON は型を保証しないので、数を期待する場所に
+#: 辞書やリストが来ることも、真偽値が来ることもある。
+_CORRUPTIONS = {
+    "kind": [None, 1, "x", [], {}, True],
+    "diagnostics.messages": [None, 1, "x", {}, True, [1], ["ok", 2]],
+    "spectrum.density": [None, 1, "x", {}, True, ["x"], [None]],
+    "input.grid.de": [None, "x", [], {}, True, [1, 2]],
+}
+
+_SETTERS = {
+    "kind": lambda p, v: p.update(kind=v),
+    "diagnostics.messages": lambda p, v: p["diagnostics"].update(messages=v),
+    "spectrum.density": lambda p, v: p["spectrum"].update(density=v),
+    "input.grid.de": lambda p, v: p["input"]["grid"].update(de=v),
+}
+
+
+def _mutations():
+    for location, bad_values in _CORRUPTIONS.items():
+        for bad in bad_values:
+            yield (
+                f"{location}={bad!r}",
+                lambda p, loc=location, v=bad: _SETTERS[loc](p, v),
+            )
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"), list(_mutations()), ids=lambda x: x if isinstance(x, str) else ""
+)
+def test_corrupt_envelope_file_raises_a_package_error(result, tmp_path, label, mutate):
+    """JSON は型を保証しないので、どの位置に何が入っていても素の例外を漏らさない。"""
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    _corrupt(path, mutate)
+    with pytest.raises(FCEnvelopeError):
+        load_any(path)
+
+
+@pytest.mark.parametrize("bad", [None, "x", [], {}, 1.5, True])
+def test_corrupt_selection_echo_raises_a_package_error(lines_result, tmp_path, bad):
+    path = tmp_path / "lines.json"
+    save_lines(lines_result, path)
+    _corrupt(path, lambda p: p["input"]["selection"].update(max_lines=bad))
+    with pytest.raises(FCEnvelopeError):
+        load_any(path)

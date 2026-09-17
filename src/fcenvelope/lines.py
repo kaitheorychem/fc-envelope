@@ -28,13 +28,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any
 
 import numpy as np
 from scipy.special import gammaln
 
-from .errors import InvalidInputError, report_quality
+from .errors import report_quality
 from .models import Selection, VibrationalMode, VibrationalSystem, validate_temperature
 from .physics import K_B_CM, boltzmann_populations
 from .result import FCLine, FCLineDiagnostics, LinesResult, ModeTransition, Provenance
@@ -237,9 +237,9 @@ def compute_fc_lines(
         線の列と、入力エコー・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
-    lines, measurements, strongest_weight = _enumerate(system, temperature, selection)
+    lines, measured, strongest_weight = _enumerate(system, temperature, selection)
     messages = report_quality(
-        _quality_messages(selection, measurements, strongest_weight=strongest_weight)
+        _quality_messages(selection, measured, strongest_weight=strongest_weight)
     )
 
     return LinesResult(
@@ -247,7 +247,7 @@ def compute_fc_lines(
         temperature=temperature,
         selection=selection,
         lines=lines,
-        diagnostics=FCLineDiagnostics(messages=messages, **measurements),
+        diagnostics=replace(measured, messages=messages),
         provenance=Provenance(
             fcenvelope_version=__version__,
             created_at=datetime.now(timezone.utc).replace(microsecond=0),
@@ -257,11 +257,13 @@ def compute_fc_lines(
 
 def _enumerate(
     system: VibrationalSystem, temperature: float, selection: Selection
-) -> tuple[tuple[FCLine, ...], dict[str, Any], float]:
+) -> tuple[tuple[FCLine, ...], FCLineDiagnostics, float]:
     """数値計算。保持した線と、そこから読める測定値、到達しうる最大の重みを返す。
 
     測定値は判定を含まない生の数値で、閾値との突き合わせは `_quality_messages` が
-    行う（ADR-0048）。
+    行う（ADR-0048）。**返す `FCLineDiagnostics` の `messages` は空**で、判定の結果は
+    組み立ての段階で `dataclasses.replace` により入る。測定値の入れ物を別に作らない
+    のは、フィールド名を 2 箇所に書くことになるからである（ADR-0036）。
     """
     modes = system.modes
     min_weight = selection.min_weight
@@ -293,17 +295,17 @@ def _enumerate(
         if captured > 0.0
         else 0.0
     )
-    measurements = {
-        "n_lines": len(lines),
-        "captured_weight": captured,
-        "mean_energy": mean_energy,
-        "min_mode_completeness": min(candidate.completeness for candidate in candidates),
-        "max_initial_quanta": max(candidate.max_initial for candidate in candidates),
-        "max_final_quanta": max(candidate.max_final for candidate in candidates),
-        "beam_truncated": beam_truncated,
-        "recurrence_limited": any(candidate.recurrence_limited for candidate in candidates),
-    }
-    return tuple(lines), measurements, suffix_bound[0]
+    measured = FCLineDiagnostics(
+        n_lines=len(lines),
+        captured_weight=captured,
+        mean_energy=mean_energy,
+        min_mode_completeness=min(candidate.completeness for candidate in candidates),
+        max_initial_quanta=max(candidate.max_initial for candidate in candidates),
+        max_final_quanta=max(candidate.max_final for candidate in candidates),
+        beam_truncated=beam_truncated,
+        recurrence_limited=any(candidate.recurrence_limited for candidate in candidates),
+    )
+    return tuple(lines), measured, suffix_bound[0]
 
 
 def _combine(
@@ -353,7 +355,7 @@ def _combine(
 
 
 def _quality_messages(
-    selection: Selection, measurements: dict[str, Any], *, strongest_weight: float
+    selection: Selection, measured: FCLineDiagnostics, *, strongest_weight: float
 ) -> tuple[str, ...]:
     """診断値の判定。閾値を超えた項目について警告文言を組み立てる。
 
@@ -363,13 +365,13 @@ def _quality_messages(
     """
     min_weight = selection.min_weight
     max_lines = selection.max_lines
-    n_lines = measurements["n_lines"]
-    captured_weight = measurements["captured_weight"]
-    min_mode_completeness = measurements["min_mode_completeness"]
-    max_initial_quanta = measurements["max_initial_quanta"]
-    max_final_quanta = measurements["max_final_quanta"]
-    beam_truncated = measurements["beam_truncated"]
-    recurrence_limited = measurements["recurrence_limited"]
+    n_lines = measured.n_lines
+    captured_weight = measured.captured_weight
+    min_mode_completeness = measured.min_mode_completeness
+    max_initial_quanta = measured.max_initial_quanta
+    max_final_quanta = measured.max_final_quanta
+    beam_truncated = measured.beam_truncated
+    recurrence_limited = measured.recurrence_limited
 
     messages: list[str] = []
 

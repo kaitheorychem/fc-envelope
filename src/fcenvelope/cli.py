@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Any, Optional
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Annotated, Optional, TypeVar
 
 import typer
 
@@ -19,7 +19,7 @@ from .errors import FCEnvelopeError
 from .inputs import FCEnvelopeInput
 from .io import kind_for, load_any, save_any
 from .lines import compute_fc_lines
-from .result import EnvelopeResult, FCLine, LinesResult
+from .result import EnvelopeResult, FCLine, LinesResult, Result
 from .version import __version__
 
 __all__ = ["app"]
@@ -36,8 +36,16 @@ def _fail(exc: FCEnvelopeError) -> typer.Exit:
     return typer.Exit(1)
 
 
+#: CLI が上書きできる値。入力ファイルと同じ単位・流儀で読む生の値で、正準化の前に
+#: 差し替える（ADR-0050）。`None` は「上書きしない」を意味する。
+Override = float | int | None
+
+
 def _override(
-    parsed: FCEnvelopeInput, *, temperature: float | None = None, **blocks: dict[str, Any]
+    parsed: FCEnvelopeInput,
+    *,
+    temperature: float | None = None,
+    **blocks: dict[str, Override],
 ) -> FCEnvelopeInput:
     """CLI の上書きを入力ファイルの型に適用し、同じ経路で検証し直す。
 
@@ -282,15 +290,18 @@ def _report_lines(result: LinesResult, output: Path, *, show: int = 0) -> None:
     _echo_warnings(diagnostics.messages)
 
 
+#: 報告関数に共通の署名。`--show` を使うのは線だけだが、表に載せるために揃えてある。
+Reporter = Callable[..., None]
+
 #: 結果の型 -> 報告。種類を足すときはここに 1 行足す（ADR-0049）。
 #: 保存・読み込みの表は `io.RESULT_KINDS`、描画の表は `plotting.DRAWERS` にある。
-REPORTERS: dict[type, Callable[..., None]] = {
+REPORTERS: dict[type, Reporter] = {
     EnvelopeResult: _report_envelope,
     LinesResult: _report_lines,
 }
 
 
-def _report_any(result: Any, output: Path, *, show: int = 0) -> None:
+def _report_any(result: Result, output: Path, *, show: int = 0) -> None:
     """結果の種類を見て報告する。"""
     REPORTERS[type(result)](result, output, show=show)
 
@@ -298,19 +309,25 @@ def _report_any(result: Any, output: Path, *, show: int = 0) -> None:
 #: 重ね描きが取る組み合わせ。表には載せず専用の関数のままにする（ADR-0049）。
 OVERLAY_TYPES = (EnvelopeResult, LinesResult)
 
+_R = TypeVar("_R", bound=Result)
+
+
+def _of_type(results: Sequence[Result], result_type: type[_R]) -> list[_R]:
+    """与えられた結果のうち、その型のものだけを取り出す。"""
+    return [item for item in results if isinstance(item, result_type)]
+
 
 def _pair_for_overlay(
-    results: list[EnvelopeResult | LinesResult], paths: list[Path]
+    results: list[Result], paths: list[Path]
 ) -> tuple[EnvelopeResult, LinesResult]:
     """重ね描き用に、エンベロープと線リストを 1 つずつ取り出す。与える順序は問わない。
 
     使用法エラーの種類名は `io` の表から引く。`kind` 文字列を直接書かない（ADR-0049）。
     """
-    grouped: dict[type, list[Any]] = {result_type: [] for result_type in OVERLAY_TYPES}
-    for item in results:
-        grouped.setdefault(type(item), []).append(item)
+    envelopes = _of_type(results, EnvelopeResult)
+    line_lists = _of_type(results, LinesResult)
 
-    if len(results) != 2 or any(len(grouped[t]) != 1 for t in OVERLAY_TYPES):
+    if len(results) != 2 or len(envelopes) != 1 or len(line_lists) != 1:
         found = ", ".join(
             f"{path}: {kind_for(type(item))}" for path, item in zip(paths, results)
         )
@@ -319,7 +336,7 @@ def _pair_for_overlay(
             f"overlaying takes exactly one {expected}, in either order (got {found})",
             param_hint="RESULT.json...",
         )
-    return grouped[OVERLAY_TYPES[0]][0], grouped[OVERLAY_TYPES[1]][0]
+    return envelopes[0], line_lists[0]
 
 
 def _write_figure(
@@ -335,7 +352,7 @@ def _write_figure(
 
 
 def _save_figure(
-    result: EnvelopeResult | LinesResult, output: Path, *, title: str | None, dpi: int
+    result: Result, output: Path, *, title: str | None, dpi: int
 ) -> None:
     from .plotting import plot_any
 

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
     import matplotlib.axes
     import matplotlib.figure
 
 from .errors import InvalidInputError
-from .result import EnvelopeResult, LinesResult
+from .result import EnvelopeResult, LinesResult, Result
 
 __all__ = ["DRAWERS", "plot_any", "plot_envelope", "plot_lines", "plot_overlay"]
 
@@ -221,21 +221,30 @@ def plot_overlay(
     return figure
 
 
+#: 描画関数に共通の署名。表に載るのはこの形の関数だけで、`plot_any` はこの 3 つの
+#: キーワードだけを通す。`**kwargs: Any` で素通しにすると、表の要素が同じ形を
+#: していることが型から消える。
+Drawer = Callable[..., "matplotlib.figure.Figure"]
+
 #: 結果の型 -> 描画。種類を足すときはここに 1 行足す（ADR-0049）。
 #: 重ね描きは表に載せない。種類ごとの処理ではなく「エンベロープと線」という特定の
 #: 組み合わせに対する処理だからである。
-DRAWERS: dict[type, Callable[..., "matplotlib.figure.Figure"]] = {
+DRAWERS: dict[type, Drawer] = {
     EnvelopeResult: plot_envelope,
     LinesResult: plot_lines,
 }
 
 
-def plot_any(result: Any, **kwargs: Any) -> "matplotlib.figure.Figure":
-    """結果の種類を見て描画する。"""
+def plot_any(
+    result: Result,
+    *,
+    ax: "matplotlib.axes.Axes | None" = None,
+    label: str | None = None,
+    title: str | None = None,
+) -> "matplotlib.figure.Figure":
+    """結果の種類を見て描画する。引数は `plot_envelope` / `plot_lines` と同じ。"""
     try:
         draw = DRAWERS[type(result)]
     except KeyError as exc:
-        raise InvalidInputError(
-            f"no way to draw a {type(result).__name__}"
-        ) from exc
-    return draw(result, **kwargs)
+        raise InvalidInputError(f"no way to draw a {type(result).__name__}") from exc
+    return draw(result, ax=ax, label=label, title=title)

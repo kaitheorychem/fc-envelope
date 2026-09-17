@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, get_type_hints
+from typing import Any, Generic, TypeVar, get_type_hints
 
 import numpy as np
 
@@ -26,6 +26,7 @@ from .models import (
     VibrationalSystem,
 )
 from .result import (
+    AnyDiagnostics,
     Diagnostics,
     EnvelopeResult,
     FCLine,
@@ -33,7 +34,20 @@ from .result import (
     LinesResult,
     ModeTransition,
     Provenance,
+    Result,
 )
+
+#: **検証を通る前の** JSON の値。構造が分からないことが分かっている位置にだけ使う。
+#: `json.loads` の戻りそのもので、ここを狭められないのは外部ファイルの中身だからである。
+#: この別名を使わない裸の `Any` は、型を決めそこねた印として読んでよい。
+JsonValue = Any
+
+#: JSON のオブジェクト。キーが `str` であることだけは分かっている。
+JsonObject = dict[str, JsonValue]
+
+_D = TypeVar("_D", bound=AnyDiagnostics)
+_R = TypeVar("_R", bound=Result)
+_T = TypeVar("_T")
 
 __all__ = [
     "ENVELOPE_KIND",
@@ -64,11 +78,18 @@ CANONICAL_DENSITY_UNIT = "1/cm^-1"
 CANONICAL_FREQUENCY_UNIT = "cm^-1"
 CANONICAL_COUPLING_CONVENTION = "huang_rhys"
 
-#: 診断値の型 -> JSON からの変換。dataclass の型注釈から引く。
-_SCALAR_READERS: dict[type, Callable[[Any], Any]] = {int: int, float: float, bool: bool}
+#: 診断値の型 -> JSON からの変換。dataclass の型注釈から引く。受け取るのは検証前の
+#: JSON の値なので入力側だけが `JsonValue` で、返すのは診断値の型そのものである。
+_SCALAR_READERS: dict[type, Callable[[JsonValue], int | float | bool]] = {
+    int: int,
+    float: float,
+    bool: bool,
+}
 
 
-def _diagnostic_readers(cls: type) -> dict[str, Callable[[Any], Any]]:
+def _diagnostic_readers(
+    cls: type[_D],
+) -> dict[str, Callable[[JsonValue], int | float | bool]]:
     """診断値クラスの定義からフィールド名と変換関数を導く（ADR-0036）。
 
     フィールド名のタプルを手で複製すると、dataclass にフィールドを足してタプルに
@@ -82,7 +103,7 @@ def _diagnostic_readers(cls: type) -> dict[str, Callable[[Any], Any]]:
     }
 
 
-def _diagnostics_to_dict(diagnostics: Any) -> dict[str, Any]:
+def _diagnostics_to_dict(diagnostics: AnyDiagnostics) -> JsonObject:
     """診断値を JSON の構造へ写す。"""
     return {
         **{
@@ -93,12 +114,15 @@ def _diagnostics_to_dict(diagnostics: Any) -> dict[str, Any]:
     }
 
 
-def _diagnostics_from_dict(cls: type, data: Any) -> Any:
-    """JSON の構造から診断値を復元する。"""
+def _diagnostics_from_dict(cls: type[_D], data: JsonValue) -> _D:
+    """JSON の構造から診断値を復元する。渡した型のインスタンスが返る。"""
     if not isinstance(data, dict):
         raise InvalidInputError(
             f"'diagnostics' must be a JSON object, got {type(data).__name__}"
         )
+    # フィールドと型の対応は dataclass から実行時に導くので（ADR-0036）、下の
+    # 展開は型検査では追えない。取り違えは `_diagnostic_readers` が見ている。
+    values: dict[str, JsonValue]
     try:
         values = {
             name: read(data[name]) for name, read in _diagnostic_readers(cls).items()
@@ -107,7 +131,14 @@ def _diagnostics_from_dict(cls: type, data: Any) -> Any:
         raise InvalidInputError(f"missing diagnostics field {exc.args[0]!r}") from exc
     except (TypeError, ValueError) as exc:
         raise InvalidInputError(f"malformed diagnostics: {exc}") from exc
-    return cls(messages=tuple(data.get("messages", ())), **values)
+    return cls(messages=_messages_from(data.get("messages", [])), **values)
+
+
+def _messages_from(data: JsonValue) -> tuple[str, ...]:
+    """診断メッセージの列を復元する。"""
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        raise InvalidInputError("diagnostics.messages must be a list of strings")
+    return tuple(data)
 
 
 def _format_timestamp(moment: datetime) -> str:
@@ -117,7 +148,7 @@ def _format_timestamp(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
 
 
-def _parse_timestamp(text: Any) -> datetime:
+def _parse_timestamp(text: JsonValue) -> datetime:
     if not isinstance(text, str):
         raise InvalidInputError(f"created_at must be a string, got {type(text).__name__}")
     try:
@@ -129,7 +160,7 @@ def _parse_timestamp(text: Any) -> datetime:
     return moment.astimezone(timezone.utc)
 
 
-def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
+def envelope_to_dict(result: EnvelopeResult) -> JsonObject:
     """結果クラスを出力 JSON の構造（§8.2）へ写す。"""
     return {
         **_header_to_dict(ENVELOPE_KIND, result.provenance),
@@ -152,7 +183,7 @@ def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
     }
 
 
-def _write_json(payload: dict[str, Any], path: str | Path) -> None:
+def _write_json(payload: JsonObject, path: str | Path) -> None:
     """出力 JSON を書き出す。
 
     浮動小数点は Python 標準 `json` の repr ベース出力により round-trip で完全一致する。
@@ -169,7 +200,7 @@ def save_envelope(result: EnvelopeResult, path: str | Path) -> None:
     _write_json(envelope_to_dict(result), path)
 
 
-def _require(data: dict[str, Any], key: str, path: str) -> Any:
+def _require(data: JsonValue, key: str, path: str) -> JsonValue:
     if not isinstance(data, dict):
         raise InvalidInputError(f"{path!r}: expected a JSON object in result file")
     if key not in data:
@@ -177,15 +208,23 @@ def _require(data: dict[str, Any], key: str, path: str) -> Any:
     return data[key]
 
 
-def _require_float(data: dict[str, Any], key: str, path: str) -> float:
+def _require_float(data: JsonValue, key: str, path: str) -> float:
     value = _require(data, key, path)
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise InvalidInputError(f"{path!r} must be a number (got {value!r})") from exc
+    # JSON の true / false は Python では int なので、明示的に弾く。数のつもりで
+    # 真偽値を書いたファイルを 1.0 として黙って受けたくない（`_require_int` も同じ）。
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidInputError(f"{path!r} must be a number (got {value!r})")
+    return float(value)
 
 
-def _optional_int(value: Any) -> int | None:
+def _require_int(data: JsonValue, key: str, path: str) -> int:
+    value = _require(data, key, path)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidInputError(f"{path!r} must be an integer (got {value!r})")
+    return value
+
+
+def _optional_int(value: JsonValue) -> int | None:
     if value is None:
         return None
     try:
@@ -194,7 +233,7 @@ def _optional_int(value: Any) -> int | None:
         raise InvalidInputError(f"max_quanta must be an integer or null (got {value!r})") from exc
 
 
-def _build(factory, location: str, **kwargs: Any):
+def _build(factory: Callable[..., _T], location: str, **kwargs: object) -> _T:
     """値の型を組み立て、不変条件の違反に結果ファイル中の位置を添える。"""
     try:
         return factory(**kwargs)
@@ -202,7 +241,17 @@ def _build(factory, location: str, **kwargs: Any):
         raise InvalidInputError(f"{location}: {exc}") from exc
 
 
-def _check_echo_header(echo: Any) -> None:
+def _float_array(data: JsonValue, path: str) -> np.ndarray:
+    """数値の並びを float64 の 1 次元配列にする。"""
+    if not isinstance(data, list):
+        raise InvalidInputError(f"{path!r} must be a list of numbers")
+    try:
+        return np.asarray(data, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise InvalidInputError(f"{path!r} must be a list of numbers: {exc}") from exc
+
+
+def _check_echo_header(echo: JsonValue) -> None:
     """入力エコーが正準形（cm^-1・huang_rhys）であることを確かめる。"""
     if not isinstance(echo, dict):
         raise InvalidInputError(f"'input' must be a JSON object, got {type(echo).__name__}")
@@ -220,7 +269,7 @@ def _check_echo_header(echo: Any) -> None:
         )
 
 
-def _header_to_dict(kind: str, provenance: Provenance) -> dict[str, Any]:
+def _header_to_dict(kind: str, provenance: Provenance) -> JsonObject:
     """どの結果ファイルにも共通する先頭部分。1 箇所で書く（ADR-0036）。"""
     return {
         "schema_version": SCHEMA_VERSION,
@@ -231,7 +280,7 @@ def _header_to_dict(kind: str, provenance: Provenance) -> dict[str, Any]:
     }
 
 
-def _check_header(data: Any, kind: str) -> None:
+def _check_header(data: JsonValue, kind: str) -> None:
     """共通の先頭部分を検査する。1 箇所で読む（ADR-0036）。"""
     if not isinstance(data, dict):
         raise InvalidInputError(
@@ -253,7 +302,7 @@ def _check_header(data: Any, kind: str) -> None:
             )
 
 
-def _system_to_dict(system: VibrationalSystem) -> dict[str, Any]:
+def _system_to_dict(system: VibrationalSystem) -> JsonObject:
     """系を入力エコーの構造へ写す。エコーは常に正準形（ADR-0010）。"""
     return {
         "frequency_unit": CANONICAL_FREQUENCY_UNIT,
@@ -265,24 +314,24 @@ def _system_to_dict(system: VibrationalSystem) -> dict[str, Any]:
     }
 
 
-def _derived_to_dict(system: VibrationalSystem) -> dict[str, Any]:
+def _derived_to_dict(system: VibrationalSystem) -> JsonObject:
     """系から導かれる量。結果クラスは持たず、io が書き出す（ADR-0047）。"""
     return {"reorganization_energy": system.reorganization_energy}
 
 
-def _provenance_from_dict(data: dict[str, Any]) -> Provenance:
+def _provenance_from_dict(data: JsonValue) -> Provenance:
     return Provenance(
         fcenvelope_version=str(_require(data, "fcenvelope_version", "fcenvelope_version")),
         created_at=_parse_timestamp(_require(data, "created_at", "created_at")),
     )
 
 
-def _system_from_echo(echo: dict[str, Any]) -> VibrationalSystem:
+def _system_from_echo(echo: JsonValue) -> VibrationalSystem:
     """入力エコーのモードから正準形の系を組み立てる。"""
     return _build(VibrationalSystem, "input.modes", modes=_modes_from_echo(echo))
 
 
-def _modes_from_echo(echo: dict[str, Any]) -> tuple[VibrationalMode, ...]:
+def _modes_from_echo(echo: JsonValue) -> tuple[VibrationalMode, ...]:
     """入力エコーの各モードを正準形の値の型にする。"""
     specs = _require(echo, "modes", "input.modes")
     if not isinstance(specs, list):
@@ -301,7 +350,7 @@ def _modes_from_echo(echo: dict[str, Any]) -> tuple[VibrationalMode, ...]:
     return tuple(modes)
 
 
-def envelope_from_dict(data: Any) -> EnvelopeResult:
+def envelope_from_dict(data: JsonValue) -> EnvelopeResult:
     """出力 JSON の構造から結果クラスを復元する。"""
     _check_header(data, ENVELOPE_KIND)
 
@@ -328,12 +377,12 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
     )
 
     spectrum = _require(data, "spectrum", "spectrum")
-    energy = np.asarray(_require(spectrum, "energy", "spectrum.energy"), dtype=np.float64)
-    density = np.asarray(_require(spectrum, "density", "spectrum.density"), dtype=np.float64)
+    energy = _float_array(_require(spectrum, "energy", "spectrum.energy"), "spectrum.energy")
+    density = _float_array(_require(spectrum, "density", "spectrum.density"), "spectrum.density")
     if energy.shape != density.shape:
         raise InvalidInputError(
             f"spectrum.energy and spectrum.density length mismatch: "
-            f"{energy.shape[0]} vs {density.shape[0]}"
+            f"{energy.size} vs {density.size}"
         )
 
     # `derived` は系から一意に決まる控えなので読み飛ばす（ADR-0047）。
@@ -350,7 +399,7 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
     )
 
 
-def _read_json(path: str | Path) -> Any:
+def _read_json(path: str | Path) -> JsonValue:
     source = Path(path)
     try:
         text = source.read_text(encoding="utf-8")
@@ -367,7 +416,7 @@ def load_envelope(path: str | Path) -> EnvelopeResult:
     return envelope_from_dict(_read_json(path))
 
 
-def lines_to_dict(result: LinesResult) -> dict[str, Any]:
+def lines_to_dict(result: LinesResult) -> JsonObject:
     """離散 FC 因子の結果クラスを出力 JSON の構造へ写す。"""
     return {
         **_header_to_dict(LINES_KIND, result.provenance),
@@ -406,7 +455,7 @@ def save_lines(result: LinesResult, path: str | Path) -> None:
     _write_json(lines_to_dict(result), path)
 
 
-def _parse_transitions(data: Any, index: int) -> tuple[ModeTransition, ...]:
+def _parse_transitions(data: JsonValue, index: int) -> tuple[ModeTransition, ...]:
     if not isinstance(data, list):
         raise InvalidInputError(f"lines[{index}].transitions must be a list")
     try:
@@ -422,7 +471,7 @@ def _parse_transitions(data: Any, index: int) -> tuple[ModeTransition, ...]:
         raise InvalidInputError(f"lines[{index}]: malformed transition: {exc}") from exc
 
 
-def lines_from_dict(data: Any) -> LinesResult:
+def lines_from_dict(data: JsonValue) -> LinesResult:
     """出力 JSON の構造から離散 FC 因子の結果クラスを復元する。"""
     _check_header(data, LINES_KIND)
 
@@ -439,7 +488,9 @@ def lines_from_dict(data: Any) -> LinesResult:
         Selection,
         "input.selection",
         min_weight=_require_float(selection_echo, "min_weight", "input.selection.min_weight"),
-        max_lines=int(_require(selection_echo, "max_lines", "input.selection.max_lines")),
+        max_lines=_require_int(
+            selection_echo, "max_lines", "input.selection.max_lines"
+        ),
         max_quanta=_optional_int(selection_echo.get("max_quanta")),
     )
     lines_data = _require(data, "lines", "lines")
@@ -476,25 +527,33 @@ def load_lines(path: str | Path) -> LinesResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _ResultKind:
-    """結果の 1 種類について、`io` が持つ関心をまとめたもの（ADR-0049）。"""
+class _ResultKind(Generic[_R]):
+    """結果の 1 種類について、`io` が持つ関心をまとめたもの（ADR-0049）。
+
+    種類ごとに結果クラスが違うので `_R` で束ねる。こうすると 1 行を組み立てる時点で
+    `result_type` と `to_dict` / `from_dict` の食い違いが型として見える。
+    """
 
     kind: str
     """出力ファイルの `kind`。"""
 
-    result_type: type
+    result_type: type[_R]
     """対応する結果クラス。"""
 
     units: dict[str, str]
     """ファイルに書く単位のフィールド。読み込み時はこの値と突き合わせる。"""
 
-    to_dict: Callable[[Any], dict[str, Any]]
-    from_dict: Callable[[Any], Any]
+    to_dict: Callable[[_R], JsonObject]
+    """結果クラス -> JSON。"""
+
+    from_dict: Callable[[JsonValue], _R]
+    """検証前の JSON -> 結果クラス。"""
 
 
 #: `kind` -> 保存・読み込み。種類を足すときはここに 1 行足す。
 #: 描画は `plotting.DRAWERS`、報告は `cli.REPORTERS` にそれぞれの表がある。
-RESULT_KINDS: dict[str, _ResultKind] = {
+#: 表そのものは種類をまたぐので `_R` を固定できない。個々の行は上の型で検査される。
+RESULT_KINDS: dict[str, _ResultKind[Any]] = {
     ENVELOPE_KIND: _ResultKind(
         kind=ENVELOPE_KIND,
         result_type=EnvelopeResult,
@@ -527,21 +586,22 @@ def kind_for(result_type: type) -> str:
         raise InvalidInputError(f"unknown result type {result_type.__name__}") from exc
 
 
-def kind_of(result: Any) -> str:
+def kind_of(result: Result) -> str:
     """結果に対応する `kind` を返す。"""
     return kind_for(type(result))
 
 
-def save_any(result: Any, path: str | Path) -> None:
+def save_any(result: Result, path: str | Path) -> None:
     """結果の種類を見て保存する。"""
     _write_json(RESULT_KINDS[kind_of(result)].to_dict(result), path)
 
 
-def load_any(path: str | Path) -> EnvelopeResult | LinesResult:
+def load_any(path: str | Path) -> Result:
     """`kind` を見てエンベロープ / 離散 FC 因子のどちらかを復元する。"""
     data = _read_json(path)
     kind = data.get("kind") if isinstance(data, dict) else None
-    spec = RESULT_KINDS.get(kind)
+    # `kind` は JSON から来るので、文字列とは限らない（辞書ならハッシュもできない）。
+    spec = RESULT_KINDS.get(kind) if isinstance(kind, str) else None
     if spec is None:
         known = ", ".join(sorted(RESULT_KINDS))
         raise InvalidInputError(f"unknown kind {kind!r} (known kinds: {known})")
