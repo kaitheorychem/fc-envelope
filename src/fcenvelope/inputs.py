@@ -41,7 +41,7 @@ from .models import (
     validate_temperature,
 )
 from .units import (
-    CANONICAL_FREQUENCY_UNIT,
+    CANONICAL_ENERGY_UNIT,
     DEFAULT_COUPLING_CONVENTION,
     CouplingConvention,
     check_frequency_unit,
@@ -179,7 +179,7 @@ class FCEnvelopeInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal[2] = SCHEMA_VERSION
-    frequency_unit: str = CANONICAL_FREQUENCY_UNIT
+    frequency_unit: str = CANONICAL_ENERGY_UNIT
     coupling_convention: str = DEFAULT_COUPLING_CONVENTION.name
     """流儀の**名前**。流儀そのものは `convention` から引く。
 

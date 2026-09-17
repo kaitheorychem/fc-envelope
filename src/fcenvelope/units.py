@@ -1,5 +1,9 @@
 """単位と振電相互作用の流儀。
 
+エネルギーの正準単位は cm^-1 で、入力に現れる単位はすべてここへ換算される
+（ADR-0002, 0054）。換算係数の表は `ENERGY_UNITS`、引き当ては
+`energy_conversion_factor` にある。
+
 流儀は Enum と関数表ではなくオブジェクトにする（ADR-0033）。変換式・単位の有無・
 振動数への依存の仕方を、流儀自身が知っている必要があるためである。
 
@@ -23,36 +27,75 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from scipy import constants
+
 from .errors import InvalidInputError, UnsupportedUnitError
 
 __all__ = [
-    "CANONICAL_FREQUENCY_UNIT",
+    "CANONICAL_ENERGY_UNIT",
     "COUPLING_CONVENTIONS",
     "DEFAULT_COUPLING_CONVENTION",
     "DELTA",
+    "ENERGY_UNITS",
     "G",
     "HUANG_RHYS",
     "CouplingConvention",
     "check_frequency_unit",
     "coupling_convention",
+    "energy_conversion_factor",
 ]
 
-#: 内部で用いる振動数の単位。入力はここへ正準化される。
-CANONICAL_FREQUENCY_UNIT = "cm^-1"
+#: 内部で用いるエネルギーの単位。入力はここへ正準化される。振動数・sigma・グリッド・
+#: 有次元の流儀の coupling が、どれもこの単位へ畳まれる（ADR-0002, 0054）。
+CANONICAL_ENERGY_UNIT = "cm^-1"
+
+#: 1 J を cm^-1 で表した値。他の係数はすべてこれを経由して導く。
+_PER_JOULE = constants.value("joule-inverse meter relationship") / 100.0
+
+#: 単位の名前 -> cm^-1 への換算係数。値に掛けると cm^-1 になる。
+#:
+#: 係数は `scipy.constants` から導出し、自前の数値定数表は持たない（ADR-0054）。
+#: 単位を足す作業はこの表への 1 行で済む。波長（nm）は等間隔のエネルギーグリッドを
+#: 表せないので入れない。
+ENERGY_UNITS: dict[str, float] = {
+    CANONICAL_ENERGY_UNIT: 1.0,
+    "eV": constants.e * _PER_JOULE,
+    "hartree": constants.value("Hartree energy") * _PER_JOULE,
+    # 振動数だが eps = h*nu としてエネルギーに読む。
+    "THz": 1.0e12 * constants.h * _PER_JOULE,
+    # モルあたりの量なので、1 粒子あたりに直してから換算する。
+    "kJ/mol": 1.0e3 / constants.N_A * _PER_JOULE,
+    "kcal/mol": 1.0e3 * constants.calorie / constants.N_A * _PER_JOULE,
+}
+
+
+def energy_conversion_factor(unit: object) -> float:
+    """エネルギーの単位から cm^-1 への換算係数を引く。
+
+    受けるのは検証前のファイルの値なので `object` で取る。ハッシュできない値
+    （辞書やリスト）も、`TypeError` ではなく他の未知の単位と同じ形で報告する。
+    """
+    try:
+        return ENERGY_UNITS[unit]  # type: ignore[index]
+    except (KeyError, TypeError) as exc:
+        known = ", ".join(ENERGY_UNITS)
+        raise UnsupportedUnitError(
+            f"unsupported energy unit {unit!r} (known units: {known})"
+        ) from exc
 
 
 def check_frequency_unit(unit: object) -> str:
     """振動数の単位を検証して返す。
 
     受けるのは検証前のファイルの値なので `object` で取り、正準な単位そのものを返す。
-    単位変換を入れるときに、ここが変換係数の引き当てになる。
+    換算表は用意できたが、消費する側（`inputs.py`）はまだ差し替えていない。
     """
-    if unit != CANONICAL_FREQUENCY_UNIT:
+    if unit != CANONICAL_ENERGY_UNIT:
         raise UnsupportedUnitError(
             f"unsupported frequency_unit {unit!r} "
-            f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
+            f"(only {CANONICAL_ENERGY_UNIT!r} is supported)"
         )
-    return CANONICAL_FREQUENCY_UNIT
+    return CANONICAL_ENERGY_UNIT
 
 
 @dataclass(frozen=True, slots=True)
