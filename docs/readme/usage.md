@@ -116,6 +116,9 @@ uv run fcenvelope plot lines.json  -o sticks.png   --title "300 K"
 
 # 2 つを 1 枚に重ねる（与える順序は問わない）
 uv run fcenvelope plot result.json lines.json -o overlay.png --title "300 K"
+
+# 版を表示して終了する
+uv run fcenvelope --version
 ```
 
 終了コードは 正常 `0` / 入力・計算エラー `1` / 使用法エラー `2`。

@@ -242,6 +242,8 @@ fcenvelope lines INPUT.json -o LINES.json [--plot FIG.png] [--dpi INT]
 
 fcenvelope plot RESULT.json [LINES.json] -o FIG.png [--title TEXT] [--dpi INT]
                           [--magnify FLOAT]
+
+fcenvelope --version
 ```
 
 上書きできるのは `temperature` / `broadening` / `grid` / `selection` で、`modes` は上書き
@@ -252,6 +254,7 @@ fcenvelope plot RESULT.json [LINES.json] -o FIG.png [--title TEXT] [--dpi INT]
 `plot` は `kind` を見てエンベロープと棒スペクトルのどちらかを描く。ファイルを 2 つ
 （エンベロープ 1 つと線リスト 1 つ、順序は任意）渡すと重ね描きになり、`--magnify` が
 効く。種類の組み合わせが違えば使用法エラー。
+`--version` は副命令を取らず、パッケージ版だけを出して終了する。
 終了コード: `0` 正常 / `1` `FCEnvelopeError` / `2` 使用法エラー。
 
 ## 型注釈の方針
@@ -345,3 +348,19 @@ NumericalQualityWarning(UserWarning)
 
 重ね描きは表に載せず専用の関数のままにする。すべての表が同じ種類を網羅していることは
 `test/test_dispatch.py` で確かめる。
+
+## 将来の拡張のための足場
+
+物理モデルは変位型調和振動子に固定されており（ADR-0017）、振動数変化も Duschinsky 回転も
+将来にわたり対象外である。そのうえで、以下の拡張は**構造としては入る場所が決まっている**。
+いずれも機能そのものは未実装で、足場だけがある。
+
+| 将来の機能 | 入る場所 | 参照 |
+|---|---|---|
+| ローレンツ型・Voigt 型の線形状 | `Broadening`。線形状の知識はここに閉じており、`envelope.py` と `plotting.py` は種類を知らない | ADR-0034、提案 ADR-0038 / 0039 |
+| 流儀 V・λ、および単位変換 | `units.py` の `CouplingConvention`。`energy_power` が結合の次元を表すので、無次元でない流儀も登録できる | ADR-0033、`docs/theory/vcc.md` |
+| 入力フォーマットの見直し | `inputs.py`。入力ファイルの型と計算用の値の型が分かれており、計算側に触れずに変えられる | ADR-0045 |
+| 非対角な基底からの入力（対角化） | 別命令 `fcenvelope diagonalize` として足し、出力のモード CSV を `{"path": ...}` で読む。正準化の行き先は `VibrationalSystem` 1 つ | 提案 ADR-0037、ADR-0044 |
+| 結果の種類の追加 | 関心ごとの表（`RESULT_KINDS` / `DRAWERS` / `REPORTERS`）に行を足す | ADR-0049 |
+
+「提案」の ADR は、その機能を実装するときに確定する。

@@ -6,14 +6,18 @@
 両者は同じ縦軸で1枚に重ねてグラフ化できる。
 
 ## 技術構成
-python+uvで実装。
-CLI呼び出しでjsonからのデータ読み込み+グラフ出力に対応。CLIはtyper使う。
-ライブラリとしては`pip install`でインストール。以下の４点くらいがあると良いかな。
+python + uv で実装。Python 3.11 以上。
+CLI（typer）から入力 JSON の読み込み・結果 JSON の書き出し・グラフ出力ができる。
+ライブラリとしては `pip install` でインストールし、スペクトルの表現ごとに
+「計算・保存・読み込み・描画」の自由関数 4 つを 1 組として公開する。
 
-- パラメータを引数で受け取り、計算結果を結果クラスとして吐く関数
-- 結果クラスのファイル出力を担当する関数
-- 計算済みのファイルから結果クラスを再現する関数
-- 結果クラスからグラフ出力する関数
+| 表現 | 計算 | 保存 | 読み込み | 描画 |
+|---|---|---|---|---|
+| エンベロープ F(E) | `compute_envelope` | `save_envelope` | `load_envelope` | `plot_envelope` |
+| 線 | `compute_fc_lines` | `save_lines` | `load_lines` | `plot_lines` |
+
+加えて、両者を 1 枚に重ねる `plot_overlay` と、理論式の行列そのものを返す
+`fc_factor_matrix` を公開する。結果クラスは純粋なデータ容器で、I/O と描画の責務は持たない。
 
 ## ディレクトリ
 - CONTEXT.md: 用語集。語の定義と避けるべき言い換えのみ。
@@ -36,6 +40,7 @@ CLI呼び出しでjsonからのデータ読み込み+グラフ出力に対応。
 ```bash
 uv sync          # 依存関係をインストール
 uv run fcenvelope --help
+uv run fcenvelope --version
 ```
 
 ## 使い方
@@ -79,7 +84,8 @@ plot_overlay(result, lines).savefig("overlay.png", dpi=300)
 
 ## テスト
 
+pytest は dev 依存なので `uv sync` で入る。
+
 ```bash
-uv add --dev pytest   # 初回のみ
 uv run pytest
 ```
