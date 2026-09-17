@@ -50,16 +50,25 @@ uv run fcenvelope plot result.json lines.json -o overlay.png   # 2つを重ね�
 ```python
 from fcenvelope import (
     FCEnvelopeInput, compute_envelope, compute_fc_lines,
-    plot_overlay, plot_result, save_fc_lines, save_result,
+    plot_envelope, plot_overlay, save_envelope, save_lines,
 )
 
 parsed = FCEnvelopeInput.from_path("input.json")
-result = compute_envelope(parsed.to_modes(), parsed.conditions)
-save_result(result, "result.json")
-plot_result(result).savefig("spectrum.png", dpi=300)
+system = parsed.to_system()
 
-lines = compute_fc_lines(parsed.to_modes(), temperature=parsed.conditions.temperature)
-save_fc_lines(lines, "lines.json")
+result = compute_envelope(
+    system,
+    temperature=parsed.to_temperature(),
+    broadening=parsed.to_broadening(),
+    grid=parsed.to_grid(),
+)
+save_envelope(result, "result.json")
+plot_envelope(result).savefig("spectrum.png", dpi=300)
+
+lines = compute_fc_lines(
+    system, temperature=parsed.to_temperature(), selection=parsed.to_selection()
+)
+save_lines(lines, "lines.json")
 
 plot_overlay(result, lines).savefig("overlay.png", dpi=300)
 ```

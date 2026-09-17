@@ -8,10 +8,20 @@ import numpy as np
 import pytest
 from conftest import compute_quietly
 
-from fcenvelope import Conditions, NumericalQualityWarning, VibrationalMode, compute_envelope
-from fcenvelope.core import K_B_CM, build_grids, occupation_numbers
+from fcenvelope import (
+    Broadening,
+    EnergyGrid,
+    NumericalQualityWarning,
+    VibrationalMode,
+    VibrationalSystem,
+    compute_envelope,
+)
+from fcenvelope.envelope import build_grids
+from fcenvelope.physics import K_B_CM, occupation_numbers
 
-MODES = [VibrationalMode(frequency=1200.0, huang_rhys=0.5)]
+SYSTEM = VibrationalSystem([VibrationalMode(frequency=1200.0, huang_rhys=0.5)])
+STRONG = VibrationalSystem([VibrationalMode(frequency=1200.0, huang_rhys=2.0)])
+SIGMA = Broadening(sigma=150.0)
 
 
 def _matching(result, needle: str) -> list[str]:
@@ -19,39 +29,33 @@ def _matching(result, needle: str) -> list[str]:
 
 
 def test_grid_is_power_of_two_and_contains_the_zpl():
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-4000.0, e_max=1000.0, de=5.0
-    )
-    energy, tau, n_fft, d_tau = build_grids(conditions)
+    grid = EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0)
+    energy, tau, n_fft, d_tau = build_grids(grid)
 
     assert n_fft & (n_fft - 1) == 0
     assert n_fft >= np.ceil(2 * 4000.0 / 5.0)
     assert energy.size == tau.size == n_fft
     assert 0.0 in energy
-    assert d_tau == pytest.approx(2.0 * np.pi / (n_fft * conditions.de))
+    assert d_tau == pytest.approx(2.0 * np.pi / (n_fft * grid.de))
     # FFT 標準順序: 0, 1, ..., N/2-1, -N/2, ..., -1
     assert energy[0] == 0.0
-    assert energy[1] == conditions.de
-    assert energy[n_fft // 2] == -(n_fft // 2) * conditions.de
+    assert energy[1] == grid.de
+    assert energy[n_fft // 2] == -(n_fft // 2) * grid.de
 
 
 def test_output_grid_spacing_is_exactly_de():
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-4000.0, e_max=1000.0, de=5.0
-    )
-    result = compute_quietly(MODES, conditions)
+    grid = EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0)
+    result = compute_quietly(SYSTEM, temperature=300.0, broadening=SIGMA, grid=grid)
     spacing = np.diff(result.energy)
-    assert np.allclose(spacing, conditions.de, rtol=0.0, atol=1e-9)
+    assert np.allclose(spacing, grid.de, rtol=0.0, atol=1e-9)
     assert np.min(np.abs(result.energy)) == 0.0
-    assert result.energy[0] >= conditions.e_min
-    assert result.energy[-1] <= conditions.e_max
+    assert result.energy[0] >= grid.e_min
+    assert result.energy[-1] <= grid.e_max
 
 
 def test_diagnostics_of_a_healthy_calculation():
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-12000.0, e_max=12000.0, de=2.0
-    )
-    result = compute_quietly(MODES, conditions)
+    grid = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0)
+    result = compute_quietly(SYSTEM, temperature=300.0, broadening=SIGMA, grid=grid)
     diagnostics = result.diagnostics
 
     assert diagnostics.messages == ()
@@ -59,17 +63,19 @@ def test_diagnostics_of_a_healthy_calculation():
     assert diagnostics.window_captured_fraction > 0.999
     assert diagnostics.edge_intensity_ratio < 1e-4
     assert diagnostics.max_imaginary_ratio < 1e-8
-    assert diagnostics.tau_max == pytest.approx(np.pi / conditions.de)
-    assert diagnostics.sigma_tau_max == pytest.approx(conditions.sigma * diagnostics.tau_max)
+    assert diagnostics.tau_max == pytest.approx(np.pi / grid.de)
+    assert diagnostics.sigma_tau_max == pytest.approx(SIGMA.sigma * diagnostics.tau_max)
 
 
 def test_coarse_de_warns_about_truncation():
     """de が sigma に対して粗いと tau 窓が短く、打ち切りリンギングが起きる。"""
-    conditions = Conditions(
-        temperature=300.0, sigma=10.0, e_min=-2000.0, e_max=2000.0, de=20.0
-    )
     with pytest.warns(NumericalQualityWarning, match="sigma\\*tau_max"):
-        result = compute_envelope(MODES, conditions)
+        result = compute_envelope(
+            SYSTEM,
+            temperature=300.0,
+            broadening=Broadening(sigma=10.0),
+            grid=EnergyGrid(e_min=-2000.0, e_max=2000.0, de=20.0),
+        )
 
     assert result.diagnostics.sigma_tau_max < 6.0
     assert _matching(result, "sigma*tau_max")
@@ -77,44 +83,52 @@ def test_coarse_de_warns_about_truncation():
 
 def test_narrow_window_raises_the_edge_intensity_ratio():
     """E 範囲が狭いとスペクトル重みが端に届き、エイリアシングの指標が上がる。"""
-    wide = Conditions(temperature=300.0, sigma=150.0, e_min=-12000.0, e_max=12000.0, de=5.0)
-    narrow = Conditions(temperature=300.0, sigma=150.0, e_min=-1500.0, e_max=1500.0, de=5.0)
+    wide = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=5.0)
+    narrow = EnergyGrid(e_min=-1500.0, e_max=1500.0, de=5.0)
 
-    wide_result = compute_quietly(MODES, wide)
+    wide_result = compute_quietly(SYSTEM, temperature=300.0, broadening=SIGMA, grid=wide)
     with pytest.warns(NumericalQualityWarning, match="edge_intensity_ratio"):
-        narrow_result = compute_envelope(MODES, narrow)
+        narrow_result = compute_envelope(
+            SYSTEM, temperature=300.0, broadening=SIGMA, grid=narrow
+        )
 
     assert narrow_result.diagnostics.edge_intensity_ratio > 1e-4
     assert narrow_result.diagnostics.edge_intensity_ratio > wide_result.diagnostics.edge_intensity_ratio
 
 
 def test_narrow_window_warns_about_captured_fraction():
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-200.0, e_max=200.0, de=5.0
-    )
     with pytest.warns(NumericalQualityWarning, match="window_captured_fraction"):
-        result = compute_envelope([VibrationalMode(frequency=1200.0, huang_rhys=2.0)], conditions)
+        result = compute_envelope(
+            STRONG,
+            temperature=300.0,
+            broadening=SIGMA,
+            grid=EnergyGrid(e_min=-200.0, e_max=200.0, de=5.0),
+        )
 
     assert result.diagnostics.window_captured_fraction < 0.99
 
 
 def test_aliasing_does_not_disturb_the_total_area():
     """エイリアシングでは重みが畳み込まれて戻るため、面積は 1 のまま（§7 の注記）。"""
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-1000.0, e_max=1000.0, de=5.0
+    result = compute_quietly(
+        STRONG,
+        temperature=300.0,
+        broadening=SIGMA,
+        grid=EnergyGrid(e_min=-1000.0, e_max=1000.0, de=5.0),
     )
-    result = compute_quietly([VibrationalMode(frequency=1200.0, huang_rhys=2.0)], conditions)
     assert result.diagnostics.total_area == pytest.approx(1.0, abs=1e-12)
     assert result.diagnostics.edge_intensity_ratio > 1e-4
 
 
 def test_no_warning_is_emitted_for_a_healthy_calculation():
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-12000.0, e_max=12000.0, de=2.0
-    )
     with warnings.catch_warnings():
         warnings.simplefilter("error", NumericalQualityWarning)
-        compute_envelope(MODES, conditions)
+        compute_envelope(
+            SYSTEM,
+            temperature=300.0,
+            broadening=SIGMA,
+            grid=EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0),
+        )
 
 
 def test_occupation_numbers_at_zero_temperature():
@@ -144,11 +158,50 @@ def test_boltzmann_constant_value():
     assert K_B_CM == pytest.approx(0.6950348, rel=1e-6)
 
 
-def test_result_intensity_is_real_and_finite():
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-8000.0, e_max=4000.0, de=4.0
+def test_density_is_real_and_finite():
+    result = compute_quietly(
+        SYSTEM,
+        temperature=300.0,
+        broadening=SIGMA,
+        grid=EnergyGrid(e_min=-8000.0, e_max=4000.0, de=4.0),
     )
-    result = compute_quietly(MODES, conditions)
-    assert result.intensity.dtype == np.float64
-    assert np.all(np.isfinite(result.intensity))
+    assert result.density.dtype == np.float64
+    assert np.all(np.isfinite(result.density))
     assert result.diagnostics.max_imaginary_ratio < 1e-12
+
+
+# --- 線形状に依存する計算（ADR-0034） ---
+
+
+def test_broadening_knows_the_gaussian_damping_factor():
+    """時間領域の減衰因子 ln D(tau) = -sigma^2 tau^2 / 2。"""
+    broadening = Broadening(sigma=150.0)
+    tau = np.array([0.0, 1e-3, -2e-3])
+    np.testing.assert_allclose(
+        broadening.log_damping(tau), -0.5 * 150.0**2 * tau**2, rtol=1e-15
+    )
+
+
+def test_broadening_knows_the_normalized_peak_height():
+    """規格化ガウシアンの頂点値 1 / (sigma * sqrt(2 pi))。"""
+    broadening = Broadening(sigma=80.0)
+    assert broadening.peak_height() == pytest.approx(1.0 / (80.0 * np.sqrt(2.0 * np.pi)))
+
+
+def test_broadening_knows_the_truncation_indicator():
+    """tau 窓の打ち切りの指標はガウス型では sigma * tau_max。"""
+    broadening = Broadening(sigma=150.0)
+    assert broadening.truncation_indicator(0.5) == pytest.approx(75.0)
+    assert broadening.MIN_TRUNCATION_INDICATOR == 6.0
+
+
+def test_the_diagnostic_comes_from_the_broadening():
+    """`sigma_tau_max` は線形状が計算し、エンベロープはそれを記録するだけ。"""
+    broadening = Broadening(sigma=150.0)
+    grid = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0)
+    diagnostics = compute_quietly(
+        SYSTEM, temperature=300.0, broadening=broadening, grid=grid
+    ).diagnostics
+    assert diagnostics.sigma_tau_max == broadening.truncation_indicator(
+        diagnostics.tau_max
+    )

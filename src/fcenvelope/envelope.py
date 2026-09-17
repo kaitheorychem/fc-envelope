@@ -1,12 +1,15 @@
-"""数値コア: 占有数、rho(tau)、グリッド構成、FFT、診断値算出。
+"""エンベロープ F(E): グリッド構成、rho(tau)、FFT、診断値算出。
 
 理論は `docs/theory/time-ft.md` の式そのもの:
 
-    F(E) = (1 / 2pi) * int dtau rho(tau) exp(i E tau - sigma^2 tau^2 / 2)
+    F(E) = (1 / 2pi) * int dtau rho(tau) D(tau) exp(i E tau)
 
     rho(tau) = prod_alpha exp( -S_a (2 n_a + 1)
                                + S_a (n_a + 1) exp(+i eps_a tau)
                                + S_a n_a       exp(-i eps_a tau) )
+
+D(tau) は線形状に由来する減衰因子で、その形は `Broadening` が持つ（ADR-0034）。
+このモジュールは線形状の種類を知らない。ガウス型では D = exp(-sigma^2 tau^2 / 2)。
 
 符号規約は反転しない。E = 0 が ZPL であり、振動量子を k 個生成する
 サイドバンドは E = -k * eps_alpha（負側）に立つ。
@@ -15,53 +18,27 @@
 from __future__ import annotations
 
 import math
-import warnings
-from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import numpy as np
-from scipy import constants
 
-from .errors import NumericalQualityWarning
-from .models import Conditions, VibrationalMode
-from .result import Diagnostics, FCEnvelopeResult
+from .errors import report_quality
+from .models import Broadening, EnergyGrid, VibrationalSystem, validate_temperature
+from .result import Diagnostics, EnvelopeResult, Provenance
 from .version import __version__
 
 __all__ = [
-    "K_B_CM",
     "build_grids",
     "compute_envelope",
-    "occupation_numbers",
-    "reorganization_energy",
 ]
 
-#: ボルツマン定数 [cm^-1 / K]。scipy から導出し、値をハードコードしない。
-K_B_CM = constants.k / (constants.h * constants.c * 100.0)
-
 # --- 診断値の警告閾値（§7 の表） ---
-MIN_SIGMA_TAU_MAX = 6.0
+# tau 窓の打ち切りの閾値だけは線形状の側にある（`Broadening.MIN_TRUNCATION_INDICATOR`）。
 MAX_EDGE_INTENSITY_RATIO = 1e-4
 MAX_AREA_DEVIATION = 1e-6
 MIN_WINDOW_CAPTURED_FRACTION = 0.99
 MAX_IMAGINARY_RATIO = 1e-8
-
-
-def occupation_numbers(frequencies: np.ndarray, temperature: float) -> np.ndarray:
-    """ボーズ分布による占有数 n_alpha を返す。
-
-    `expm1` を用いることで eps / kT が大きい領域は inf -> n = 0 と正しく畳まれる。
-    T = 0 は分岐して n = 0 を直接与える。
-    """
-    freq = np.asarray(frequencies, dtype=float)
-    if temperature == 0.0:
-        return np.zeros_like(freq)
-    with np.errstate(over="ignore"):
-        return 1.0 / np.expm1(freq / (K_B_CM * temperature))
-
-
-def reorganization_energy(modes: Sequence[VibrationalMode]) -> float:
-    """再配列エネルギー lambda = sum_alpha S_alpha * eps_alpha [cm^-1]。"""
-    return float(sum(mode.huang_rhys * mode.frequency for mode in modes))
 
 
 def _next_pow2(value: int) -> int:
@@ -71,14 +48,14 @@ def _next_pow2(value: int) -> int:
     return 1 << (value - 1).bit_length()
 
 
-def build_grids(conditions: Conditions) -> tuple[np.ndarray, np.ndarray, int, float]:
+def build_grids(grid: EnergyGrid) -> tuple[np.ndarray, np.ndarray, int, float]:
     """FFT 標準順序の (energy, tau) グリッドと (N, d_tau) を構成する。
 
     0 対称な全域 E グリッド上で計算し、最後に窓へ切り出す。この取り方により
     出力の dE は指定した `de` ちょうどになり、E = 0 が必ずグリッド点に乗る。
     """
-    de = conditions.de
-    e_half = max(abs(conditions.e_min), abs(conditions.e_max))
+    de = grid.de
+    e_half = max(abs(grid.e_min), abs(grid.e_max))
     n_fft = _next_pow2(math.ceil(2.0 * e_half / de))
     d_tau = 2.0 * math.pi / (n_fft * de)
 
@@ -89,18 +66,17 @@ def build_grids(conditions: Conditions) -> tuple[np.ndarray, np.ndarray, int, fl
 
 def _log_rho(
     tau: np.ndarray,
-    modes: Sequence[VibrationalMode],
+    system: VibrationalSystem,
     temperature: float,
 ) -> np.ndarray:
     """ln rho(tau) をモードについてループ加算で構成する。
 
     全モード x 全 tau の外積は作らない（N = 2^17・200 モードで数百 MB になる）。
     """
-    frequencies = np.array([mode.frequency for mode in modes], dtype=float)
-    occupations = occupation_numbers(frequencies, temperature)
+    occupations = system.occupations(temperature)
 
     log_rho = np.zeros(tau.shape, dtype=np.complex128)
-    for mode, n_alpha in zip(modes, occupations, strict=True):
+    for mode, n_alpha in zip(system.modes, occupations, strict=True):
         s_alpha = mode.huang_rhys
         if s_alpha == 0.0:
             continue
@@ -114,27 +90,62 @@ def _log_rho(
 
 
 def compute_envelope(
-    modes: Sequence[VibrationalMode],
-    conditions: Conditions,
-) -> FCEnvelopeResult:
+    system: VibrationalSystem,
+    *,
+    temperature: float,
+    broadening: Broadening,
+    grid: EnergyGrid,
+) -> EnvelopeResult:
     """Franck-Condon エンベロープ F(E) を計算する。
 
     Args:
-        modes: 正準表現の振動モード列（frequency [cm^-1], huang_rhys）。
-        conditions: 温度・広がり・出力 E グリッドの指定。
+        system: 正準形の振動モードの集まり。
+        temperature: T [K]。始状態の熱占有に効く。
+        broadening: 線形状。現在はガウス幅 sigma だけ。
+        grid: エンベロープを標本する E 軸上の点列。
 
     Returns:
         窓へ切り出した F(E) と、入力エコー・診断値・来歴を含む結果クラス。
     """
-    modes = tuple(modes)
-    energy_full, tau, n_fft, d_tau = build_grids(conditions)
+    validate_temperature(temperature)
+    energy, density, measured = _transform(system, temperature, broadening, grid)
+    messages = report_quality(_quality_messages(broadening, measured))
 
-    log_rho = _log_rho(tau, modes, conditions.temperature)
-    damping = -0.5 * conditions.sigma**2 * tau**2
-    m_tau = np.exp(log_rho + damping)
+    return EnvelopeResult(
+        system=system,
+        temperature=temperature,
+        broadening=broadening,
+        grid=grid,
+        energy=energy,
+        density=density,
+        diagnostics=replace(measured, messages=messages),
+        provenance=Provenance(
+            fcenvelope_version=__version__,
+            created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        ),
+    )
+
+
+def _transform(
+    system: VibrationalSystem,
+    temperature: float,
+    broadening: Broadening,
+    grid: EnergyGrid,
+) -> tuple[np.ndarray, np.ndarray, Diagnostics]:
+    """数値計算。窓へ切り出した (energy, density) と、そこから読める測定値を返す。
+
+    測定値は判定を含まない生の数値で、閾値との突き合わせは `_quality_messages` が
+    行う（ADR-0048）。**返す `Diagnostics` の `messages` は空**で、判定の結果は
+    組み立ての段階で `dataclasses.replace` により入る。測定値の入れ物を別に作らない
+    のは、フィールド名を 2 箇所に書くことになるからである（ADR-0036）。
+    """
+    energy_full, tau, n_fft, d_tau = build_grids(grid)
+
+    log_rho = _log_rho(tau, system, temperature)
+    m_tau = np.exp(log_rho + broadening.log_damping(tau))
 
     # F(E_j) = (1 / dE) * ifft(M)_j （tau・E ともに FFT 標準順序のため位相因子は不要）
-    spectrum_full = np.fft.ifft(m_tau) / conditions.de
+    spectrum_full = np.fft.ifft(m_tau) / grid.de
 
     real_full = spectrum_full.real
     peak = float(np.max(np.abs(real_full)))
@@ -144,71 +155,53 @@ def compute_envelope(
     energy_full = np.fft.fftshift(energy_full)
     real_full = np.ascontiguousarray(np.fft.fftshift(real_full))
 
-    total_area = float(np.sum(real_full) * conditions.de)
+    total_area = float(np.sum(real_full) * grid.de)
     edge_intensity = max(abs(float(real_full[0])), abs(float(real_full[-1])))
     edge_intensity_ratio = edge_intensity / peak if peak > 0.0 else 0.0
 
     # 端点は de の整数倍にスナップされる。丸め誤差でグリッド点を落とさないよう緩衝を置く。
-    tol = 1e-9 * conditions.de
-    window = (energy_full >= conditions.e_min - tol) & (energy_full <= conditions.e_max + tol)
+    tol = 1e-9 * grid.de
+    window = (energy_full >= grid.e_min - tol) & (energy_full <= grid.e_max + tol)
     energy = np.ascontiguousarray(energy_full[window])
-    intensity = np.ascontiguousarray(real_full[window])
+    density = np.ascontiguousarray(real_full[window])
 
-    window_area = float(np.sum(intensity) * conditions.de)
+    window_area = float(np.sum(density) * grid.de)
     window_captured_fraction = window_area / total_area if total_area != 0.0 else 0.0
 
-    tau_max = math.pi / conditions.de
-    sigma_tau_max = conditions.sigma * tau_max
-
-    messages = _quality_messages(
-        sigma_tau_max=sigma_tau_max,
-        edge_intensity_ratio=edge_intensity_ratio,
-        total_area=total_area,
-        window_captured_fraction=window_captured_fraction,
-        max_imaginary_ratio=max_imaginary_ratio,
-    )
-    for message in messages:
-        warnings.warn(message, NumericalQualityWarning, stacklevel=2)
-
-    diagnostics = Diagnostics(
+    tau_max = math.pi / grid.de
+    measured = Diagnostics(
         n_fft=n_fft,
         d_tau=d_tau,
         tau_max=tau_max,
-        sigma_tau_max=sigma_tau_max,
+        # 名前はガウス型の名残。減衰因子そのもので測る形への一般化は ADR-0038（提案）。
+        sigma_tau_max=broadening.truncation_indicator(tau_max),
         total_area=total_area,
         window_captured_fraction=window_captured_fraction,
         edge_intensity_ratio=edge_intensity_ratio,
         max_imaginary_ratio=max_imaginary_ratio,
-        messages=messages,
     )
-
-    return FCEnvelopeResult(
-        energy=energy,
-        intensity=intensity,
-        modes=modes,
-        conditions=conditions,
-        reorganization_energy=reorganization_energy(modes),
-        diagnostics=diagnostics,
-        fcenvelope_version=__version__,
-        created_at=datetime.now(timezone.utc).replace(microsecond=0),
-    )
+    return energy, density, measured
 
 
-def _quality_messages(
-    *,
-    sigma_tau_max: float,
-    edge_intensity_ratio: float,
-    total_area: float,
-    window_captured_fraction: float,
-    max_imaginary_ratio: float,
-) -> tuple[str, ...]:
-    """閾値を超えた診断値について警告文言を組み立てる。"""
+def _quality_messages(broadening: Broadening, measured: Diagnostics) -> tuple[str, ...]:
+    """診断値の判定。閾値を超えた項目について警告文言を組み立てる。
+
+    文言は「何が起きたか」に加えて「どう直すか」を持つので、雛形に押し込めず手書きで
+    残す（ADR-0036）。発報そのものは `errors.report_quality` が行う。
+    """
+    sigma_tau_max = measured.sigma_tau_max
+    edge_intensity_ratio = measured.edge_intensity_ratio
+    total_area = measured.total_area
+    window_captured_fraction = measured.window_captured_fraction
+    max_imaginary_ratio = measured.max_imaginary_ratio
+
     messages: list[str] = []
 
-    if sigma_tau_max < MIN_SIGMA_TAU_MAX:
+    if sigma_tau_max < broadening.MIN_TRUNCATION_INDICATOR:
         messages.append(
-            f"sigma*tau_max = {sigma_tau_max:.3g} < {MIN_SIGMA_TAU_MAX:g}: "
-            "the tau window is truncated before the Gaussian damping completes; "
+            f"sigma*tau_max = {sigma_tau_max:.3g} < "
+            f"{broadening.MIN_TRUNCATION_INDICATOR:g}: "
+            "the tau window is truncated before the damping completes; "
             "ringing is likely. Use de smaller than sigma/2."
         )
     if edge_intensity_ratio > MAX_EDGE_INTENSITY_RATIO:
