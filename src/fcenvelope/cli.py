@@ -1,12 +1,17 @@
 """typer による CLI。
 
 終了コード: 0 正常 / 1 `FCEnvelopeError` / 2 typer の使用法エラー。
+
+節目のログは `--log` で指定したファイルに書く。指定がなければメモリに溜めるだけで、
+異常終了したときにだけ出力先の隣へ書き出す（ADR-0052）。
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Annotated, Optional, TypeVar
 
 import typer
@@ -14,15 +19,19 @@ import typer
 if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
     import matplotlib.figure
 
+from . import logs
 from .envelope import compute_envelope
 from .errors import FCEnvelopeError
 from .inputs import FCEnvelopeInput
 from .io import kind_for, load_any, save_any
 from .lines import compute_fc_lines
+from .logs import stage
 from .result import EnvelopeResult, FCLine, LinesResult, Result
 from .version import __version__
 
 __all__ = ["app"]
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     add_completion=False,
@@ -31,9 +40,61 @@ app = typer.Typer(
 )
 
 
-def _fail(exc: FCEnvelopeError) -> typer.Exit:
-    typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
-    return typer.Exit(1)
+#: `--log` の宣言。3 つの副命令で同じものを使う（ADR-0036）。
+LogFile = Annotated[
+    Optional[Path],
+    typer.Option(
+        "--log",
+        help=(
+            "Write the stage-by-stage log to this file. "
+            "Without it, the log is kept in memory and only written next to "
+            "the output when the run fails."
+        ),
+    ),
+]
+
+
+def _trace_path(output: Path) -> Path:
+    """`--log` がないとき、異常終了の痕跡を残す場所。出力ファイルの隣に置く。"""
+    return output.with_suffix(".log")
+
+
+def _echo_trace(written: Path | None) -> None:
+    """痕跡を残した場所を知らせる。残せなかった場合は何も言わない。"""
+    if written is not None:
+        typer.secho(f"wrote the log up to the failure to {written}", err=True)
+
+
+#: 痕跡を残さずに投げ返す例外。使用法の誤りと、typer 自身の終了の合図で、どちらも
+#: 「どこまで進んで止まったか」の話ではない。
+_NOT_A_FAILURE = (typer.Exit, typer.Abort, typer.BadParameter)
+
+
+@contextmanager
+def _traced(log: Path | None, output: Path) -> Iterator[None]:
+    """節目の記録と `FCEnvelopeError` の扱いをまとめる（ADR-0052）。
+
+    `--log` が指定されていればそのファイルへ直に書く。指定がなければ記録はメモリに
+    溜まるだけで、異常終了したときにだけ `_trace_path(output)` へ書き出す。正常に
+    終わった実行はログのためのファイル IO を 1 回も行わない。
+    """
+    trace = logs.Trace(log)
+    try:
+        yield
+    except FCEnvelopeError as exc:
+        logger.error("%s", exc)
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        _echo_trace(trace.dump(_trace_path(output)))
+        raise typer.Exit(1) from exc
+    except (Exception, KeyboardInterrupt) as exc:
+        # 想定外の異常終了と Ctrl-C。痕跡を残す値打ちがいちばんあるのはここで、
+        # 止まった節目が最後の `begin` として残る。例外はそのまま投げ返す。
+        if not isinstance(exc, _NOT_A_FAILURE):
+            logger.error("%s: %s", type(exc).__name__, exc)
+            _echo_trace(trace.dump(_trace_path(output)))
+        raise
+    finally:
+        trace.close()
 
 
 #: CLI が上書きできる値。入力ファイルと同じ単位・流儀で読む生の値で、正準化の前に
@@ -115,9 +176,10 @@ def run(
         typer.Option("--de", help="Override grid.de [cm^-1]."),
     ] = None,
     dpi: Annotated[int, typer.Option("--dpi", help="Resolution of --plot.")] = 150,
+    log: LogFile = None,
 ) -> None:
     """Compute the Franck-Condon envelope and write it to a result JSON."""
-    try:
+    with _traced(log, output):
         parsed = _override(
             FCEnvelopeInput.from_path(input_path),
             temperature=temperature,
@@ -131,13 +193,11 @@ def run(
             grid=parsed.to_grid(),
         )
         save_any(result, output)
-    except FCEnvelopeError as exc:
-        raise _fail(exc) from exc
 
-    _report_any(result, output)
+        _report_any(result, output)
 
-    if plot is not None:
-        _save_figure(result, plot, title=None, dpi=dpi)
+        if plot is not None:
+            _save_figure(result, plot, title=None, dpi=dpi)
 
 
 @app.command()
@@ -177,9 +237,10 @@ def lines(
         int, typer.Option("--show", help="Print this many of the strongest lines (0 disables).")
     ] = 10,
     dpi: Annotated[int, typer.Option("--dpi", help="Resolution of --plot.")] = 150,
+    log: LogFile = None,
 ) -> None:
     """List the discrete Franck-Condon factors with their transition energies."""
-    try:
+    with _traced(log, output):
         parsed = _override(
             FCEnvelopeInput.from_path(input_path),
             temperature=temperature,
@@ -195,13 +256,11 @@ def lines(
             selection=parsed.to_selection(),
         )
         save_any(result, output)
-    except FCEnvelopeError as exc:
-        raise _fail(exc) from exc
 
-    _report_any(result, output, show=show)
+        _report_any(result, output, show=show)
 
-    if plot is not None:
-        _save_figure(result, plot, title=None, dpi=dpi)
+        if plot is not None:
+            _save_figure(result, plot, title=None, dpi=dpi)
 
 
 @app.command()
@@ -231,6 +290,7 @@ def plot(
         ),
     ] = 1.0,
     dpi: Annotated[int, typer.Option("--dpi", help="Resolution of the output image.")] = 150,
+    log: LogFile = None,
 ) -> None:
     """Render stored results without recomputing them.
 
@@ -238,25 +298,22 @@ def plot(
     Two files -- one envelope result and one FC line list, in either order -- are
     drawn on one axes, with the lines scaled into the unit of F(E).
     """
-    try:
+    with _traced(log, output):
         results = [load_any(result_path) for result_path in result_paths]
-    except FCEnvelopeError as exc:
-        raise _fail(exc) from exc
 
-    if len(results) == 1:
-        if magnify != 1.0:
-            raise typer.BadParameter(
-                "--magnify only applies when overlaying two results",
-                param_hint="--magnify",
-            )
-        _save_figure(results[0], output, title=title, dpi=dpi)
-        return
+        if len(results) == 1:
+            if magnify != 1.0:
+                raise typer.BadParameter(
+                    "--magnify only applies when overlaying two results",
+                    param_hint="--magnify",
+                )
+            _save_figure(results[0], output, title=title, dpi=dpi)
+            return
 
-    envelope, line_list = _pair_for_overlay(results, result_paths)
-    try:
-        _save_overlay(envelope, line_list, output, title=title, magnify=magnify, dpi=dpi)
-    except FCEnvelopeError as exc:
-        raise _fail(exc) from exc
+        envelope, line_list = _pair_for_overlay(results, result_paths)
+        _save_overlay(
+            envelope, line_list, output, title=title, magnify=magnify, dpi=dpi
+        )
 
 
 def _transition_label(line: FCLine) -> str:
@@ -346,7 +403,8 @@ def _write_figure(
     import matplotlib.pyplot as plt
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output, dpi=dpi)
+    with stage(logger, f"write {output}"):
+        figure.savefig(output, dpi=dpi)
     plt.close(figure)
     typer.echo(f"wrote {output}")
 
@@ -377,12 +435,13 @@ def _save_overlay(
     high = float(envelope.energy[-1])
     dropped = sum(1 for line in lines.lines if not low <= line.energy <= high)
     if dropped:
-        typer.secho(
-            f"warning: {dropped} of {len(lines.lines)} lines fall outside the "
-            f"E window [{low:g}, {high:g}] cm^-1 and are not drawn",
-            fg=typer.colors.YELLOW,
-            err=True,
+        # 利用者への警告と、記録としてのログの両方に出す（ADR-0052）。
+        message = (
+            f"{dropped} of {len(lines.lines)} lines fall outside the "
+            f"E window [{low:g}, {high:g}] cm^-1 and are not drawn"
         )
+        typer.secho(f"warning: {message}", fg=typer.colors.YELLOW, err=True)
+        logger.warning("%s", message)
 
 
 @app.callback(invoke_without_command=True)

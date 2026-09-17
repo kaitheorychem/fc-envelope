@@ -50,6 +50,7 @@ uv run fcenvelope run input.json -o result.json --plot spectrum.png
 uv run fcenvelope lines input.json -o lines.json --plot sticks.png
 uv run fcenvelope plot result.json -o spectrum.png --title "300 K"
 uv run fcenvelope plot result.json lines.json -o overlay.png   # 2つを重ねる
+uv run fcenvelope run input.json -o result.json --log run.log  # 節目のログを残す
 ```
 
 ```python
@@ -78,7 +79,10 @@ save_lines(lines, "lines.json")
 plot_overlay(result, lines).savefig("overlay.png", dpi=300)
 ```
 
-入力ファイルの書き方・E 軸の符号規約・診断値の読み方は
+`--log` を指定しなければログファイルは作らない。エラーで終わったときだけ、そこまでの
+節目の記録を出力ファイルの隣（`result.log`）に残す。
+
+入力ファイルの書き方・E 軸の符号規約・診断値の読み方・ログの読み方は
 [docs/readme/usage.md](docs/readme/usage.md) を参照。
 インターフェイスの一覧は [docs/dev/spec/interface.md](docs/dev/spec/interface.md)。
 

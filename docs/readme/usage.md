@@ -119,6 +119,9 @@ uv run fcenvelope plot result.json lines.json -o overlay.png --title "300 K"
 
 # 版を表示して終了する
 uv run fcenvelope --version
+
+# 節目のログをファイルに残す（どの副命令でも使える）
+uv run fcenvelope run input.json -o result.json --log run.log
 ```
 
 終了コードは 正常 `0` / 入力・計算エラー `1` / 使用法エラー `2`。
@@ -350,3 +353,64 @@ uv run fcenvelope plot result.json lines.json -o overlay.png --magnify 5
 | `min_mode_completeness` | 1 から外れると振動梯子の打ち切り | `--max-quanta` を上げる |
 | `recurrence_limited` | True なら漸化式の桁落ちを避けて始状態を打ち切っている | 閾値を粗くするか温度を下げる |
 | `mean_energy` | ⟨E⟩。収束していれば −λ に一致する（記録のみ） | — |
+
+## ログ
+
+「どこまで進んだか」を後から読むための記録である。結果を信じてよいかを答えるのは
+診断値（上の節）で、こちらが答えるのは**どこで止まったか**だけである。
+
+```
+2026-09-17 12:34:56,102 INFO fcenvelope.inputs: begin read input.json
+2026-09-17 12:34:56,104 INFO fcenvelope.inputs: end read input.json (0.002 s)
+2026-09-17 12:34:56,104 INFO fcenvelope.envelope: begin envelope: 2 modes, T=300 K, de=5
+2026-09-17 12:34:56,131 INFO fcenvelope.envelope: end envelope: 2 modes, T=300 K, de=5 (0.027 s)
+2026-09-17 12:34:56,131 INFO fcenvelope.envelope: envelope: 1001 points, N_fft=2048, area=1, captured=0.998306
+2026-09-17 12:34:56,133 INFO fcenvelope.io: begin write result.json
+2026-09-17 12:34:56,158 INFO fcenvelope.io: end write result.json (0.025 s)
+2026-09-17 12:34:56,158 INFO fcenvelope.plotting: begin plot envelope (1001 points)
+2026-09-17 12:34:56,377 INFO fcenvelope.plotting: end plot envelope (1001 points) (0.219 s)
+2026-09-17 12:34:56,377 INFO fcenvelope.cli: begin write spectrum.png
+2026-09-17 12:34:56,538 INFO fcenvelope.cli: end write spectrum.png (0.161 s)
+```
+
+記録するのは**節目**だけで、1 回の実行で数十行にしかならない。`begin` と `end` が対に
+なっていて、例外で抜けた節目には `end` が出ない。**`begin` だけが残っている行が、止まった
+場所である。** 完了までの所要時間は `end` の行に出る。
+
+モードごと・線ごとの記録は取らない。モード数や線の本数が増えてもログの行数は変わらない。
+
+書き出す条件は 2 つだけである。
+
+| 状況 | ログファイル |
+|---|---|
+| `--log FILE` を指定した | 最初から `FILE` に書く |
+| 指定せず、異常終了した | `-o` の拡張子を `.log` に替えた場所に、そこまでの記録を書く（場所は stderr に出る） |
+| 指定せず、正常に終わった | **書かない**（ログのためにファイルに触れない） |
+
+```bash
+uv run fcenvelope run input.json -o result.json --log run.log   # 常に残す
+uv run fcenvelope run input.json -o result.json                 # 失敗したときだけ result.log
+```
+
+異常終了には、入力・計算のエラーだけでなく、想定外のエラーと **Ctrl-C** も含まれる。
+計算が返ってこないときに Ctrl-C で止めれば、最後の `begin` がどこで止まったかを指す。
+使用法の誤り（オプションの綴り違いなど）では書かない。
+
+ライブラリとして使う場合は `logging` の作法そのままで、`fcenvelope` ロガーにハンドラを
+付ければよい。付けなければ何も出ない。
+
+```python
+import logging
+
+logging.basicConfig(
+    filename="run.log", level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logging.getLogger("fcenvelope").setLevel(logging.INFO)
+```
+
+画面に出る警告——品質の警告（`NumericalQualityWarning`）、重ね描きの系・温度の食い違い、
+E 窓から外れて描かれなかった線——は、同じ文言が WARNING としてこのログにも残る。`warnings`
+で潰していても記録のほうは残る。逆に、結果の要約（`wrote ...` や線の表）は画面に出すだけで
+ログには入れない。**画面はいま見ている人へのメッセージ、ログは後から追う人のための記録**、
+という使い分けである。

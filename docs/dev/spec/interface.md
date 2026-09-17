@@ -235,13 +235,15 @@ V（1.5）と λ（1.0）は**まだ登録していない**が、型はこれら
 fcenvelope run INPUT.json -o RESULT.json [--plot FIG.png] [--dpi INT]
                           [--temperature FLOAT] [--sigma FLOAT]
                           [--e-min FLOAT] [--e-max FLOAT] [--de FLOAT]
+                          [--log FILE]
 
 fcenvelope lines INPUT.json -o LINES.json [--plot FIG.png] [--dpi INT]
                           [--temperature FLOAT] [--min-weight FLOAT]
                           [--max-lines INT] [--max-quanta INT] [--show INT]
+                          [--log FILE]
 
 fcenvelope plot RESULT.json [LINES.json] -o FIG.png [--title TEXT] [--dpi INT]
-                          [--magnify FLOAT]
+                          [--magnify FLOAT] [--log FILE]
 
 fcenvelope --version
 ```
@@ -256,6 +258,8 @@ fcenvelope --version
 効く。種類の組み合わせが違えば使用法エラー。
 `--version` は副命令を取らず、パッケージ版だけを出して終了する。
 終了コード: `0` 正常 / `1` `FCEnvelopeError` / `2` 使用法エラー。
+
+`--log FILE` は節目のログの書き出し先（下の「ログ」を参照）。省略時は書き出さない。
 
 ## 型注釈の方針
 
@@ -293,6 +297,37 @@ NumericalQualityWarning(UserWarning)
 発報と記録の手順は `errors.report_quality` にまとめ、**メッセージ本文は各系統が手書きで
 持つ**（ADR-0036, 0048）。
 
+## ログ
+
+節目（ファイルの読み書き・重い数値計算・図の書き出し）だけを標準ライブラリの `logging` で
+記録する（ADR-0052）。ロガーは `fcenvelope` で、各モジュールはその下に `__name__` で枝を
+持つ。パッケージ側は `NullHandler` だけを付けるので、ハンドラを足さない限り何も出ない。
+
+```python
+logs.stage(logger, label)   # 節目の開始と完了を 1 行ずつ。ループの内側では使わない
+logs.Trace(path=None)       # CLI の出力先。None ならメモリに溜め、dump(path) で書き出す
+```
+
+| 水準 | 何が出るか |
+|---|---|
+| INFO | 節目の `begin <label>` / `end <label> (N.NNN s)`、および読み込み・計算の要約 1 行 |
+| WARNING | 利用者に出している警告（品質・重ね描きの食い違い・窓から外れた線）と同じ文言 |
+| ERROR | CLI が異常終了するときの 1 行 |
+
+標準出力は**利用者への直接のメッセージ**、ログは**何が起きたかの記録**である。宛先が違うので
+警告とエラーは両方に出る。結果の要約（`wrote ...`・線の表）は前者だけ、節目は後者だけに出す。
+警告の文言は発報側が 1 箇所で持ち、発報と記録に同じものを渡す。ログのために新しい警告は
+作らない（ADR-0052）。
+
+例外で節目を抜けた場合は `end` 行を書かない。開始行だけが残るという形が「そこで止まった」
+を意味する。**記録の数は入力の規模に依存しない**。モード数や線の本数で行数が増えないことは
+`test/test_logging.py` で確かめる。
+
+CLI は `--log FILE` が指定されたときだけ最初からファイルへ書く。指定がなければ記録はメモリに
+溜まるだけで、異常終了したときにだけ `-o` の拡張子を `.log` に替えた場所へ書き出す。異常終了は
+`FCEnvelopeError`・想定外の例外・Ctrl-C の 3 つで、使用法エラーは含まない（どこまで進んだかの
+話ではないため）。正常に終わった実行はログのためのファイル IO を 1 回も行わない。
+
 ## E グリッドの構成
 
 `e_min` / `e_max` / `de` は明示指定（省略値・自動推定なし）。内部では 0 対称な
@@ -324,14 +359,15 @@ NumericalQualityWarning(UserWarning)
 |---|---|---|
 | `errors.py` | 例外・警告、`report_quality` | — |
 | `physics.py` | `K_B_CM`、占有数 n_α、梯子 P(n)。配列と数値だけを扱う | — |
+| `logs.py` | 節目のログの出力先（ADR-0052） | errors |
 | `models.py` | 計算用の値の型 | errors, physics |
 | `units.py` | 流儀オブジェクト、単位の検証と変換 | errors |
-| `inputs.py` | 入力ファイルの型（pydantic）と正準化 | errors, units, models |
+| `inputs.py` | 入力ファイルの型（pydantic）と正準化 | errors, logs, units, models |
 | `result.py` | 結果クラス、`Provenance` | models |
-| `envelope.py` | グリッド構成・FFT | errors, models, result |
-| `lines.py` | 漸化式・線の列挙 | errors, models, physics, result |
-| `io.py` | 保存・読み込み、`kind` の表 | errors, models, result |
-| `plotting.py` | 描画、結果の型の表 | errors, result |
+| `envelope.py` | グリッド構成・FFT | errors, logs, models, result |
+| `lines.py` | 漸化式・線の列挙 | errors, logs, models, physics, result |
+| `io.py` | 保存・読み込み、`kind` の表 | errors, logs, models, result |
+| `plotting.py` | 描画、結果の型の表 | errors, logs, result |
 | `cli.py` | typer アプリ | 上記すべて |
 
 `envelope.py` と `lines.py` は互いに依存しない。`io.py` は `inputs.py` に依存しない
