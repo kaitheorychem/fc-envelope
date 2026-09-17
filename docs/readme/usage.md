@@ -5,10 +5,13 @@
 
 - **エンベロープ F(E)**（`run`）— 時間相関関数のフーリエ変換による連続スペクトル。多数のモードを
   含めた全体像を精度よく得たいとき。
-- **離散 FC 因子**（`lines`）— 個々の振動遷移の FC 因子と、その遷移エネルギーの一覧。
+- **線**（`lines`）— 個々の振電遷移の FC 因子と、その遷移エネルギーの一覧。
   どのモードが何量子ぶん効いているかを定性的に見たいとき。
 
 両者は同じ物理量の別表現で、線を σ のガウシアンで畳んで足し上げるとエンベロープに一致する。
+縦軸もそれに対応していて、エンベロープは**密度**（1/cm⁻¹、∫F dE = 1）、線は**重み**
+（無次元、総和 1）である。同じ確率分布の連続版と離散版なので、どちらも `intensity` とは
+呼ばない。
 
 ## エネルギーの向き
 
@@ -24,33 +27,40 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "frequency_unit": "cm^-1",
   "coupling_convention": "g",
   "modes": [
     { "frequency": 1200.0, "coupling": 0.5 },
     { "frequency":  450.0, "coupling": 0.8 }
   ],
-  "conditions": {
-    "temperature": 300.0,
-    "sigma": 150.0,
-    "e_min": -4000.0,
-    "e_max": 1000.0,
-    "de": 5.0
-  }
+  "temperature": 300.0,
+  "broadening": { "sigma": 150.0 },
+  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 },
+  "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
 }
 ```
 
 | フィールド | 意味 | 制約 |
 |---|---|---|
+| `schema_version` | 入力ファイルの版 | `2` 固定 |
 | `frequency_unit` | 振動数の単位 | `"cm^-1"` のみ |
 | `coupling_convention` | `coupling` の流儀。`"g"` なら S = g²、`"huang_rhys"` なら S をそのまま | 既定は `"g"` |
 | `modes[].frequency` | ε_α [cm⁻¹] | > 0 |
-| `modes[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | ≥ 0 |
-| `conditions.temperature` | T [K] | ≥ 0（0 は許可） |
-| `conditions.sigma` | スペクトル幅 σ [cm⁻¹] | > 0 |
-| `conditions.e_min` / `e_max` | 出力窓 [cm⁻¹] | `e_min` < `e_max` |
-| `conditions.de` | 出力グリッド間隔 [cm⁻¹] | > 0 |
+| `modes[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | 流儀による |
+| `temperature` | T [K] | ≥ 0（0 は許可） |
+| `broadening.sigma` | 線形状の幅 σ [cm⁻¹] | > 0 |
+| `grid.e_min` / `e_max` | 出力窓 [cm⁻¹] | `e_min` < `e_max` |
+| `grid.de` | 出力グリッド間隔 [cm⁻¹] | > 0 |
+| `selection.min_weight` | 保持する重みの下限 | 0 < x ≤ 1、既定 1e-4 |
+| `selection.max_lines` | 保持・列挙する線数の上限 | ≥ 1、既定 10000 |
+| `selection.max_quanta` | 1 モードあたりの振動量子数の上限 | ≥ 0 または `null`（自動）、既定 `null` |
+
+`run` が読むのは `temperature` / `broadening` / `grid`、`lines` が読むのは
+`temperature` / `selection` で、どちらも同じファイルを使える。`selection` は省略できる。
+
+流儀 `"g"` では S = g² なので `coupling` の符号は結果に効かない。`"huang_rhys"` では
+`coupling` が S そのものなので負の値はエラーになる。
 
 ### モードを CSV で渡す
 
@@ -58,11 +68,13 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "frequency_unit": "cm^-1",
   "coupling_convention": "g",
   "modes": { "path": "modes.csv" },
-  "conditions": { "temperature": 300.0, "sigma": 150.0, "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 }
+  "temperature": 300.0,
+  "broadening": { "sigma": 150.0 },
+  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 }
 }
 ```
 
@@ -78,7 +90,9 @@ frequency,coupling
 - RFC 4180 にはコメントの規定がないため、コメント行は書けない。空行もエラー（ファイル末尾の改行 1 つは可）。
 - 行の順序は計算結果に影響しない。縮重モードは同じ値の行を複数書く。
 - 単位と流儀は JSON 側の `frequency_unit` / `coupling_convention` に従う。
-- 区切りはカンマのみ。エラーは `modes.csv:3: ...` のように行番号付きで報告される。
+- 区切りはカンマのみ。**構造の誤り**（列数違い、数値として読めない、空行、引用の誤りなど）は
+  `modes.csv:3: ...` のように行番号付きで報告される。**値の範囲**（ε ≤ 0 など）は流儀と単位を
+  消費した後で判定するので、位置は `modes[2]` のようにモードの番号で報告される。
 - 結果 JSON にはモードの値そのものが埋め込まれるので、CSV が後で変わっても結果ファイル単体で再現できる。
 
 E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
@@ -94,7 +108,7 @@ uv run fcenvelope run input.json -o result.json --plot spectrum.png
 uv run fcenvelope run input.json -o result_0K.json --temperature 0
 
 # 離散 FC 因子の一覧を書き出す
-uv run fcenvelope lines input.json -o lines.json --min-intensity 1e-5
+uv run fcenvelope lines input.json -o lines.json --min-weight 1e-5
 
 # 計算をやり直さずに図だけ作り直す（エンベロープ・棒スペクトルのどちらでも）
 uv run fcenvelope plot result.json -o spectrum.png --title "300 K" --dpi 300
@@ -102,25 +116,28 @@ uv run fcenvelope plot lines.json  -o sticks.png   --title "300 K"
 
 # 2 つを 1 枚に重ねる（与える順序は問わない）
 uv run fcenvelope plot result.json lines.json -o overlay.png --title "300 K"
+
+# 版を表示して終了する
+uv run fcenvelope --version
 ```
 
 終了コードは 正常 `0` / 入力・計算エラー `1` / 使用法エラー `2`。
 
-## 離散 FC 因子
+## 線
 
 `docs/theory/fc-factor.md` の漸化式で FC 因子 |⟨m|U(g)|n⟩|² を求め、対応する遷移エネルギーと
 一緒に並べる。エネルギーは E 軸の規約どおり **E = −Σ_α (m_α − n_α)·ε_α**。
 
-入力ファイルは `run` と同じものをそのまま使う。`conditions` のうち読むのは `temperature` だけで、
-`sigma` と E グリッドは使わない。
+入力ファイルは `run` と同じものをそのまま使う。読むのは `temperature` と `selection` だけで、
+`broadening` と `grid` は使わない。
 
 ```bash
-# FC 因子と遷移エネルギーを書き出し、強度上位 10 本を表示する
+# FC 因子と遷移エネルギーを書き出し、重みの上位 10 本を表示する
 uv run fcenvelope lines input.json -o lines.json
 
 # T = 0 で、より細かい閾値まで拾う。棒スペクトルも出す
 uv run fcenvelope lines input.json -o lines_0K.json --temperature 0 \
-    --min-intensity 1e-6 --plot sticks.png
+    --min-weight 1e-6 --plot sticks.png
 
 # 表示だけ増やす（--show 0 で表を出さない）
 uv run fcenvelope lines input.json -o lines.json --show 30
@@ -128,7 +145,7 @@ uv run fcenvelope lines input.json -o lines.json --show 30
 
 ```
 wrote lines.json (58 lines, captured=0.997261, <E>=-583.531 cm^-1, lambda=588 cm^-1)
-     E / cm^-1            FC     intensity  transition
+     E / cm^-1            FC        weight  transition
              0      0.410656       0.36206  ZPL
           -450       0.26282      0.231718  #1:0->1
          -1200      0.102664     0.0905149  #0:0->1
@@ -143,73 +160,98 @@ wrote lines.json (58 lines, captured=0.997261, <E>=-583.531 cm^-1, lambda=588 cm
 ```
 
 `#1:0->1` は「1 番目のモード（`modes` の並び順、0 始まり）が n = 0 から m = 1 へ」の意味。
-量子数がすべて 0 の線は `ZPL`。線は**強度の降順**に並ぶので、主要なものから順に読めばよい。
+量子数がすべて 0 の線は `ZPL`。線は**重みの降順**に並ぶので、主要なものから順に読めばよい。
 
-### 2 つの強度
+### FC 因子と重み
 
 | 値 | 意味 |
 |---|---|
-| `fc_factor` | FC 因子そのもの Π_α FC_{m_α n_α}（無次元） |
-| `intensity` | 始状態の熱占有を掛けた線強度 Π_α P(n_α)·FC_{m_α n_α}。全遷移にわたる総和は 1 |
+| `fc_factor` | FC 因子そのもの Π_α FC_{m_α n_α}（無次元）。熱占有を含まない |
+| `weight` | 始状態の熱占有を掛けた重み Π_α P(n_α)·FC_{m_α n_α}。全遷移にわたる総和は 1 |
 
 T = 0 では始状態が振動基底状態だけなので両者は一致する。有限温度ではホットバンド
-（n_α > m_α）が正側に立ち、その `intensity` は始状態の占有ぶんだけ小さくなる。
+（n_α > m_α）が正側に立ち、その `weight` は始状態の占有ぶんだけ小さくなる。
 
 ### どこまで返すか
 
-`--min-intensity`（既定 1e-4）以上の線を**すべて**返す。全遷移は無限個あるので閾値が要る。
+`--min-weight`（既定 1e-4）以上の線を**すべて**返す。全遷移は無限個あるので閾値が要る。
 
-- どれだけ拾えたかは `captured_intensity`（拾った線の強度の総和）で分かる。1 に近いほど
+- どれだけ拾えたかは `captured_weight`（拾った線の重みの総和）で分かる。1 に近いほど
   スペクトルの全体を見ていることになる。
-- 閾値が高すぎて 1 本も残らない場合は、最強の線の強度を警告に載せるので、そこまで下げればよい。
-- 熱的に活性なモードが多い系では強度が膨大な数の線に分散し、離散線での記述自体が意味を失う。
+- 閾値が高すぎて 1 本も残らない場合は、最大の線の重みを警告に載せるので、そこまで下げればよい。
+- 熱的に活性なモードが多い系では重みが膨大な数の線に分散し、線での記述自体が意味を失う。
   その場合は `run`（エンベロープ）を使う。
 
 ## ライブラリとして使う
 
+計算関数は系（分子に固有の情報）と条件を別々に受け取る。同じ系を条件だけ変えて
+何度も計算するのが典型的な使い方だからである。
+
 ```python
 from fcenvelope import (
-    Conditions, FCEnvelopeInput, VibrationalMode,
-    compute_envelope, load_result, plot_result, save_result,
+    Broadening, EnergyGrid, FCEnvelopeInput, VibrationalMode, VibrationalSystem,
+    compute_envelope, load_envelope, plot_envelope, save_envelope,
 )
 
 # 引数から直接
-modes = [VibrationalMode(frequency=1200.0, huang_rhys=0.25)]
-conditions = Conditions(
-    temperature=300.0, sigma=150.0, e_min=-4000.0, e_max=1000.0, de=5.0
+system = VibrationalSystem([VibrationalMode(frequency=1200.0, huang_rhys=0.25)])
+result = compute_envelope(
+    system,
+    temperature=300.0,
+    broadening=Broadening(sigma=150.0),
+    grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
 )
-result = compute_envelope(modes, conditions)
 
 # 入力ファイルから（流儀と単位はここで消費される。modes の CSV 参照もここで解決）
 parsed = FCEnvelopeInput.from_path("input.json")
-result = compute_envelope(parsed.to_modes(), parsed.conditions)
+result = compute_envelope(
+    parsed.to_system(),
+    temperature=parsed.to_temperature(),
+    broadening=parsed.to_broadening(),
+    grid=parsed.to_grid(),
+)
 
-save_result(result, "result.json")
-result = load_result("result.json")
+save_envelope(result, "result.json")
+result = load_envelope("result.json")
 
-fig = plot_result(result, label="300 K")   # 保存は呼び出し側の責務
+fig = plot_envelope(result, label="300 K")   # 保存は呼び出し側の責務
 fig.savefig("spectrum.png", dpi=300)
 ```
 
-離散 FC 因子も同じ 4 関数の形をしている。
+値の型は自分の不変条件を自分で検証するので、ライブラリから直接呼んでも
+入力ファイル経由と同じように止まる。
 
 ```python
-from fcenvelope import compute_fc_lines, load_fc_lines, plot_fc_lines, save_fc_lines
+from fcenvelope import Broadening, InvalidInputError
 
-lines = compute_fc_lines(modes, temperature=300.0, min_intensity=1e-5)
-for line in lines.lines[:5]:
-    labels = [f"#{t.mode_index}: {t.initial}->{t.final}" for t in line.transitions]
-    print(f"{line.energy:9.1f} cm^-1  FC={line.fc_factor:.5f}  I={line.intensity:.5f}  {labels}")
-
-save_fc_lines(lines, "lines.json")
-lines = load_fc_lines("lines.json")
-plot_fc_lines(lines).savefig("sticks.png", dpi=300)
+try:
+    Broadening(sigma=-1.0)
+except InvalidInputError as exc:
+    print(exc)   # sigma must be positive (got -1.0)
 ```
 
-`lines.energies` / `lines.fc_factors` / `lines.intensities` で ndarray としても取れる。
+線も同じ 4 関数の形をしている。つまみは `Selection` に束ねて渡す。
+
+```python
+from fcenvelope import Selection, compute_fc_lines, load_lines, plot_lines, save_lines
+
+lines = compute_fc_lines(
+    system, temperature=300.0, selection=Selection(min_weight=1e-5)
+)
+for line in lines.lines[:5]:
+    labels = [f"#{t.mode_index}: {t.initial}->{t.final}" for t in line.transitions]
+    print(f"{line.energy:9.1f} cm^-1  FC={line.fc_factor:.5f}  w={line.weight:.5f}  {labels}")
+
+save_lines(lines, "lines.json")
+lines = load_lines("lines.json")
+plot_lines(lines).savefig("sticks.png", dpi=300)
+```
+
+`lines.energies` / `lines.fc_factors` / `lines.weights` で ndarray としても取れる。
+再配列エネルギー λ は系から決まるので `lines.system.reorganization_energy` から取る。
 理論文書の行列そのものが要る場合は `fc_factor_matrix(S, m_max, n_max)` を使う。
 
-エンベロープと離散線を 1 枚に重ねるには `plot_overlay` を使う。
+エンベロープと線を 1 枚に重ねるには `plot_overlay` を使う。
 
 ```python
 from fcenvelope import plot_overlay
@@ -222,12 +264,15 @@ plot_overlay(result, lines, title="300 K").savefig("overlay.png", dpi=300)
 ```python
 import matplotlib.pyplot as plt
 
+broadening = Broadening(sigma=150.0)
+grid = EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0)
+
 fig, ax = plt.subplots()
 for temperature in (0.0, 77.0, 300.0):
     result = compute_envelope(
-        modes, conditions.model_copy(update={"temperature": temperature})
+        system, temperature=temperature, broadening=broadening, grid=grid
     )
-    plot_result(result, ax=ax, label=f"{temperature:g} K")
+    plot_envelope(result, ax=ax, label=f"{temperature:g} K")
 ```
 
 ## エンベロープと離散線を重ねる
@@ -240,15 +285,15 @@ uv run fcenvelope lines input.json -o lines.json
 uv run fcenvelope plot  result.json lines.json -o overlay.png --title "300 K"
 ```
 
-**縦軸は 1 本しかない。** 線強度 I は無次元だが、幅 σ の規格化ガウシアンの頂点
-G_σ(0) = 1/(σ√(2π)) を掛けて F(E) と同じ 1/cm⁻¹ に直してから描く。この高さは
+**縦軸は 1 本しかない。** 線の重み w は無次元だが、規格化した線形状の頂点値
+L(0)（ガウス型なら 1/(σ√(2π))）を掛けて密度と同じ 1/cm⁻¹ に直してから描く。この高さは
 「その線が F(E) に立てる山の高さそのもの」なので、棒と曲線の高さをそのまま比べてよい。
 
 - 孤立した線では棒の先端が曲線の山にぴたりと一致する。
 - σ の中に線が何本も密集するところでは曲線が棒より高くなる。これは縮尺の都合ではなく、
   その山が 1 本の遷移では説明できないことを意味する。
 
-σ は `result` 側の条件から取る（`lines` は σ を持たない）。
+線形状は `result` 側の条件から取る（`lines` は線形状を持たない）。
 
 線が密集して棒が潰れる場合は `--magnify` で棒だけを拡大できる。倍率は凡例に `(×N)` と
 出るので、拡大したことが図から失われない。
@@ -261,19 +306,24 @@ uv run fcenvelope plot result.json lines.json -o overlay.png --magnify 5
 
 - 横軸は `result` の E 窓に合わせるので、窓の外に立つ線は描かれない。落ちた本数は
   警告に出る。すべて見たいなら `run` の `--e-min` / `--e-max` を広げる。
-- 2 つの結果のモードか温度が食い違っていると警告が出る。棒と曲線の対応が
+- 2 つの結果の系か温度が食い違っていると警告が出る。棒と曲線の対応が
   成り立つのは同じ系・同じ温度で計算した場合だけなので、図には出すが鵜呑みにしない。
 
 ## 結果の中身
 
-`FCEnvelopeResult` は配列（`energy` / `intensity`）に加えて、入力エコー・
-再配列エネルギー λ・診断値・来歴（`fcenvelope_version` / `created_at`）を持つ。
-`save_result` はこれらをすべて 1 つの JSON に書くため、そのファイルだけから
-`load_result` で完全に復元でき、後から信頼可否も判定できる。
+`EnvelopeResult` は配列（`energy` / `density`）に加えて、入力エコー（`system` /
+`temperature` / `broadening` / `grid`）・診断値・来歴（`provenance`）を持つ。
+`save_envelope` はこれらをすべて 1 つの JSON に書くため、そのファイルだけから
+`load_envelope` で完全に復元でき、後から信頼可否も判定できる。
 
-`FCLinesResult` も同じ作りで、`lines`（各線のエネルギー・FC 因子・強度・量子数）に加えて
-入力エコー・温度・選択条件・λ・診断値・来歴を持つ。出力 JSON は
-`kind` が `"fcenvelope.fc_lines"` になる点だけが異なり、`load_fc_lines` で完全に復元できる。
+`LinesResult` も同じ作りで、`lines`（各線のエネルギー・FC 因子・重み・量子数）に加えて
+`system` / `temperature` / `selection` ・診断値・来歴を持つ。出力 JSON は
+`kind` が `"fcenvelope.fc_lines"` になる点だけが異なり、`load_lines` で完全に復元できる。
+
+結果クラスが持つのは**計算で決まったものだけ**である。再配列エネルギー λ は系から一意に
+決まるので `result.system.reorganization_energy` から、単位はファイル形式の知識なので
+出力 JSON の `energy_unit` / `density_unit` から得る。λ は出力 JSON の `derived` にも
+書き出されるが、読み込み時は読み飛ばして系から計算し直す。
 
 ## 数値品質の見方
 
@@ -291,11 +341,11 @@ uv run fcenvelope plot result.json lines.json -o overlay.png --magnify 5
 `edge_intensity_ratio` は `total_area` では検出できない失敗（重みが折り返して
 戻るため面積は 1 のまま）を捉える。両方を見ること。
 
-離散 FC 因子（`compute_fc_lines`）の診断値は別の項目を持つ。
+線（`compute_fc_lines`）の診断値は別の項目を持つ。
 
 | 診断値 | 意味するもの | 対処 |
 |---|---|---|
-| `captured_intensity` | 小さい（< 0.9）と閾値が粗く、スペクトルの大半を取りこぼしている | `--min-intensity` を下げる |
+| `captured_weight` | 小さい（< 0.9）と閾値が粗く、スペクトルの大半を取りこぼしている | `--min-weight` を下げる |
 | `beam_truncated` | True なら `max_lines` で列挙を打ち切っており、閾値以上の線が欠けている | `--max-lines` を上げるか閾値を粗くする |
 | `min_mode_completeness` | 1 から外れると振動梯子の打ち切り | `--max-quanta` を上げる |
 | `recurrence_limited` | True なら漸化式の桁落ちを避けて始状態を打ち切っている | 閾値を粗くするか温度を下げる |

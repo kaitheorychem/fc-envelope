@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from fcenvelope import load_fc_lines, load_result
+from fcenvelope import load_envelope, load_lines
 from fcenvelope.cli import app
 
 runner = CliRunner()
@@ -25,10 +26,10 @@ def test_run_writes_a_result(tmp_path, input_file):
     invocation = runner.invoke(app, ["run", str(input_file), "-o", str(output)])
 
     assert invocation.exit_code == 0, invocation.output
-    result = load_result(output)
+    result = load_envelope(output)
     assert result.energy.size > 0
-    assert result.conditions.temperature == 300.0
-    assert result.modes[0].huang_rhys == 0.25
+    assert result.temperature == 300.0
+    assert result.system.modes[0].huang_rhys == 0.25
 
 
 def test_run_with_plot(tmp_path, input_file):
@@ -43,7 +44,7 @@ def test_run_with_plot(tmp_path, input_file):
     assert figure.stat().st_size > 0
 
 
-def test_run_overrides_conditions(tmp_path, input_file):
+def test_run_overrides_the_conditions(tmp_path, input_file):
     output = tmp_path / "result.json"
     invocation = runner.invoke(
         app,
@@ -66,25 +67,51 @@ def test_run_overrides_conditions(tmp_path, input_file):
     )
 
     assert invocation.exit_code == 0, invocation.output
-    conditions = load_result(output).conditions
-    assert conditions.temperature == 0.0
-    assert conditions.sigma == 80.0
-    assert conditions.e_min == -6000.0
-    assert conditions.e_max == 2000.0
-    assert conditions.de == 4.0
+    restored = load_envelope(output)
+    assert restored.temperature == 0.0
+    assert restored.broadening.sigma == 80.0
+    assert restored.grid.e_min == -6000.0
+    assert restored.grid.e_max == 2000.0
+    assert restored.grid.de == 4.0
 
 
-def test_run_leaves_unspecified_conditions_untouched(tmp_path, input_file):
+def test_run_leaves_unspecified_fields_untouched(tmp_path, input_file):
     output = tmp_path / "result.json"
     invocation = runner.invoke(
         app, ["run", str(input_file), "-o", str(output), "--temperature", "77"]
     )
 
     assert invocation.exit_code == 0, invocation.output
-    conditions = load_result(output).conditions
-    assert conditions.temperature == 77.0
-    assert conditions.sigma == 150.0
-    assert conditions.de == 5.0
+    restored = load_envelope(output)
+    assert restored.temperature == 77.0
+    assert restored.broadening.sigma == 150.0
+    assert restored.grid.de == 5.0
+
+
+def test_overrides_are_read_in_the_units_of_the_input_file(tmp_path, input_file):
+    """ファイルに書いてある値をそのまま CLI に移しても結果は変わらない（ADR-0050）。
+
+    上書きは正準化の前に入力ファイルの型へ適用されるので、CLI の値は常にファイルと
+    同じ単位・流儀で読まれる。
+    """
+    plain = tmp_path / "plain.json"
+    restated = tmp_path / "restated.json"
+    assert runner.invoke(app, ["run", str(input_file), "-o", str(plain)]).exit_code == 0
+    invocation = runner.invoke(
+        app,
+        [
+            "run", str(input_file), "-o", str(restated),
+            "--temperature", "300", "--sigma", "150",
+            "--e-min", "-4000", "--e-max", "1000", "--de", "5",
+        ],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    first, second = load_envelope(plain), load_envelope(restated)
+    assert first.temperature == second.temperature
+    assert first.broadening == second.broadening
+    assert first.grid == second.grid
+    np.testing.assert_array_equal(first.density, second.density)
 
 
 def test_run_reads_modes_from_referenced_csv(tmp_path, input_payload):
@@ -101,7 +128,7 @@ def test_run_reads_modes_from_referenced_csv(tmp_path, input_payload):
     invocation = runner.invoke(app, ["run", str(path), "-o", str(output)])
 
     assert invocation.exit_code == 0, invocation.output
-    modes = load_result(output).modes
+    modes = load_envelope(output).system.modes
     assert [mode.frequency for mode in modes] == [1200.0, 450.0]
     assert modes[0].huang_rhys == 0.25
 
@@ -182,10 +209,10 @@ def test_lines_writes_a_line_list(tmp_path, input_file):
     invocation = runner.invoke(app, ["lines", str(input_file), "-o", str(output)])
 
     assert invocation.exit_code == 0, invocation.output
-    result = load_fc_lines(output)
+    result = load_lines(output)
     assert result.diagnostics.n_lines > 0
     assert result.temperature == 300.0
-    assert result.modes[0].huang_rhys == 0.25
+    assert result.system.modes[0].huang_rhys == 0.25
     assert result.lines[0].energy == 0.0
 
 
@@ -216,15 +243,15 @@ def test_lines_overrides_the_temperature(tmp_path, input_file):
         app,
         [
             "lines", str(input_file), "-o", str(output),
-            "--temperature", "0", "--min-intensity", "1e-6", "--max-lines", "500",
+            "--temperature", "0", "--min-weight", "1e-6", "--max-lines", "500",
         ],
     )
 
     assert invocation.exit_code == 0, invocation.output
-    result = load_fc_lines(output)
+    result = load_lines(output)
     assert result.temperature == 0.0
-    assert result.min_intensity == 1e-6
-    assert result.max_lines == 500
+    assert result.selection.min_weight == 1e-6
+    assert result.selection.max_lines == 500
     assert result.diagnostics.max_initial_quanta == 0
 
 
@@ -253,7 +280,7 @@ def test_plot_subcommand_renders_a_stored_line_list(tmp_path, input_file):
 def test_lines_bad_threshold_exits_with_one(tmp_path, input_file):
     invocation = runner.invoke(
         app,
-        ["lines", str(input_file), "-o", str(tmp_path / "out.json"), "--min-intensity", "0"],
+        ["lines", str(input_file), "-o", str(tmp_path / "out.json"), "--min-weight", "0"],
     )
     assert invocation.exit_code == 1
     assert "error:" in invocation.output

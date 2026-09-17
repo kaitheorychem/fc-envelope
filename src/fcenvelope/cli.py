@@ -6,19 +6,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Optional
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Annotated, Optional, TypeVar
 
 import typer
 
 if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
     import matplotlib.figure
 
-from .core import compute_envelope
+from .envelope import compute_envelope
 from .errors import FCEnvelopeError
-from .fcfactor import compute_fc_lines
-from .io import FC_LINES_KIND, RESULT_KIND, load_any, save_fc_lines, save_result
-from .models import Conditions, FCEnvelopeInput
-from .result import FCEnvelopeResult, FCLine, FCLinesResult
+from .inputs import FCEnvelopeInput
+from .io import kind_for, load_any, save_any
+from .lines import compute_fc_lines
+from .result import EnvelopeResult, FCLine, LinesResult, Result
 from .version import __version__
 
 __all__ = ["app"]
@@ -35,29 +36,35 @@ def _fail(exc: FCEnvelopeError) -> typer.Exit:
     return typer.Exit(1)
 
 
-def _override_conditions(
-    conditions: Conditions,
+#: CLI が上書きできる値。入力ファイルと同じ単位・流儀で読む生の値で、正準化の前に
+#: 差し替える（ADR-0050）。`None` は「上書きしない」を意味する。
+Override = float | int | None
+
+
+def _override(
+    parsed: FCEnvelopeInput,
     *,
-    temperature: float | None,
-    sigma: float | None,
-    e_min: float | None,
-    e_max: float | None,
-    de: float | None,
-) -> Conditions:
-    """CLI オプションで指定されたフィールドのみ差し替えて再検証する。"""
-    overrides = {
-        "temperature": temperature,
-        "sigma": sigma,
-        "e_min": e_min,
-        "e_max": e_max,
-        "de": de,
-    }
-    merged = conditions.model_dump()
-    merged.update({key: value for key, value in overrides.items() if value is not None})
-    return Conditions.from_obj(merged)
+    temperature: float | None = None,
+    **blocks: dict[str, Override],
+) -> FCEnvelopeInput:
+    """CLI の上書きを入力ファイルの型に適用し、同じ経路で検証し直す。
+
+    上書きの値は入力ファイルと同じ単位・流儀で読む。正準化の前に差し替えるので、
+    ファイルに書いてある値をそのまま CLI に移しても結果は変わらない（ADR-0050）。
+    指定のないオプションは `None`、すなわち「上書きしない」を意味する。
+    """
+    data = parsed.model_dump(mode="json")
+    if temperature is not None:
+        data["temperature"] = temperature
+    for name, values in blocks.items():
+        given = {key: value for key, value in values.items() if value is not None}
+        if given:
+            data[name] = {**data[name], **given}
+    return FCEnvelopeInput.from_obj(data)
 
 
-def _report(result: FCEnvelopeResult, output: Path) -> None:
+def _report_envelope(result: EnvelopeResult, output: Path, *, show: int = 0) -> None:
+    del show  # エンベロープには行ごとの表示がない。
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
@@ -65,7 +72,11 @@ def _report(result: FCEnvelopeResult, output: Path) -> None:
         f"area={diagnostics.total_area:.9g}, "
         f"captured={diagnostics.window_captured_fraction:.6g})"
     )
-    for message in diagnostics.messages:
+    _echo_warnings(diagnostics.messages)
+
+
+def _echo_warnings(messages) -> None:
+    for message in messages:
         typer.secho(f"warning: {message}", fg=typer.colors.YELLOW, err=True)
 
 
@@ -73,7 +84,7 @@ def _report(result: FCEnvelopeResult, output: Path) -> None:
 def run(
     input_path: Annotated[
         Path,
-        typer.Argument(metavar="INPUT.json", help="Input JSON with modes (inline or a CSV reference) and conditions."),
+        typer.Argument(metavar="INPUT.json", help="Input JSON with modes (inline or a CSV reference) and the computation conditions."),
     ],
     output: Annotated[
         Path,
@@ -85,43 +96,45 @@ def run(
     ] = None,
     temperature: Annotated[
         Optional[float],
-        typer.Option("--temperature", help="Override conditions.temperature [K]."),
+        typer.Option("--temperature", help="Override temperature [K]."),
     ] = None,
     sigma: Annotated[
         Optional[float],
-        typer.Option("--sigma", help="Override conditions.sigma [cm^-1]."),
+        typer.Option("--sigma", help="Override broadening.sigma [cm^-1]."),
     ] = None,
     e_min: Annotated[
         Optional[float],
-        typer.Option("--e-min", help="Override conditions.e_min [cm^-1]."),
+        typer.Option("--e-min", help="Override grid.e_min [cm^-1]."),
     ] = None,
     e_max: Annotated[
         Optional[float],
-        typer.Option("--e-max", help="Override conditions.e_max [cm^-1]."),
+        typer.Option("--e-max", help="Override grid.e_max [cm^-1]."),
     ] = None,
     de: Annotated[
         Optional[float],
-        typer.Option("--de", help="Override conditions.de [cm^-1]."),
+        typer.Option("--de", help="Override grid.de [cm^-1]."),
     ] = None,
     dpi: Annotated[int, typer.Option("--dpi", help="Resolution of --plot.")] = 150,
 ) -> None:
     """Compute the Franck-Condon envelope and write it to a result JSON."""
     try:
-        parsed = FCEnvelopeInput.from_path(input_path)
-        conditions = _override_conditions(
-            parsed.conditions,
+        parsed = _override(
+            FCEnvelopeInput.from_path(input_path),
             temperature=temperature,
-            sigma=sigma,
-            e_min=e_min,
-            e_max=e_max,
-            de=de,
+            broadening={"sigma": sigma},
+            grid={"e_min": e_min, "e_max": e_max, "de": de},
         )
-        result = compute_envelope(parsed.to_modes(), conditions)
-        save_result(result, output)
+        result = compute_envelope(
+            parsed.to_system(),
+            temperature=parsed.to_temperature(),
+            broadening=parsed.to_broadening(),
+            grid=parsed.to_grid(),
+        )
+        save_any(result, output)
     except FCEnvelopeError as exc:
         raise _fail(exc) from exc
 
-    _report(result, output)
+    _report_any(result, output)
 
     if plot is not None:
         _save_figure(result, plot, title=None, dpi=dpi)
@@ -133,7 +146,7 @@ def lines(
         Path,
         typer.Argument(
             metavar="INPUT.json",
-            help="Input JSON with modes (inline or a CSV reference) and conditions.",
+            help="Input JSON with modes (inline or a CSV reference) and the computation conditions.",
         ),
     ],
     output: Annotated[
@@ -146,20 +159,19 @@ def lines(
     ] = None,
     temperature: Annotated[
         Optional[float],
-        typer.Option("--temperature", help="Override conditions.temperature [K]."),
+        typer.Option("--temperature", help="Override temperature [K]."),
     ] = None,
-    min_intensity: Annotated[
-        float,
-        typer.Option("--min-intensity", help="Keep every line at or above this intensity."),
-    ] = 1e-4,
+    min_weight: Annotated[
+        Optional[float],
+        typer.Option("--min-weight", help="Override selection.min_weight."),
+    ] = None,
     max_lines: Annotated[
-        int, typer.Option("--max-lines", help="Upper bound on the number of lines kept.")
-    ] = 10000,
+        Optional[int],
+        typer.Option("--max-lines", help="Override selection.max_lines."),
+    ] = None,
     max_quanta: Annotated[
         Optional[int],
-        typer.Option(
-            "--max-quanta", help="Cap on vibrational quanta per mode (default: automatic)."
-        ),
+        typer.Option("--max-quanta", help="Override selection.max_quanta."),
     ] = None,
     show: Annotated[
         int, typer.Option("--show", help="Print this many of the strongest lines (0 disables).")
@@ -168,21 +180,25 @@ def lines(
 ) -> None:
     """List the discrete Franck-Condon factors with their transition energies."""
     try:
-        parsed = FCEnvelopeInput.from_path(input_path)
-        result = compute_fc_lines(
-            parsed.to_modes(),
-            temperature=(
-                parsed.conditions.temperature if temperature is None else temperature
-            ),
-            min_intensity=min_intensity,
-            max_lines=max_lines,
-            max_quanta=max_quanta,
+        parsed = _override(
+            FCEnvelopeInput.from_path(input_path),
+            temperature=temperature,
+            selection={
+                "min_weight": min_weight,
+                "max_lines": max_lines,
+                "max_quanta": max_quanta,
+            },
         )
-        save_fc_lines(result, output)
+        result = compute_fc_lines(
+            parsed.to_system(),
+            temperature=parsed.to_temperature(),
+            selection=parsed.to_selection(),
+        )
+        save_any(result, output)
     except FCEnvelopeError as exc:
         raise _fail(exc) from exc
 
-    _report_lines(result, output, show=show)
+    _report_any(result, output, show=show)
 
     if plot is not None:
         _save_figure(result, plot, title=None, dpi=dpi)
@@ -253,42 +269,71 @@ def _transition_label(line: FCLine) -> str:
     )
 
 
-def _report_lines(result: FCLinesResult, output: Path, *, show: int) -> None:
+def _report_lines(result: LinesResult, output: Path, *, show: int = 0) -> None:
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
         f"({diagnostics.n_lines} lines, "
-        f"captured={diagnostics.captured_intensity:.6g}, "
+        f"captured={diagnostics.captured_weight:.6g}, "
         f"<E>={diagnostics.mean_energy:.6g} cm^-1, "
-        f"lambda={result.reorganization_energy:.6g} cm^-1)"
+        f"lambda={result.system.reorganization_energy:.6g} cm^-1)"
     )
     if show > 0 and result.lines:
-        typer.echo(f"  {'E / cm^-1':>12}  {'FC':>12}  {'intensity':>12}  transition")
+        typer.echo(f"  {'E / cm^-1':>12}  {'FC':>12}  {'weight':>12}  transition")
     for line in result.lines[: max(show, 0)]:
         typer.echo(
             f"  {line.energy:12.4g}  {line.fc_factor:12.6g}  "
-            f"{line.intensity:12.6g}  {_transition_label(line)}"
+            f"{line.weight:12.6g}  {_transition_label(line)}"
         )
     if show > 0 and diagnostics.n_lines > show:
         typer.echo(f"  ... {diagnostics.n_lines - show} more (see {output})")
-    for message in diagnostics.messages:
-        typer.secho(f"warning: {message}", fg=typer.colors.YELLOW, err=True)
+    _echo_warnings(diagnostics.messages)
+
+
+#: 報告関数に共通の署名。`--show` を使うのは線だけだが、表に載せるために揃えてある。
+Reporter = Callable[..., None]
+
+#: 結果の型 -> 報告。種類を足すときはここに 1 行足す（ADR-0049）。
+#: 保存・読み込みの表は `io.RESULT_KINDS`、描画の表は `plotting.DRAWERS` にある。
+REPORTERS: dict[type, Reporter] = {
+    EnvelopeResult: _report_envelope,
+    LinesResult: _report_lines,
+}
+
+
+def _report_any(result: Result, output: Path, *, show: int = 0) -> None:
+    """結果の種類を見て報告する。"""
+    REPORTERS[type(result)](result, output, show=show)
+
+
+#: 重ね描きが取る組み合わせ。表には載せず専用の関数のままにする（ADR-0049）。
+OVERLAY_TYPES = (EnvelopeResult, LinesResult)
+
+_R = TypeVar("_R", bound=Result)
+
+
+def _of_type(results: Sequence[Result], result_type: type[_R]) -> list[_R]:
+    """与えられた結果のうち、その型のものだけを取り出す。"""
+    return [item for item in results if isinstance(item, result_type)]
 
 
 def _pair_for_overlay(
-    results: list[FCEnvelopeResult | FCLinesResult], paths: list[Path]
-) -> tuple[FCEnvelopeResult, FCLinesResult]:
-    """重ね描き用に、エンベロープと線リストを 1 つずつ取り出す。与える順序は問わない。"""
-    envelopes = [item for item in results if isinstance(item, FCEnvelopeResult)]
-    line_lists = [item for item in results if isinstance(item, FCLinesResult)]
-    if len(results) > 2 or len(envelopes) != 1 or len(line_lists) != 1:
+    results: list[Result], paths: list[Path]
+) -> tuple[EnvelopeResult, LinesResult]:
+    """重ね描き用に、エンベロープと線リストを 1 つずつ取り出す。与える順序は問わない。
+
+    使用法エラーの種類名は `io` の表から引く。`kind` 文字列を直接書かない（ADR-0049）。
+    """
+    envelopes = _of_type(results, EnvelopeResult)
+    line_lists = _of_type(results, LinesResult)
+
+    if len(results) != 2 or len(envelopes) != 1 or len(line_lists) != 1:
         found = ", ".join(
-            f"{path}: {FC_LINES_KIND if isinstance(item, FCLinesResult) else RESULT_KIND}"
-            for path, item in zip(paths, results)
+            f"{path}: {kind_for(type(item))}" for path, item in zip(paths, results)
         )
+        expected = " and one ".join(kind_for(t) for t in OVERLAY_TYPES)
         raise typer.BadParameter(
-            f"overlaying takes exactly one {RESULT_KIND} and one {FC_LINES_KIND}, "
-            f"in either order (got {found})",
+            f"overlaying takes exactly one {expected}, in either order (got {found})",
             param_hint="RESULT.json...",
         )
     return envelopes[0], line_lists[0]
@@ -307,20 +352,16 @@ def _write_figure(
 
 
 def _save_figure(
-    result: FCEnvelopeResult | FCLinesResult, output: Path, *, title: str | None, dpi: int
+    result: Result, output: Path, *, title: str | None, dpi: int
 ) -> None:
-    from .plotting import plot_fc_lines, plot_result
+    from .plotting import plot_any
 
-    if isinstance(result, FCLinesResult):
-        figure = plot_fc_lines(result, title=title)
-    else:
-        figure = plot_result(result, title=title)
-    _write_figure(figure, output, dpi=dpi)
+    _write_figure(plot_any(result, title=title), output, dpi=dpi)
 
 
 def _save_overlay(
-    envelope: FCEnvelopeResult,
-    lines: FCLinesResult,
+    envelope: EnvelopeResult,
+    lines: LinesResult,
     output: Path,
     *,
     title: str | None,
