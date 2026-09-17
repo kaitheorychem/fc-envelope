@@ -15,6 +15,12 @@ from .result import EnvelopeResult, LinesResult
 
 __all__ = ["plot_envelope", "plot_lines", "plot_overlay"]
 
+ENERGY_UNIT = "cm^-1"
+"""軸ラベルに書く E の単位。計算側は常にこの単位しか扱わない（ADR-0047）。"""
+
+DENSITY_UNIT = "1/cm^-1"
+"""軸ラベルに書く F(E) の単位。"""
+
 ENVELOPE_COLOR = "C0"
 """重ね描きでエンベロープ F(E) に割り当てる色。"""
 
@@ -62,8 +68,8 @@ def _draw_envelope(
         style["zorder"] = zorder
 
     ax.plot(result.energy, result.density, label=label, **style)
-    ax.set_xlabel(f"$E$ / {_mathtext_unit(result.energy_unit)}")
-    ax.set_ylabel(f"$F(E)$ / {_mathtext_unit(result.density_unit)}")
+    ax.set_xlabel(f"$E$ / {_mathtext_unit(ENERGY_UNIT)}")
+    ax.set_ylabel(f"$F(E)$ / {_mathtext_unit(DENSITY_UNIT)}")
 
 
 def _draw_sticks(
@@ -125,7 +131,7 @@ def plot_lines(
     figure, ax = _resolve_axes(ax)
 
     _draw_sticks(ax, result.energies, result.weights, label=label)
-    ax.set_xlabel(f"$E$ / {_mathtext_unit(result.energy_unit)}")
+    ax.set_xlabel(f"$E$ / {_mathtext_unit(ENERGY_UNIT)}")
     ax.set_ylabel("weight")
     ax.axhline(0.0, **_GUIDE)
     ax.axvline(0.0, **_GUIDE)
@@ -140,9 +146,9 @@ def plot_lines(
 
 def _warn_on_mismatch(envelope: EnvelopeResult, lines: LinesResult) -> None:
     """同じ系・同じ温度の結果どうしでないなら、重ねる前に知らせる。"""
-    if envelope.modes != lines.modes:
+    if envelope.system != lines.system:
         warnings.warn(
-            "the envelope and the line list were computed for different modes; "
+            "the envelope and the line list were computed for different systems; "
             "the sticks do not decompose this envelope",
             stacklevel=3,
         )

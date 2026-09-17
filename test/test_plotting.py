@@ -247,13 +247,13 @@ def test_overlay_warns_when_the_temperature_does_not_match(overlay_pair):
         plt.close(plot_overlay(envelope, hot))
 
 
-def test_overlay_warns_when_the_modes_do_not_match(overlay_pair):
+def test_overlay_warns_when_the_systems_do_not_match(overlay_pair):
     envelope, _ = overlay_pair
     other = lines_quietly(
         VibrationalSystem([VibrationalMode(frequency=800.0, huang_rhys=0.3)]),
         temperature=0.0,
     )
-    with pytest.warns(UserWarning, match="different modes"):
+    with pytest.warns(UserWarning, match="different systems"):
         plt.close(plot_overlay(envelope, other))
 
 

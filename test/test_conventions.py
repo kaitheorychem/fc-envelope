@@ -53,7 +53,7 @@ def test_g_and_huang_rhys_agree():
     result_s = _envelope(from_s)
 
     np.testing.assert_array_equal(result_g.density, result_s.density)
-    assert result_g.reorganization_energy == result_s.reorganization_energy
+    assert result_g.system.reorganization_energy == result_s.system.reorganization_energy
 
 
 def test_default_convention_is_g():

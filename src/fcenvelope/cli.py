@@ -262,7 +262,7 @@ def _report_lines(result: LinesResult, output: Path, *, show: int) -> None:
         f"({diagnostics.n_lines} lines, "
         f"captured={diagnostics.captured_weight:.6g}, "
         f"<E>={diagnostics.mean_energy:.6g} cm^-1, "
-        f"lambda={result.reorganization_energy:.6g} cm^-1)"
+        f"lambda={result.system.reorganization_energy:.6g} cm^-1)"
     )
     if show > 0 and result.lines:
         typer.echo(f"  {'E / cm^-1':>12}  {'FC':>12}  {'weight':>12}  transition")

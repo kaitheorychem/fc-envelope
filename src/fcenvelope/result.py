@@ -11,7 +11,7 @@ from datetime import datetime
 
 import numpy as np
 
-from .models import Broadening, EnergyGrid, Selection, VibrationalMode
+from .models import Broadening, EnergyGrid, Selection, VibrationalSystem
 
 __all__ = [
     "Diagnostics",
@@ -20,7 +20,23 @@ __all__ = [
     "FCLineDiagnostics",
     "LinesResult",
     "ModeTransition",
+    "Provenance",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class Provenance:
+    """来歴。計算がいつ、どの版で行われたか。
+
+    物理量でも計算条件でもなく、計算を行った時点で確定する（ADR-0008）。実行場所
+    などを記録するならここに足す（ADR-0046）。
+    """
+
+    fcenvelope_version: str
+    """計算に用いたパッケージのバージョン。"""
+
+    created_at: datetime
+    """計算時刻（UTC、秒精度）。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,19 +73,18 @@ class Diagnostics:
 
 @dataclass(frozen=True, slots=True)
 class EnvelopeResult:
-    """Franck-Condon エンベロープの計算結果。"""
+    """Franck-Condon エンベロープの計算結果。
 
-    energy: np.ndarray
-    """(M,) float64, cm^-1, 単調増加。E = 0 が ZPL。"""
+    持つのは計算で決まったものだけである（ADR-0047）。lambda は系から一意に決まる
+    ので `system.reorganization_energy` から、単位はファイル形式の知識なので `io`
+    から得る。
+    """
 
-    density: np.ndarray
-    """(M,) float64, 1/cm^-1。確率密度なので int F dE = 1。"""
-
-    modes: tuple[VibrationalMode, ...]
+    system: VibrationalSystem
     """入力エコー（正準形）。"""
 
     temperature: float
-    """T [K]。"""
+    """T [K]。系とは別の、測定の条件（ADR-0046）。"""
 
     broadening: Broadening
     """入力エコー。線形状。"""
@@ -77,20 +92,17 @@ class EnvelopeResult:
     grid: EnergyGrid
     """入力エコー。エネルギーグリッド。"""
 
-    reorganization_energy: float
-    """lambda = sum_alpha S_alpha * epsilon_alpha [cm^-1]。"""
+    energy: np.ndarray
+    """(M,) float64, cm^-1, 単調増加。E = 0 が ZPL。"""
+
+    density: np.ndarray
+    """(M,) float64, 1/cm^-1。確率密度なので int F dE = 1。"""
 
     diagnostics: Diagnostics
     """数値品質の診断値。"""
 
-    fcenvelope_version: str
-    """計算に用いたパッケージのバージョン。"""
-
-    created_at: datetime
-    """計算時刻（UTC、秒精度）。"""
-
-    energy_unit: str = "cm^-1"
-    density_unit: str = "1/cm^-1"
+    provenance: Provenance
+    """来歴。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +110,7 @@ class ModeTransition:
     """1 モードの振動量子数の変化 n_alpha -> m_alpha。"""
 
     mode_index: int
-    """`LinesResult.modes` における位置。"""
+    """`LinesResult.system.modes` における位置。"""
 
     initial: int
     """始状態の振動量子数 n_alpha。"""
@@ -158,12 +170,12 @@ class FCLineDiagnostics:
 
 @dataclass(frozen=True, slots=True)
 class LinesResult:
-    """離散 FC 因子の計算結果。重みの降順（同じ重みならエネルギーの昇順）に並ぶ。"""
+    """離散 FC 因子の計算結果。重みの降順（同じ重みならエネルギーの昇順）に並ぶ。
 
-    lines: tuple[FCLine, ...]
-    """保持した線。主要なものから順に並ぶ。"""
+    `EnvelopeResult` と同じく、持つのは計算で決まったものだけである（ADR-0047）。
+    """
 
-    modes: tuple[VibrationalMode, ...]
+    system: VibrationalSystem
     """入力エコー（正準形）。"""
 
     temperature: float
@@ -172,19 +184,14 @@ class LinesResult:
     selection: Selection
     """入力エコー。どの線を保持するかのつまみ。"""
 
-    reorganization_energy: float
-    """lambda = sum_alpha S_alpha * epsilon_alpha [cm^-1]。"""
+    lines: tuple[FCLine, ...]
+    """保持した線。主要なものから順に並ぶ。"""
 
     diagnostics: FCLineDiagnostics
     """数値品質の診断値。"""
 
-    fcenvelope_version: str
-    """計算に用いたパッケージのバージョン。"""
-
-    created_at: datetime
-    """計算時刻（UTC、秒精度）。"""
-
-    energy_unit: str = "cm^-1"
+    provenance: Provenance
+    """来歴。"""
 
     @property
     def energies(self) -> np.ndarray:

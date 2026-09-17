@@ -22,7 +22,7 @@ import numpy as np
 
 from .errors import NumericalQualityWarning
 from .models import Broadening, EnergyGrid, VibrationalSystem, validate_temperature
-from .result import Diagnostics, EnvelopeResult
+from .result import Diagnostics, EnvelopeResult, Provenance
 from .version import __version__
 
 __all__ = [
@@ -161,16 +161,17 @@ def compute_envelope(
     )
 
     return EnvelopeResult(
-        energy=energy,
-        density=density,
-        modes=system.modes,
+        system=system,
         temperature=temperature,
         broadening=broadening,
         grid=grid,
-        reorganization_energy=system.reorganization_energy,
+        energy=energy,
+        density=density,
         diagnostics=diagnostics,
-        fcenvelope_version=__version__,
-        created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        provenance=Provenance(
+            fcenvelope_version=__version__,
+            created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        ),
     )
 
 

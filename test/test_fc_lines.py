@@ -120,7 +120,7 @@ def test_mean_energy_approaches_minus_reorganization_energy(multi_mode, temperat
         multi_mode, temperature=temperature, min_weight=1e-7, max_lines=200000
     )
     expected = -multi_mode.reorganization_energy
-    assert result.reorganization_energy == pytest.approx(-expected)
+    assert result.system.reorganization_energy == pytest.approx(-expected)
     assert result.diagnostics.mean_energy == pytest.approx(expected, rel=1e-3)
 
 
@@ -180,7 +180,7 @@ def test_zero_coupling_puts_every_line_at_the_zero_phonon_energy():
         for transition in line.transitions
     )
     assert result.diagnostics.captured_weight == pytest.approx(1.0, abs=1e-4)
-    assert result.reorganization_energy == 0.0
+    assert result.system.reorganization_energy == 0.0
 
 
 def test_temperature_zero_keeps_the_initial_state_in_the_ground_state(multi_mode):

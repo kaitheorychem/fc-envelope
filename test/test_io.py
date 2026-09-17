@@ -48,16 +48,12 @@ def test_round_trip_is_exact(result, tmp_path):
 
     np.testing.assert_array_equal(restored.energy, result.energy)
     np.testing.assert_array_equal(restored.density, result.density)
-    assert restored.modes == result.modes
+    assert restored.system == result.system
     assert restored.temperature == result.temperature
     assert restored.broadening == result.broadening
     assert restored.grid == result.grid
-    assert restored.reorganization_energy == result.reorganization_energy
     assert restored.diagnostics == result.diagnostics
-    assert restored.fcenvelope_version == result.fcenvelope_version
-    assert restored.created_at == result.created_at
-    assert restored.energy_unit == result.energy_unit
-    assert restored.density_unit == result.density_unit
+    assert restored.provenance == result.provenance
 
 
 def test_save_load_save_leaves_the_file_byte_identical(result, tmp_path):
@@ -158,6 +154,25 @@ def test_missing_section(result, tmp_path):
     _corrupt(path, lambda p: p.pop("spectrum"))
     with pytest.raises(InvalidInputError):
         load_envelope(path)
+
+
+def test_derived_is_written_but_skipped_when_loading(result, tmp_path):
+    """lambda は系から決まるので結果クラスは持たない（ADR-0047）。"""
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["derived"]["reorganization_energy"] == result.system.reorganization_energy
+
+    _corrupt(path, lambda p: p.pop("derived"))
+    restored = load_envelope(path)
+    assert restored.system.reorganization_energy == result.system.reorganization_energy
+
+
+def test_a_stale_derived_block_does_not_reach_the_result(result, tmp_path):
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    _corrupt(path, lambda p: p["derived"].update(reorganization_energy=-1.0))
+    assert load_envelope(path).system.reorganization_energy > 0.0
 
 
 def test_invalid_json(tmp_path):

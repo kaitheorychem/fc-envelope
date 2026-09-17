@@ -57,7 +57,7 @@ def test_first_moment_is_minus_reorganization_energy(multi_mode, temperature):
     result = _envelope(multi_mode, temperature)
     _, mean, _ = moments(result)
     expected = -multi_mode.reorganization_energy
-    assert result.reorganization_energy == pytest.approx(-expected)
+    assert result.system.reorganization_energy == pytest.approx(-expected)
     assert mean == pytest.approx(expected, rel=1e-8)
 
 

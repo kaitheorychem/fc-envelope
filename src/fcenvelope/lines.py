@@ -37,7 +37,7 @@ from scipy.special import gammaln
 from .errors import InvalidInputError, NumericalQualityWarning
 from .models import Selection, VibrationalMode, VibrationalSystem, validate_temperature
 from .physics import K_B_CM, boltzmann_populations
-from .result import FCLine, FCLineDiagnostics, LinesResult, ModeTransition
+from .result import FCLine, FCLineDiagnostics, LinesResult, ModeTransition, Provenance
 from .version import __version__
 
 __all__ = [
@@ -288,14 +288,15 @@ def compute_fc_lines(
         warnings.warn(message, NumericalQualityWarning, stacklevel=2)
 
     return LinesResult(
-        lines=tuple(lines),
-        modes=modes,
+        system=system,
         temperature=temperature,
         selection=selection,
-        reorganization_energy=system.reorganization_energy,
+        lines=tuple(lines),
         diagnostics=FCLineDiagnostics(messages=messages, **diagnostics_kwargs),
-        fcenvelope_version=__version__,
-        created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        provenance=Provenance(
+            fcenvelope_version=__version__,
+            created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        ),
     )
 
 

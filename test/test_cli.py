@@ -29,7 +29,7 @@ def test_run_writes_a_result(tmp_path, input_file):
     result = load_envelope(output)
     assert result.energy.size > 0
     assert result.temperature == 300.0
-    assert result.modes[0].huang_rhys == 0.25
+    assert result.system.modes[0].huang_rhys == 0.25
 
 
 def test_run_with_plot(tmp_path, input_file):
@@ -128,7 +128,7 @@ def test_run_reads_modes_from_referenced_csv(tmp_path, input_payload):
     invocation = runner.invoke(app, ["run", str(path), "-o", str(output)])
 
     assert invocation.exit_code == 0, invocation.output
-    modes = load_envelope(output).modes
+    modes = load_envelope(output).system.modes
     assert [mode.frequency for mode in modes] == [1200.0, 450.0]
     assert modes[0].huang_rhys == 0.25
 
@@ -212,7 +212,7 @@ def test_lines_writes_a_line_list(tmp_path, input_file):
     result = load_lines(output)
     assert result.diagnostics.n_lines > 0
     assert result.temperature == 300.0
-    assert result.modes[0].huang_rhys == 0.25
+    assert result.system.modes[0].huang_rhys == 0.25
     assert result.lines[0].energy == 0.0
 
 

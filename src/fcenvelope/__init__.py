@@ -52,6 +52,7 @@ from .result import (
     FCLineDiagnostics,
     LinesResult,
     ModeTransition,
+    Provenance,
 )
 from .version import __version__
 
@@ -86,6 +87,7 @@ __all__ = [
     "FCLineDiagnostics",
     "LinesResult",
     "ModeTransition",
+    "Provenance",
     # 例外・警告
     "FCEnvelopeError",
     "InvalidInputError",

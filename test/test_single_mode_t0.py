@@ -84,7 +84,7 @@ def test_zero_coupling_gives_a_pure_gaussian():
 
     expected = np.exp(-0.5 * (result.energy / sigma) ** 2) / (sigma * math.sqrt(2.0 * math.pi))
     assert np.max(np.abs(result.density - expected)) < 1e-12
-    assert result.reorganization_energy == 0.0
+    assert result.system.reorganization_energy == 0.0
 
 
 def test_hot_band_appears_on_the_positive_side():

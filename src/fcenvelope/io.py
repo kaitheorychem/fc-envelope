@@ -16,7 +16,13 @@ from typing import Any
 import numpy as np
 
 from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
-from .models import Broadening, EnergyGrid, Selection, VibrationalMode
+from .models import (
+    Broadening,
+    EnergyGrid,
+    Selection,
+    VibrationalMode,
+    VibrationalSystem,
+)
 from .result import (
     Diagnostics,
     EnvelopeResult,
@@ -24,6 +30,7 @@ from .result import (
     FCLineDiagnostics,
     LinesResult,
     ModeTransition,
+    Provenance,
 )
 
 __all__ = [
@@ -94,17 +101,11 @@ def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": ENVELOPE_KIND,
-        "fcenvelope_version": result.fcenvelope_version,
-        "created_at": _format_timestamp(result.created_at),
-        "energy_unit": result.energy_unit,
-        "density_unit": result.density_unit,
+        **_provenance_to_dict(result.provenance),
+        "energy_unit": CANONICAL_ENERGY_UNIT,
+        "density_unit": CANONICAL_DENSITY_UNIT,
         "input": {
-            "frequency_unit": CANONICAL_FREQUENCY_UNIT,
-            "coupling_convention": CANONICAL_COUPLING_CONVENTION,
-            "modes": [
-                {"frequency": mode.frequency, "coupling": mode.huang_rhys}
-                for mode in result.modes
-            ],
+            **_system_to_dict(result.system),
             "temperature": result.temperature,
             "broadening": {"sigma": result.broadening.sigma},
             "grid": {
@@ -113,7 +114,7 @@ def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
                 "de": result.grid.de,
             },
         },
-        "derived": {"reorganization_energy": result.reorganization_energy},
+        "derived": _derived_to_dict(result.system),
         "diagnostics": {
             "n_fft": result.diagnostics.n_fft,
             **{
@@ -196,6 +197,51 @@ def _check_echo_header(echo: Any) -> None:
         )
 
 
+def _check_unit(data: dict[str, Any], key: str, canonical: str) -> None:
+    """単位のフィールドが正準な単位であることを確かめる。"""
+    unit = data.get(key, canonical)
+    if unit != canonical:
+        raise UnsupportedUnitError(
+            f"unsupported {key} {unit!r} (only {canonical!r} is supported)"
+        )
+
+
+def _system_to_dict(system: VibrationalSystem) -> dict[str, Any]:
+    """系を入力エコーの構造へ写す。エコーは常に正準形（ADR-0010）。"""
+    return {
+        "frequency_unit": CANONICAL_FREQUENCY_UNIT,
+        "coupling_convention": CANONICAL_COUPLING_CONVENTION,
+        "modes": [
+            {"frequency": mode.frequency, "coupling": mode.huang_rhys}
+            for mode in system.modes
+        ],
+    }
+
+
+def _derived_to_dict(system: VibrationalSystem) -> dict[str, Any]:
+    """系から導かれる量。結果クラスは持たず、io が書き出す（ADR-0047）。"""
+    return {"reorganization_energy": system.reorganization_energy}
+
+
+def _provenance_to_dict(provenance: Provenance) -> dict[str, Any]:
+    return {
+        "fcenvelope_version": provenance.fcenvelope_version,
+        "created_at": _format_timestamp(provenance.created_at),
+    }
+
+
+def _provenance_from_dict(data: dict[str, Any]) -> Provenance:
+    return Provenance(
+        fcenvelope_version=str(_require(data, "fcenvelope_version", "fcenvelope_version")),
+        created_at=_parse_timestamp(_require(data, "created_at", "created_at")),
+    )
+
+
+def _system_from_echo(echo: dict[str, Any]) -> VibrationalSystem:
+    """入力エコーのモード列を正準形の系にする。"""
+    return _build(VibrationalSystem, "input.modes", modes=_modes_from_echo(echo))
+
+
 def _modes_from_echo(echo: dict[str, Any]) -> tuple[VibrationalMode, ...]:
     """入力エコーのモード列を正準形の値の型にする。"""
     specs = _require(echo, "modes", "input.modes")
@@ -230,21 +276,12 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
     if kind != ENVELOPE_KIND:
         raise InvalidInputError(f"unexpected kind {kind!r} (expected {ENVELOPE_KIND!r})")
 
-    energy_unit = data.get("energy_unit", CANONICAL_ENERGY_UNIT)
-    density_unit = data.get("density_unit", CANONICAL_DENSITY_UNIT)
-    if energy_unit != CANONICAL_ENERGY_UNIT:
-        raise UnsupportedUnitError(
-            f"unsupported energy_unit {energy_unit!r} (only {CANONICAL_ENERGY_UNIT!r} is supported)"
-        )
-    if density_unit != CANONICAL_DENSITY_UNIT:
-        raise UnsupportedUnitError(
-            f"unsupported density_unit {density_unit!r} "
-            f"(only {CANONICAL_DENSITY_UNIT!r} is supported)"
-        )
+    _check_unit(data, "energy_unit", CANONICAL_ENERGY_UNIT)
+    _check_unit(data, "density_unit", CANONICAL_DENSITY_UNIT)
 
     echo = _require(data, "input", "input")
     _check_echo_header(echo)
-    modes = _modes_from_echo(echo)
+    system = _system_from_echo(echo)
     broadening_echo = _require(echo, "broadening", "input.broadening")
     broadening = _build(
         Broadening,
@@ -279,21 +316,17 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
             f"{energy.shape[0]} vs {density.shape[0]}"
         )
 
-    derived = data.get("derived", {})
+    # `derived` は系から一意に決まる控えなので読み飛ばす（ADR-0047）。
 
     return EnvelopeResult(
-        energy=energy,
-        density=density,
-        modes=modes,
+        system=system,
         temperature=_require_float(echo, "temperature", "input.temperature"),
         broadening=broadening,
         grid=grid,
-        reorganization_energy=float(_require(derived, "reorganization_energy", "derived.reorganization_energy")),
+        energy=energy,
+        density=density,
         diagnostics=diagnostics,
-        fcenvelope_version=str(_require(data, "fcenvelope_version", "fcenvelope_version")),
-        created_at=_parse_timestamp(_require(data, "created_at", "created_at")),
-        energy_unit=energy_unit,
-        density_unit=density_unit,
+        provenance=_provenance_from_dict(data),
     )
 
 
@@ -320,16 +353,10 @@ def lines_to_dict(result: LinesResult) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": LINES_KIND,
-        "fcenvelope_version": result.fcenvelope_version,
-        "created_at": _format_timestamp(result.created_at),
-        "energy_unit": result.energy_unit,
+        **_provenance_to_dict(result.provenance),
+        "energy_unit": CANONICAL_ENERGY_UNIT,
         "input": {
-            "frequency_unit": CANONICAL_FREQUENCY_UNIT,
-            "coupling_convention": CANONICAL_COUPLING_CONVENTION,
-            "modes": [
-                {"frequency": mode.frequency, "coupling": mode.huang_rhys}
-                for mode in result.modes
-            ],
+            **_system_to_dict(result.system),
             "temperature": result.temperature,
             "selection": {
                 "min_weight": result.selection.min_weight,
@@ -337,7 +364,7 @@ def lines_to_dict(result: LinesResult) -> dict[str, Any]:
                 "max_quanta": result.selection.max_quanta,
             },
         },
-        "derived": {"reorganization_energy": result.reorganization_energy},
+        "derived": _derived_to_dict(result.system),
         "diagnostics": {
             **{
                 name: getattr(diagnostics, name)
@@ -406,15 +433,11 @@ def lines_from_dict(data: Any) -> LinesResult:
     if kind != LINES_KIND:
         raise InvalidInputError(f"unexpected kind {kind!r} (expected {LINES_KIND!r})")
 
-    energy_unit = data.get("energy_unit", CANONICAL_ENERGY_UNIT)
-    if energy_unit != CANONICAL_ENERGY_UNIT:
-        raise UnsupportedUnitError(
-            f"unsupported energy_unit {energy_unit!r} (only {CANONICAL_ENERGY_UNIT!r} is supported)"
-        )
+    _check_unit(data, "energy_unit", CANONICAL_ENERGY_UNIT)
 
     echo = _require(data, "input", "input")
     _check_echo_header(echo)
-    modes = _modes_from_echo(echo)
+    system = _system_from_echo(echo)
 
     diagnostics_data = _require(data, "diagnostics", "diagnostics")
     try:
@@ -451,20 +474,15 @@ def lines_from_dict(data: Any) -> LinesResult:
     except (KeyError, TypeError, ValueError) as exc:
         raise InvalidInputError(f"malformed lines entry: {exc}") from exc
 
-    derived = data.get("derived", {})
+    # `derived` は系から一意に決まる控えなので読み飛ばす（ADR-0047）。
 
     return LinesResult(
-        lines=lines,
-        modes=modes,
+        system=system,
         temperature=_require_float(echo, "temperature", "input.temperature"),
         selection=selection,
-        reorganization_energy=float(
-            _require(derived, "reorganization_energy", "derived.reorganization_energy")
-        ),
+        lines=lines,
         diagnostics=diagnostics,
-        fcenvelope_version=str(_require(data, "fcenvelope_version", "fcenvelope_version")),
-        created_at=_parse_timestamp(_require(data, "created_at", "created_at")),
-        energy_unit=energy_unit,
+        provenance=_provenance_from_dict(data),
     )
 
 
