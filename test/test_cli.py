@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from fcenvelope import load_envelope, load_lines
+from fcenvelope import load_envelope, load_lines, units
 from fcenvelope.cli import app
 
 runner = CliRunner()
@@ -112,6 +112,28 @@ def test_overrides_are_read_in_the_units_of_the_input_file(tmp_path, input_file)
     assert first.broadening == second.broadening
     assert first.grid == second.grid
     np.testing.assert_array_equal(first.density, second.density)
+
+
+def test_sigma_is_overridden_in_the_broadening_unit(tmp_path, input_payload):
+    """sigma を eV で書いたファイルでは --sigma も eV で読む（ADR-0050, 0053）。
+
+    上書きは入力ファイルの型に当ててから正準化されるので、ファイルの broadening
+    ブロックの単位がそのまま CLI の値の単位になる。cm^-1 と解釈されていれば、
+    同じ数値を与えても sigma が桁違いにずれる。
+    """
+    in_ev = 150.0 / units.energy_conversion_factor("eV")
+    input_payload["broadening"] = {"sigma": in_ev, "unit": "eV"}
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    output = tmp_path / "result.json"
+    invocation = runner.invoke(
+        app,
+        ["run", str(path), "-o", str(output), "--sigma", str(2.0 * in_ev)],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert load_envelope(output).broadening.sigma == pytest.approx(300.0, rel=1e-12)
 
 
 def test_run_reads_modes_from_referenced_csv(tmp_path, input_payload):

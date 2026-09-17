@@ -125,3 +125,54 @@ def test_the_frequency_unit_does_not_leak_past_the_boundary(input_payload):
     mode = FCEnvelopeInput.from_obj(payload).to_system().modes[0]
 
     assert mode.frequency == pytest.approx(1200.0, rel=1e-14)
+
+
+def test_sigma_and_grid_in_another_unit(input_payload):
+    """eV で書いた sigma とグリッドが、cm^-1 の等価な入力と同じ結果を出すこと。"""
+    canonical = FCEnvelopeInput.from_obj(input_payload)
+
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": _in_unit(150.0, "eV"), "unit": "eV"}
+    payload["grid"] = {
+        "e_min": _in_unit(-4000.0, "eV"),
+        "e_max": _in_unit(1000.0, "eV"),
+        "de": _in_unit(5.0, "eV"),
+        "unit": "eV",
+    }
+    converted = FCEnvelopeInput.from_obj(payload)
+
+    assert converted.to_broadening().sigma == pytest.approx(150.0, rel=1e-14)
+    grid = converted.to_grid()
+    assert grid.e_min == pytest.approx(-4000.0, rel=1e-14)
+    assert grid.e_max == pytest.approx(1000.0, rel=1e-14)
+    assert grid.de == pytest.approx(5.0, rel=1e-14)
+    _assert_same_spectrum(converted, canonical)
+
+
+def test_the_unit_axes_are_independent(input_payload):
+    """broadening だけ eV、grid は cm^-1 という混在が通ること（ADR-0053）。"""
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": _in_unit(150.0, "eV"), "unit": "eV"}
+    mixed = FCEnvelopeInput.from_obj(payload)
+
+    assert mixed.grid.unit == units.CANONICAL_ENERGY_UNIT
+    assert mixed.to_broadening().sigma == pytest.approx(150.0, rel=1e-14)
+    _assert_same_spectrum(mixed, FCEnvelopeInput.from_obj(input_payload))
+
+
+def test_the_block_units_default_to_the_canonical_one(input_payload):
+    """単位を書いていない既存の入力が、そのまま cm^-1 として読まれること。"""
+    parsed = FCEnvelopeInput.from_obj(input_payload)
+
+    assert parsed.broadening.unit == units.CANONICAL_ENERGY_UNIT
+    assert parsed.grid.unit == units.CANONICAL_ENERGY_UNIT
+    assert parsed.to_broadening().sigma == 150.0
+    assert parsed.to_grid().de == 5.0
+
+
+@pytest.mark.parametrize("block", ["broadening", "grid"])
+def test_an_unknown_block_unit_is_rejected(input_payload, block):
+    payload = copy.deepcopy(input_payload)
+    payload[block] = {**payload[block], "unit": "nm"}
+    with pytest.raises(UnsupportedUnitError):
+        FCEnvelopeInput.from_obj(payload)

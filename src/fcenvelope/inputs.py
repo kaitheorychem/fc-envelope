@@ -4,6 +4,9 @@
 計算用の値の型に任せ、値の型が送出したエラーにフィールドの位置を添える
 （`docs/adr/0051-value-types-validate-their-own-invariants.md`）。
 
+単位の軸は項目ごとに独立している（ADR-0053）。トップレベルの `frequency_unit` は
+`modes[].frequency` だけに効き、sigma とグリッドは各ブロックの `unit` を持つ。
+
 トップレベルの `frequency_unit` / `coupling_convention` は正準化の際に消費され、
 `to_system()` を通った後の表現は常に (frequency [cm^-1], huang_rhys) である。
 変換が起こるのはこのモジュールの中だけで（ADR-0054）、以降のコードは流儀も単位も
@@ -82,20 +85,47 @@ class _Spec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class _EnergySpec(_Spec):
+    """エネルギーの単位を自分で持つブロック。
+
+    単位の軸は項目ごとに独立で、入力ファイル全体で 1 つにはしない（ADR-0053）。
+    sigma とグリッドは同じエネルギー軸上の量だが、出どころが違うので指定は
+    ブロックごとに分けて持つ。省略時は正準単位である。
+    """
+
+    unit: str = CANONICAL_ENERGY_UNIT
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def _check_unit(cls, value: object) -> str:
+        """単位が換算表にあることを確かめる。保つのは名前のままである。"""
+        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
+        return str(value)
+
+    @property
+    def to_canonical(self) -> float:
+        """このブロックの値に掛けると cm^-1 になる係数。"""
+        return energy_conversion_factor(self.unit)
+
+
 class ModeSpec(_Spec):
-    """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。"""
+    """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。
+
+    単位はモードごとではなくトップレベルに置く。CSV でモードを渡すときも単位を
+    担うのは JSON の側である（ADR-0019, 0053）。
+    """
 
     frequency: float
     coupling: float
 
 
-class BroadeningSpec(_Spec):
+class BroadeningSpec(_EnergySpec):
     """線形状のブロック。"""
 
     sigma: float
 
 
-class EnergyGridSpec(_Spec):
+class EnergyGridSpec(_EnergySpec):
     """エネルギーグリッドのブロック。"""
 
     e_min: float
@@ -264,17 +294,21 @@ class FCEnvelopeInput(BaseModel):
         return VibrationalSystem(modes)
 
     def to_broadening(self) -> Broadening:
-        """線形状を計算用の値にする。"""
+        """単位を消費して線形状を計算用の値にする。"""
+        to_canonical = self.broadening.to_canonical
         try:
-            return Broadening(sigma=self.broadening.sigma)
+            return Broadening(sigma=self.broadening.sigma * to_canonical)
         except InvalidInputError as exc:
             raise _at("broadening", exc) from exc
 
     def to_grid(self) -> EnergyGrid:
-        """エネルギーグリッドを計算用の値にする。"""
+        """単位を消費してエネルギーグリッドを計算用の値にする。"""
+        to_canonical = self.grid.to_canonical
         try:
             return EnergyGrid(
-                e_min=self.grid.e_min, e_max=self.grid.e_max, de=self.grid.de
+                e_min=self.grid.e_min * to_canonical,
+                e_max=self.grid.e_max * to_canonical,
+                de=self.grid.de * to_canonical,
             )
         except InvalidInputError as exc:
             raise _at("grid", exc) from exc
