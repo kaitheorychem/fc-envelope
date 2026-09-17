@@ -62,7 +62,10 @@ class Diagnostics:
     """切り出し窓内に残った面積の割合。"""
 
     edge_intensity_ratio: float
-    """全域グリッド端の強度 / ピーク強度。エイリアシングの指標。"""
+    """全域グリッド端の密度 / ピーク密度。エイリアシングの指標。
+
+    名前の `intensity` はガウス型だけを扱っていた頃の名残で、指すのは密度である。
+    """
 
     max_imaginary_ratio: float
     """max|Im F| / max|Re F|。rho の対称性の破れの指標。"""

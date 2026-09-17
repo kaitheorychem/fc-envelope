@@ -202,7 +202,7 @@ class FCEnvelopeInput(BaseModel):
     @field_validator("modes", mode="before")
     @classmethod
     def _resolve_modes_file(cls, value: Any, info: ValidationInfo) -> Any:
-        """`{"path": ...}` を CSV から読んだモード列に置き換える。
+        """`{"path": ...}` を CSV から読んだモードの並びに置き換える。
 
         相対パスは検証コンテキストの `base_dir`（`from_path` では入力ファイルの
         ディレクトリ）を基準に解決する。

@@ -278,12 +278,12 @@ def _provenance_from_dict(data: dict[str, Any]) -> Provenance:
 
 
 def _system_from_echo(echo: dict[str, Any]) -> VibrationalSystem:
-    """入力エコーのモード列を正準形の系にする。"""
+    """入力エコーのモードから正準形の系を組み立てる。"""
     return _build(VibrationalSystem, "input.modes", modes=_modes_from_echo(echo))
 
 
 def _modes_from_echo(echo: dict[str, Any]) -> tuple[VibrationalMode, ...]:
-    """入力エコーのモード列を正準形の値の型にする。"""
+    """入力エコーの各モードを正準形の値の型にする。"""
     specs = _require(echo, "modes", "input.modes")
     if not isinstance(specs, list):
         raise InvalidInputError(f"input.modes must be a list, got {type(specs).__name__}")
