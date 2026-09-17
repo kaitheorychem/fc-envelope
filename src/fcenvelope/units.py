@@ -18,8 +18,9 @@
 | vcc (V) | S = V^2 / (2 h_bar omega^3) | 必要 | エネルギー^(3/2) |
 | lambda | S = lambda / (h_bar omega) | 必要 | エネルギー |
 
-流儀は無次元のものから順に足す（ADR-0055）。現在登録しているのは g / Delta /
-huang_rhys の 3 つで、有次元の lambda と V はまだ登録していない。
+流儀は無次元のものから順に足す（ADR-0055）。有次元のうち lambda は次元が
+energy^1 で確定しているので登録済み、V は相手プログラムの単位が判明するまで保留
+している（V の次元は単一のべき指数で表せない可能性がある）。
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ __all__ = [
     "ENERGY_UNITS",
     "G",
     "HUANG_RHYS",
+    "LAMBDA",
     "CouplingConvention",
     "coupling_convention",
     "energy_conversion_factor",
@@ -134,6 +136,22 @@ class CouplingConvention:
                 f"(energy^{self.energy_power:g}); a coupling unit must be given"
             )
 
+    def coupling_to_canonical(self, unit: str | None) -> float:
+        """coupling に掛けると正準単位になる係数。単位の妥当性もここで検査する。
+
+        無次元の流儀では 1 である。有次元の流儀では、エネルギーの換算係数を
+        `energy_power` 乗する。coupling の次元はエネルギーの整数乗とは限らないので
+        （V は energy^1.5）、係数そのものではなくべきを取ったものが要る。
+
+        係数を引くことと単位を検査することは分けられない。妥当でない単位に対して
+        返せる係数がないためで、呼び出し側はこれ 1 つを呼べばよい。
+        """
+        self.check_coupling_unit(unit)
+        power = self.energy_power
+        if power is None or unit is None:
+            return 1.0
+        return energy_conversion_factor(unit) ** power
+
 
 G = CouplingConvention(name="g", energy_power=None, converter=lambda g, _: g * g)
 """無次元化振電相互作用定数。S = g^2。g の符号は S に効かない（ADR-0003）。"""
@@ -148,9 +166,18 @@ HUANG_RHYS = CouplingConvention(
 )
 """正準量そのもの。変換は恒等。"""
 
+LAMBDA = CouplingConvention(
+    name="lambda", energy_power=1.0, converter=lambda value, freq: value / freq
+)
+"""再配列エネルギー。S = lambda / eps。次元は energy^1 で確定している。
+
+coupling も frequency もそれぞれの単位から正準単位へ直したうえで渡るので、この式は
+どちらも cm^-1 として割ればよい（ADR-0053, 0054）。
+"""
+
 #: 名前 -> 流儀。流儀の追加は 1 エントリの追加で済む。
 COUPLING_CONVENTIONS: dict[str, CouplingConvention] = {
-    convention.name: convention for convention in (G, DELTA, HUANG_RHYS)
+    convention.name: convention for convention in (G, DELTA, HUANG_RHYS, LAMBDA)
 }
 
 #: 入力ファイルで `coupling_convention` を省略したときの流儀。

@@ -1,4 +1,4 @@
-"""振電相互作用の流儀（g / delta / huang_rhys）の正準化。"""
+"""振電相互作用の流儀（g / delta / huang_rhys / lambda）の正準化。"""
 
 from __future__ import annotations
 
@@ -18,11 +18,12 @@ from fcenvelope import (
 from fcenvelope.errors import InvalidInputError, UnsupportedUnitError
 
 
-def _payload(convention: str, coupling: float) -> dict:
+def _payload(convention: str, coupling: float, **extra: object) -> dict:
     return {
         "schema_version": 2,
         "frequency_unit": "cm^-1",
         "coupling_convention": convention,
+        **extra,
         "modes": [{"frequency": 1200.0, "coupling": coupling}],
         "temperature": 300.0,
         "broadening": {"sigma": 150.0},
@@ -60,20 +61,12 @@ def test_a_dimensionless_convention_rejects_a_coupling_unit():
     assert units.G.check_coupling_unit(None) is None
 
 
-def test_the_convention_type_can_express_a_dimensioned_convention():
-    """V と lambda を足せる構造であることを確かめる（ADR-0033）。
+def test_the_convention_type_can_express_v():
+    """V はまだ登録しないが、型としては表現できる（ADR-0055）。
 
-    登録はしない——このリファクタリングの目的は足せる構造にすることであって、
-    流儀を増やすことではない。
+    相手プログラムが V をどの単位で出すかが分かっていないので登録は保留する。
+    次元が単一のべき指数で表せるかどうかも、そのときに決まる。
     """
-    reorganization = CouplingConvention(
-        name="lambda", energy_power=1.0, converter=lambda value, freq: value / freq
-    )
-    assert not reorganization.is_dimensionless
-    assert reorganization.to_huang_rhys(300.0, 1200.0) == 0.25
-    with pytest.raises(UnsupportedUnitError, match="carries units"):
-        reorganization.check_coupling_unit(None)
-
     vibronic = CouplingConvention(
         name="vcc",
         energy_power=1.5,
@@ -146,3 +139,60 @@ def test_default_convention_is_g():
 def test_unknown_convention_is_rejected(convention):
     with pytest.raises(InvalidInputError):
         FCEnvelopeInput.from_obj(_payload(convention, 0.5))
+
+
+def test_lambda_and_huang_rhys_agree():
+    """S = lambda / eps。lambda を eV で書いても同じ系になる（ADR-0055）。"""
+    huang_rhys = 0.25
+    frequency = 1200.0
+    in_ev = huang_rhys * frequency / units.energy_conversion_factor("eV")
+
+    from_s = FCEnvelopeInput.from_obj(_payload("huang_rhys", huang_rhys))
+    from_lambda = FCEnvelopeInput.from_obj(
+        _payload("lambda", in_ev, coupling_unit="eV")
+    )
+
+    assert from_lambda.to_system().modes[0].huang_rhys == pytest.approx(
+        huang_rhys, rel=1e-14
+    )
+    expected = _envelope(from_s).density
+    np.testing.assert_allclose(
+        _envelope(from_lambda).density,
+        expected,
+        rtol=0.0,
+        atol=1e-12 * float(expected.max()),
+    )
+
+
+def test_lambda_in_the_canonical_unit_is_the_reorganization_energy():
+    """cm^-1 で書いた lambda が、そのまま系の再配列エネルギーになること。"""
+    parsed = FCEnvelopeInput.from_obj(
+        _payload("lambda", 300.0, coupling_unit="cm^-1")
+    )
+    assert parsed.to_system().reorganization_energy == pytest.approx(300.0, rel=1e-14)
+
+
+def test_a_dimensioned_convention_needs_a_coupling_unit():
+    """有次元の流儀で単位を省くと拒否される（check_coupling_unit の一方の枝）。"""
+    with pytest.raises(UnsupportedUnitError, match="carries units"):
+        FCEnvelopeInput.from_obj(_payload("lambda", 300.0)).to_system()
+
+
+@pytest.mark.parametrize("convention", ["g", "delta", "huang_rhys"])
+def test_a_dimensionless_convention_refuses_a_coupling_unit(convention):
+    """無次元の流儀に単位を添えると拒否される（もう一方の枝）。"""
+    payload = _payload(convention, 0.5, coupling_unit="eV")
+    with pytest.raises(InvalidInputError, match="dimensionless"):
+        FCEnvelopeInput.from_obj(payload).to_system()
+
+
+def test_an_unknown_coupling_unit_is_rejected():
+    with pytest.raises(UnsupportedUnitError, match="unsupported energy unit"):
+        FCEnvelopeInput.from_obj(_payload("lambda", 300.0, coupling_unit="nm"))
+
+
+def test_the_coupling_unit_is_omitted_by_default():
+    """単位を書いていない既存の入力は、無次元の流儀として読まれ続ける。"""
+    parsed = FCEnvelopeInput.from_obj(_payload("g", 0.5))
+    assert parsed.coupling_unit is None
+    assert parsed.to_system().modes[0].huang_rhys == 0.25

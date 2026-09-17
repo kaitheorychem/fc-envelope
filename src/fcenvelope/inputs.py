@@ -7,7 +7,8 @@
 単位の軸は項目ごとに独立している（ADR-0053）。トップレベルの `frequency_unit` は
 `modes[].frequency` だけに効き、sigma とグリッドは各ブロックの `unit` を持つ。
 
-トップレベルの `frequency_unit` / `coupling_convention` は正準化の際に消費され、
+トップレベルの `frequency_unit` / `coupling_convention` / `coupling_unit` は正準化の
+際に消費され、
 `to_system()` を通った後の表現は常に (frequency [cm^-1], huang_rhys) である。
 変換が起こるのはこのモジュールの中だけで（ADR-0054）、以降のコードは流儀も単位も
 知らない。
@@ -219,6 +220,13 @@ class FCEnvelopeInput(BaseModel):
     同じ経路を通れる（ADR-0050）。
     """
 
+    coupling_unit: str | None = None
+    """有次元の流儀の `coupling` の単位。無次元の流儀では書いてはならない。
+
+    位置はトップレベルで、モードごとではない。CSV でモードを渡すときも単位を担うのは
+    JSON の側である（ADR-0019, 0053）。
+    """
+
     modes: list[ModeSpec] = Field(min_length=1)
     temperature: float
     broadening: BroadeningSpec
@@ -267,6 +275,19 @@ class FCEnvelopeInput(BaseModel):
         coupling_convention(value)  # 未知の名前・型はここで報告される
         return str(value)
 
+    @field_validator("coupling_unit", mode="before")
+    @classmethod
+    def _check_coupling_unit(cls, value: object) -> str | None:
+        """単位が換算表にあることを確かめる。流儀との噛み合わせは正準化で見る。
+
+        省略（`None`）はここでは通す。単位が要るかどうかは流儀が決めることなので、
+        流儀の分からないこの位置では判定できない。
+        """
+        if value is None:
+            return None
+        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
+        return str(value)
+
     @property
     def convention(self) -> CouplingConvention:
         """`coupling_convention` の名前が指す流儀オブジェクト。"""
@@ -275,18 +296,19 @@ class FCEnvelopeInput(BaseModel):
     def to_system(self) -> VibrationalSystem:
         """単位と流儀を消費して正準形の系を返す。"""
         convention = self.convention
-        to_canonical = energy_conversion_factor(self.frequency_unit)
-        # 今の入力フォーマットは coupling の単位を持たない。無次元の流儀ならこれで
-        # 正しく、単位を持つ流儀（V, lambda）ならここで弾かれる（ADR-0033）。
-        convention.check_coupling_unit(None)
+        # 軸は独立なので、frequency と coupling はそれぞれの単位から別々に正準単位へ
+        # 直す（ADR-0053）。coupling の係数は流儀の次元のぶんだけべきが乗る。
+        frequency_to_canonical = energy_conversion_factor(self.frequency_unit)
+        coupling_to_canonical = convention.coupling_to_canonical(self.coupling_unit)
         modes: list[VibrationalMode] = []
         for index, spec in enumerate(self.modes):
-            frequency = spec.frequency * to_canonical
+            frequency = spec.frequency * frequency_to_canonical
+            coupling = spec.coupling * coupling_to_canonical
             try:
                 modes.append(
                     VibrationalMode(
                         frequency=frequency,
-                        huang_rhys=convention.to_huang_rhys(spec.coupling, frequency),
+                        huang_rhys=convention.to_huang_rhys(coupling, frequency),
                     )
                 )
             except InvalidInputError as exc:
