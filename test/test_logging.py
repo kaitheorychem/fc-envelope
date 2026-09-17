@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 
 import pytest
 from conftest import compute_quietly, lines_quietly
 from typer.testing import CliRunner
 
-from fcenvelope import Broadening, EnergyGrid, save_envelope
+from fcenvelope import Broadening, EnergyGrid, plot_overlay, save_envelope
 from fcenvelope.cli import app
 from fcenvelope.logs import LOGGER_NAME, Trace, stage
 
@@ -31,6 +32,21 @@ def stages(caplog):
             record.getMessage()
             for record in caplog.records
             if record.name.startswith(LOGGER_NAME) and record.levelno == logging.INFO
+        ]
+
+    return collected
+
+
+@pytest.fixture
+def alerts(caplog):
+    """`fcenvelope` の WARNING 記録だけを取り出す。"""
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    def collected() -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name.startswith(LOGGER_NAME) and record.levelno == logging.WARNING
         ]
 
     return collected
@@ -90,6 +106,62 @@ def test_a_stage_that_raises_leaves_no_end_line(stages):
             1 / 0
 
     assert stages() == ["begin heavy thing"]
+
+
+# --- 警告は利用者への発報とログの両方に出る ---
+
+
+def test_quality_warnings_are_recorded(alerts, single_mode):
+    """`warnings` を潰していても痕跡は残る。宛先が違うだけで同じ出来事である。"""
+    result = compute_quietly(
+        single_mode,
+        temperature=300.0,
+        broadening=Broadening(sigma=150.0),
+        grid=EnergyGrid(e_min=-500.0, e_max=500.0, de=5.0),
+    )
+    assert result.diagnostics.messages  # 閾値に引っかかる条件を選んでいる
+    assert alerts() == list(result.diagnostics.messages)
+
+
+def test_an_overlay_mismatch_is_recorded(alerts, single_mode):
+    import matplotlib.pyplot as plt
+
+    envelope = compute_quietly(
+        single_mode,
+        temperature=300.0,
+        broadening=Broadening(sigma=150.0),
+        grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
+    )
+    lines = lines_quietly(single_mode, temperature=0.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        plt.close(plot_overlay(envelope, lines))
+
+    assert any("temperature mismatch" in message for message in alerts())
+
+
+def test_lines_dropped_from_an_overlay_are_recorded(tmp_path, input_file):
+    """CLI だけが出す警告も、利用者への 1 行とログの 1 行の両方になる。"""
+    result_json = tmp_path / "result.json"
+    lines_json = tmp_path / "lines.json"
+    log = tmp_path / "overlay.log"
+    narrow = ["--e-min", "-600", "--e-max", "300"]
+    assert runner.invoke(
+        app, ["run", str(input_file), "-o", str(result_json), *narrow]
+    ).exit_code == 0
+    assert runner.invoke(
+        app, ["lines", str(input_file), "-o", str(lines_json), "--show", "0"]
+    ).exit_code == 0
+
+    invocation = runner.invoke(
+        app,
+        ["plot", str(result_json), str(lines_json), "-o", str(tmp_path / "overlay.png"),
+         "--log", str(log)],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert "fall outside" in invocation.output
+    assert "fall outside" in log.read_text(encoding="utf-8")
 
 
 # --- どれだけ出さないか ---

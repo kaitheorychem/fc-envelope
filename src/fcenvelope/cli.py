@@ -435,12 +435,13 @@ def _save_overlay(
     high = float(envelope.energy[-1])
     dropped = sum(1 for line in lines.lines if not low <= line.energy <= high)
     if dropped:
-        typer.secho(
-            f"warning: {dropped} of {len(lines.lines)} lines fall outside the "
-            f"E window [{low:g}, {high:g}] cm^-1 and are not drawn",
-            fg=typer.colors.YELLOW,
-            err=True,
+        # 利用者への警告と、記録としてのログの両方に出す（ADR-0052）。
+        message = (
+            f"{dropped} of {len(lines.lines)} lines fall outside the "
+            f"E window [{low:g}, {high:g}] cm^-1 and are not drawn"
         )
+        typer.secho(f"warning: {message}", fg=typer.colors.YELLOW, err=True)
+        logger.warning("%s", message)
 
 
 @app.callback(invoke_without_command=True)

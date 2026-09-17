@@ -152,20 +152,26 @@ def plot_lines(
 
 
 def _warn_on_mismatch(envelope: EnvelopeResult, lines: LinesResult) -> None:
-    """同じ系・同じ温度の結果どうしでないなら、重ねる前に知らせる。"""
+    """同じ系・同じ温度の結果どうしでないなら、重ねる前に知らせる。
+
+    利用者への発報（`warnings`）と、何が起きたかの記録（ログ）の両方に出す。宛先が
+    違うだけで同じ出来事なので、文言は 1 つにして 1 箇所で書く（ADR-0052）。
+    """
     if envelope.system != lines.system:
-        warnings.warn(
+        message = (
             "the envelope and the line list were computed for different systems; "
-            "the sticks do not decompose this envelope",
-            stacklevel=3,
+            "the sticks do not decompose this envelope"
         )
     elif envelope.temperature != lines.temperature:
-        warnings.warn(
+        message = (
             f"temperature mismatch: the envelope is at "
             f"{envelope.temperature:g} K but the line list is at "
-            f"{lines.temperature:g} K; the sticks do not decompose this envelope",
-            stacklevel=3,
+            f"{lines.temperature:g} K; the sticks do not decompose this envelope"
         )
+    else:
+        return
+    warnings.warn(message, stacklevel=3)
+    logger.warning("%s", message)
 
 
 def plot_overlay(

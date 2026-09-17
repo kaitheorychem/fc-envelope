@@ -409,5 +409,8 @@ logging.basicConfig(
 logging.getLogger("fcenvelope").setLevel(logging.INFO)
 ```
 
-品質の警告（`NumericalQualityWarning`）も WARNING としてこのログに残るので、警告を
-`warnings` で潰していても痕跡は残る。
+画面に出る警告——品質の警告（`NumericalQualityWarning`）、重ね描きの系・温度の食い違い、
+E 窓から外れて描かれなかった線——は、同じ文言が WARNING としてこのログにも残る。`warnings`
+で潰していても記録のほうは残る。逆に、結果の要約（`wrote ...` や線の表）は画面に出すだけで
+ログには入れない。**画面はいま見ている人へのメッセージ、ログは後から追う人のための記録**、
+という使い分けである。
