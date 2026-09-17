@@ -11,8 +11,10 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 
@@ -116,17 +118,51 @@ class VibrationalSystem:
 class Broadening:
     """1 本の線が E 軸上で持つ幅と形。現在はガウス幅 sigma だけを扱う。
 
-    線形状に依存する計算はこの型に集める（ADR-0034）。型階層にはしない——
-    ガウス・ローレンツ・Voigt は時間領域ではいずれも rho(tau) に掛かる実数の
-    減衰因子で、パラメータ (sigma, gamma) を持つ 1 つの族だからである。
+    **線形状がガウス型であるという知識はこの型だけが持つ**（ADR-0034）。
+    `envelope.py` は `log_damping` を、`plotting.py` は `peak_height` を、診断は
+    `truncation_indicator` を呼ぶだけで、種類を知らなくてよい。gamma を足す作業は
+    この型の中だけで済む。
+
+    型階層にはしない——ガウス・ローレンツ・Voigt は時間領域ではいずれも rho(tau) に
+    掛かる実数の減衰因子で、パラメータ (sigma, gamma) を持つ 1 つの族だからである。
     """
 
     sigma: float
     """sigma [cm^-1]。"""
 
+    #: `truncation_indicator` がこれを下回ると、tau 窓が閉じる前に減衰が終わって
+    #: いないとみなす。ガウス型では sigma*tau_max >= 6 に当たる。
+    MIN_TRUNCATION_INDICATOR: ClassVar[float] = 6.0
+
     def __post_init__(self) -> None:
         if not self.sigma > 0.0:
             raise InvalidInputError(f"sigma must be positive (got {self.sigma})")
+
+    def log_damping(self, tau: np.ndarray) -> np.ndarray:
+        """時間領域で rho(tau) に掛かる減衰因子の対数 ln D(tau)。
+
+        ガウス型では ln D = -sigma^2 tau^2 / 2（`docs/theory/time-ft.md`）。対数で
+        返すのは、呼び出し側が ln rho(tau) に足すだけで済むようにするため。
+        """
+        return -0.5 * self.sigma**2 * np.asarray(tau, dtype=float) ** 2
+
+    def peak_height(self) -> float:
+        """規格化された線形状の頂点値 L(0) [1/cm^-1]。
+
+        重み w の線が F(E) に立てる山の高さは w * L(0) である（ADR-0027, 0032）。
+        ガウス型では 1 / (sigma * sqrt(2 pi))。
+        """
+        return 1.0 / (self.sigma * math.sqrt(2.0 * math.pi))
+
+    def truncation_indicator(self, tau_max: float) -> float:
+        """tau 窓 [-tau_max, tau_max] の内側で減衰がどれだけ進んだかの指標。
+
+        大きいほど安全で、`MIN_TRUNCATION_INDICATOR` を下回ると窓の打ち切りによる
+        リンギングが疑わしくなる。ガウス型では sigma * tau_max。
+
+        Voigt 型を足すときは減衰因子そのもので測る形へ一般化する（ADR-0038、提案）。
+        """
+        return self.sigma * tau_max
 
 
 @dataclass(frozen=True, slots=True)

@@ -168,3 +168,40 @@ def test_density_is_real_and_finite():
     assert result.density.dtype == np.float64
     assert np.all(np.isfinite(result.density))
     assert result.diagnostics.max_imaginary_ratio < 1e-12
+
+
+# --- 線形状に依存する計算（ADR-0034） ---
+
+
+def test_broadening_knows_the_gaussian_damping_factor():
+    """時間領域の減衰因子 ln D(tau) = -sigma^2 tau^2 / 2。"""
+    broadening = Broadening(sigma=150.0)
+    tau = np.array([0.0, 1e-3, -2e-3])
+    np.testing.assert_allclose(
+        broadening.log_damping(tau), -0.5 * 150.0**2 * tau**2, rtol=1e-15
+    )
+
+
+def test_broadening_knows_the_normalized_peak_height():
+    """規格化ガウシアンの頂点値 1 / (sigma * sqrt(2 pi))。"""
+    broadening = Broadening(sigma=80.0)
+    assert broadening.peak_height() == pytest.approx(1.0 / (80.0 * np.sqrt(2.0 * np.pi)))
+
+
+def test_broadening_knows_the_truncation_indicator():
+    """tau 窓の打ち切りの指標はガウス型では sigma * tau_max。"""
+    broadening = Broadening(sigma=150.0)
+    assert broadening.truncation_indicator(0.5) == pytest.approx(75.0)
+    assert broadening.MIN_TRUNCATION_INDICATOR == 6.0
+
+
+def test_the_diagnostic_comes_from_the_broadening():
+    """`sigma_tau_max` は線形状が計算し、エンベロープはそれを記録するだけ。"""
+    broadening = Broadening(sigma=150.0)
+    grid = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0)
+    diagnostics = compute_quietly(
+        SYSTEM, temperature=300.0, broadening=broadening, grid=grid
+    ).diagnostics
+    assert diagnostics.sigma_tau_max == broadening.truncation_indicator(
+        diagnostics.tau_max
+    )

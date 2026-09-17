@@ -2,11 +2,14 @@
 
 理論は `docs/theory/time-ft.md` の式そのもの:
 
-    F(E) = (1 / 2pi) * int dtau rho(tau) exp(i E tau - sigma^2 tau^2 / 2)
+    F(E) = (1 / 2pi) * int dtau rho(tau) D(tau) exp(i E tau)
 
     rho(tau) = prod_alpha exp( -S_a (2 n_a + 1)
                                + S_a (n_a + 1) exp(+i eps_a tau)
                                + S_a n_a       exp(-i eps_a tau) )
+
+D(tau) は線形状に由来する減衰因子で、その形は `Broadening` が持つ（ADR-0034）。
+このモジュールは線形状の種類を知らない。ガウス型では D = exp(-sigma^2 tau^2 / 2)。
 
 符号規約は反転しない。E = 0 が ZPL であり、振動量子を k 個生成する
 サイドバンドは E = -k * eps_alpha（負側）に立つ。
@@ -15,12 +18,12 @@
 from __future__ import annotations
 
 import math
-import warnings
 from datetime import datetime, timezone
+from typing import Any
 
 import numpy as np
 
-from .errors import NumericalQualityWarning
+from .errors import report_quality
 from .models import Broadening, EnergyGrid, VibrationalSystem, validate_temperature
 from .result import Diagnostics, EnvelopeResult, Provenance
 from .version import __version__
@@ -31,7 +34,7 @@ __all__ = [
 ]
 
 # --- 診断値の警告閾値（§7 の表） ---
-MIN_SIGMA_TAU_MAX = 6.0
+# tau 窓の打ち切りの閾値だけは線形状の側にある（`Broadening.MIN_TRUNCATION_INDICATOR`）。
 MAX_EDGE_INTENSITY_RATIO = 1e-4
 MAX_AREA_DEVIATION = 1e-6
 MIN_WINDOW_CAPTURED_FRACTION = 0.99
@@ -105,11 +108,39 @@ def compute_envelope(
         窓へ切り出した F(E) と、入力エコー・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
+    energy, density, measurements = _transform(system, temperature, broadening, grid)
+    messages = report_quality(_quality_messages(broadening, measurements))
+
+    return EnvelopeResult(
+        system=system,
+        temperature=temperature,
+        broadening=broadening,
+        grid=grid,
+        energy=energy,
+        density=density,
+        diagnostics=Diagnostics(messages=messages, **measurements),
+        provenance=Provenance(
+            fcenvelope_version=__version__,
+            created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        ),
+    )
+
+
+def _transform(
+    system: VibrationalSystem,
+    temperature: float,
+    broadening: Broadening,
+    grid: EnergyGrid,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """数値計算。窓へ切り出した (energy, density) と、そこから読める測定値を返す。
+
+    測定値は判定を含まない生の数値で、閾値との突き合わせは `_quality_messages` が
+    行う（ADR-0048）。
+    """
     energy_full, tau, n_fft, d_tau = build_grids(grid)
 
     log_rho = _log_rho(tau, system, temperature)
-    damping = -0.5 * broadening.sigma**2 * tau**2
-    m_tau = np.exp(log_rho + damping)
+    m_tau = np.exp(log_rho + broadening.log_damping(tau))
 
     # F(E_j) = (1 / dE) * ifft(M)_j （tau・E ともに FFT 標準順序のため位相因子は不要）
     spectrum_full = np.fft.ifft(m_tau) / grid.de
@@ -136,60 +167,41 @@ def compute_envelope(
     window_captured_fraction = window_area / total_area if total_area != 0.0 else 0.0
 
     tau_max = math.pi / grid.de
-    sigma_tau_max = broadening.sigma * tau_max
-
-    messages = _quality_messages(
-        sigma_tau_max=sigma_tau_max,
-        edge_intensity_ratio=edge_intensity_ratio,
-        total_area=total_area,
-        window_captured_fraction=window_captured_fraction,
-        max_imaginary_ratio=max_imaginary_ratio,
-    )
-    for message in messages:
-        warnings.warn(message, NumericalQualityWarning, stacklevel=2)
-
-    diagnostics = Diagnostics(
-        n_fft=n_fft,
-        d_tau=d_tau,
-        tau_max=tau_max,
-        sigma_tau_max=sigma_tau_max,
-        total_area=total_area,
-        window_captured_fraction=window_captured_fraction,
-        edge_intensity_ratio=edge_intensity_ratio,
-        max_imaginary_ratio=max_imaginary_ratio,
-        messages=messages,
-    )
-
-    return EnvelopeResult(
-        system=system,
-        temperature=temperature,
-        broadening=broadening,
-        grid=grid,
-        energy=energy,
-        density=density,
-        diagnostics=diagnostics,
-        provenance=Provenance(
-            fcenvelope_version=__version__,
-            created_at=datetime.now(timezone.utc).replace(microsecond=0),
-        ),
-    )
+    measurements = {
+        "n_fft": n_fft,
+        "d_tau": d_tau,
+        "tau_max": tau_max,
+        # 名前はガウス型の名残。減衰因子そのもので測る形への一般化は ADR-0038（提案）。
+        "sigma_tau_max": broadening.truncation_indicator(tau_max),
+        "total_area": total_area,
+        "window_captured_fraction": window_captured_fraction,
+        "edge_intensity_ratio": edge_intensity_ratio,
+        "max_imaginary_ratio": max_imaginary_ratio,
+    }
+    return energy, density, measurements
 
 
 def _quality_messages(
-    *,
-    sigma_tau_max: float,
-    edge_intensity_ratio: float,
-    total_area: float,
-    window_captured_fraction: float,
-    max_imaginary_ratio: float,
+    broadening: Broadening, measurements: dict[str, Any]
 ) -> tuple[str, ...]:
-    """閾値を超えた診断値について警告文言を組み立てる。"""
+    """診断値の判定。閾値を超えた項目について警告文言を組み立てる。
+
+    文言は「何が起きたか」に加えて「どう直すか」を持つので、雛形に押し込めず手書きで
+    残す（ADR-0036）。発報そのものは `errors.report_quality` が行う。
+    """
+    sigma_tau_max = measurements["sigma_tau_max"]
+    edge_intensity_ratio = measurements["edge_intensity_ratio"]
+    total_area = measurements["total_area"]
+    window_captured_fraction = measurements["window_captured_fraction"]
+    max_imaginary_ratio = measurements["max_imaginary_ratio"]
+
     messages: list[str] = []
 
-    if sigma_tau_max < MIN_SIGMA_TAU_MAX:
+    if sigma_tau_max < broadening.MIN_TRUNCATION_INDICATOR:
         messages.append(
-            f"sigma*tau_max = {sigma_tau_max:.3g} < {MIN_SIGMA_TAU_MAX:g}: "
-            "the tau window is truncated before the Gaussian damping completes; "
+            f"sigma*tau_max = {sigma_tau_max:.3g} < "
+            f"{broadening.MIN_TRUNCATION_INDICATOR:g}: "
+            "the tau window is truncated before the damping completes; "
             "ringing is likely. Use de smaller than sigma/2."
         )
     if edge_intensity_ratio > MAX_EDGE_INTENSITY_RATIO:

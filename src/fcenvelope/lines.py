@@ -27,14 +27,14 @@
 from __future__ import annotations
 
 import math
-import warnings
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import Any
 
 import numpy as np
 from scipy.special import gammaln
 
-from .errors import InvalidInputError, NumericalQualityWarning
+from .errors import InvalidInputError, report_quality
 from .models import Selection, VibrationalMode, VibrationalSystem, validate_temperature
 from .physics import K_B_CM, boltzmann_populations
 from .result import FCLine, FCLineDiagnostics, LinesResult, ModeTransition, Provenance
@@ -237,6 +237,32 @@ def compute_fc_lines(
         線の列と、入力エコー・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
+    lines, measurements, strongest_weight = _enumerate(system, temperature, selection)
+    messages = report_quality(
+        _quality_messages(selection, measurements, strongest_weight=strongest_weight)
+    )
+
+    return LinesResult(
+        system=system,
+        temperature=temperature,
+        selection=selection,
+        lines=lines,
+        diagnostics=FCLineDiagnostics(messages=messages, **measurements),
+        provenance=Provenance(
+            fcenvelope_version=__version__,
+            created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        ),
+    )
+
+
+def _enumerate(
+    system: VibrationalSystem, temperature: float, selection: Selection
+) -> tuple[tuple[FCLine, ...], dict[str, Any], float]:
+    """数値計算。保持した線と、そこから読める測定値、到達しうる最大の重みを返す。
+
+    測定値は判定を含まない生の数値で、閾値との突き合わせは `_quality_messages` が
+    行う（ADR-0048）。
+    """
     modes = system.modes
     min_weight = selection.min_weight
     max_lines = selection.max_lines
@@ -267,7 +293,7 @@ def compute_fc_lines(
         if captured > 0.0
         else 0.0
     )
-    diagnostics_kwargs = {
+    measurements = {
         "n_lines": len(lines),
         "captured_weight": captured,
         "mean_energy": mean_energy,
@@ -277,27 +303,7 @@ def compute_fc_lines(
         "beam_truncated": beam_truncated,
         "recurrence_limited": any(candidate.recurrence_limited for candidate in candidates),
     }
-
-    messages = _quality_messages(
-        min_weight=min_weight,
-        max_lines=max_lines,
-        strongest_weight=suffix_bound[0],
-        **diagnostics_kwargs,
-    )
-    for message in messages:
-        warnings.warn(message, NumericalQualityWarning, stacklevel=2)
-
-    return LinesResult(
-        system=system,
-        temperature=temperature,
-        selection=selection,
-        lines=tuple(lines),
-        diagnostics=FCLineDiagnostics(messages=messages, **diagnostics_kwargs),
-        provenance=Provenance(
-            fcenvelope_version=__version__,
-            created_at=datetime.now(timezone.utc).replace(microsecond=0),
-        ),
-    )
+    return tuple(lines), measurements, suffix_bound[0]
 
 
 def _combine(
@@ -347,21 +353,24 @@ def _combine(
 
 
 def _quality_messages(
-    *,
-    min_weight: float,
-    max_lines: int,
-    strongest_weight: float,
-    n_lines: int,
-    captured_weight: float,
-    mean_energy: float,
-    min_mode_completeness: float,
-    max_initial_quanta: int,
-    max_final_quanta: int,
-    beam_truncated: bool,
-    recurrence_limited: bool,
+    selection: Selection, measurements: dict[str, Any], *, strongest_weight: float
 ) -> tuple[str, ...]:
-    """閾値を超えた診断値について警告文言を組み立てる。"""
-    del mean_energy  # 診断値としてのみ記録する。
+    """診断値の判定。閾値を超えた項目について警告文言を組み立てる。
+
+    文言は「何が起きたか」に加えて「どう直すか」を持つので、雛形に押し込めず手書きで
+    残す（ADR-0036）。発報そのものは `errors.report_quality` が行う。`mean_energy`
+    だけは診断値として記録するのみで、判定には使わない。
+    """
+    min_weight = selection.min_weight
+    max_lines = selection.max_lines
+    n_lines = measurements["n_lines"]
+    captured_weight = measurements["captured_weight"]
+    min_mode_completeness = measurements["min_mode_completeness"]
+    max_initial_quanta = measurements["max_initial_quanta"]
+    max_final_quanta = measurements["max_final_quanta"]
+    beam_truncated = measurements["beam_truncated"]
+    recurrence_limited = measurements["recurrence_limited"]
+
     messages: list[str] = []
 
     if n_lines == 0:

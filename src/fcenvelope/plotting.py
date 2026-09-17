@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import warnings
 from typing import TYPE_CHECKING
 
@@ -45,11 +44,6 @@ def _resolve_axes(
     import matplotlib.pyplot as plt
 
     return plt.subplots(figsize=(7.0, 4.2), layout="constrained")
-
-
-def _gaussian_peak(sigma: float) -> float:
-    """規格化ガウシアン G_sigma(0) = 1 / (sigma * sqrt(2 pi)) [1/cm^-1]。"""
-    return 1.0 / (sigma * math.sqrt(2.0 * math.pi))
 
 
 def _draw_envelope(
@@ -173,13 +167,13 @@ def plot_overlay(
 ) -> "matplotlib.figure.Figure":
     """エンベロープ F(E) と離散 FC 因子を 1 枚に重ねて描画する。
 
-    縦軸は 1 本だけで、単位は F(E) と同じ 1/cm^-1。線の重み w は幅 sigma の
-    規格化ガウシアンの頂点 G_sigma(0) = 1/(sigma*sqrt(2pi)) を掛けて描く。
-    これは「その線が F(E) に立てる山の高さそのもの」であり、F(E) は線を
-    sigma で畳んで足し上げたものなので（`docs/theory/fc-factor.md`）、
+    縦軸は 1 本だけで、単位は F(E) と同じ 1/cm^-1。線の重み w は規格化した線形状の
+    頂点値 L(0)（`Broadening.peak_height`。ガウス型なら 1/(sigma*sqrt(2pi))）を
+    掛けて描く。これは「その線が F(E) に立てる山の高さそのもの」であり、F(E) は線を
+    線形状で畳んで足し上げたものなので（`docs/theory/fc-factor.md`）、
     2 つの縦軸を勝手な比率で並べる場合と違って棒と曲線の高さを直接比べられる。
     孤立した線では棒の先端が曲線の山に一致し、sigma の中に何本も密集する
-    ところでは曲線が棒より高くなる。sigma は `envelope` の条件から取る。
+    ところでは曲線が棒より高くなる。線形状は `envelope` の条件から取る。
 
     線が密集して棒が潰れる系では `magnify` で棒だけを拡大できる。倍率は
     凡例に `(×N)` として出るので、拡大したことが図の上で失われない。
@@ -193,7 +187,8 @@ def plot_overlay(
 
     figure, ax = _resolve_axes(ax)
 
-    scale = magnify * _gaussian_peak(envelope.broadening.sigma)
+    # 頂点値の式は線形状が持つ（ADR-0034）。ここは種類を知らなくてよい。
+    scale = magnify * envelope.broadening.peak_height()
     if lines_label is not None and magnify != 1.0:
         lines_label = rf"{lines_label} ($\times${magnify:g})"
 
