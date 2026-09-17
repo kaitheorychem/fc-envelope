@@ -161,19 +161,19 @@ def run(
     ] = None,
     sigma: Annotated[
         Optional[float],
-        typer.Option("--sigma", help="Override broadening.sigma [cm^-1]."),
+        typer.Option("--sigma", help="Override broadening.sigma, in the input file's broadening unit."),
     ] = None,
     e_min: Annotated[
         Optional[float],
-        typer.Option("--e-min", help="Override grid.e_min [cm^-1]."),
+        typer.Option("--e-min", help="Override grid.e_min, in the input file's grid unit."),
     ] = None,
     e_max: Annotated[
         Optional[float],
-        typer.Option("--e-max", help="Override grid.e_max [cm^-1]."),
+        typer.Option("--e-max", help="Override grid.e_max, in the input file's grid unit."),
     ] = None,
     de: Annotated[
         Optional[float],
-        typer.Option("--de", help="Override grid.de [cm^-1]."),
+        typer.Option("--de", help="Override grid.de, in the input file's grid unit."),
     ] = None,
     dpi: Annotated[int, typer.Option("--dpi", help="Resolution of --plot.")] = 150,
     log: LogFile = None,

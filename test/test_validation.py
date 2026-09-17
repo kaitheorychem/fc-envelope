@@ -34,8 +34,9 @@ def test_valid_payload_parses(input_payload):
 
 
 def test_unsupported_frequency_unit(input_payload):
+    """換算表にない単位は受けない。波長は表に載せていない（ADR-0054）。"""
     payload = copy.deepcopy(input_payload)
-    payload["frequency_unit"] = "eV"
+    payload["frequency_unit"] = "nm"
     with pytest.raises(UnsupportedUnitError):
         FCEnvelopeInput.from_obj(payload)
 

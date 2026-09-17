@@ -44,14 +44,17 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 | フィールド | 意味 | 制約 |
 |---|---|---|
 | `schema_version` | 入力ファイルの版 | `2` 固定 |
-| `frequency_unit` | 振動数の単位 | `"cm^-1"` のみ |
-| `coupling_convention` | `coupling` の流儀。`"g"` なら S = g²、`"huang_rhys"` なら S をそのまま | 既定は `"g"` |
-| `modes[].frequency` | ε_α [cm⁻¹] | > 0 |
+| `frequency_unit` | `modes[].frequency` の単位 | 下の単位表のいずれか、既定 `"cm^-1"` |
+| `coupling_convention` | `coupling` の流儀（下の流儀表） | 既定は `"g"` |
+| `coupling_unit` | `modes[].coupling` の単位 | 有次元の流儀では必須、無次元の流儀では書けない |
+| `modes[].frequency` | ε_α | > 0 |
 | `modes[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | 流儀による |
 | `temperature` | T [K] | ≥ 0（0 は許可） |
-| `broadening.sigma` | 線形状の幅 σ [cm⁻¹] | > 0 |
-| `grid.e_min` / `e_max` | 出力窓 [cm⁻¹] | `e_min` < `e_max` |
-| `grid.de` | 出力グリッド間隔 [cm⁻¹] | > 0 |
+| `broadening.sigma` | 線形状の幅 σ | > 0 |
+| `broadening.unit` | σ の単位 | 既定 `"cm^-1"` |
+| `grid.e_min` / `e_max` | 出力窓 | `e_min` < `e_max` |
+| `grid.de` | 出力グリッド間隔 | > 0 |
+| `grid.unit` | グリッドの単位 | 既定 `"cm^-1"` |
 | `selection.min_weight` | 保持する重みの下限 | 0 < x ≤ 1、既定 1e-4 |
 | `selection.max_lines` | 保持・列挙する線数の上限 | ≥ 1、既定 10000 |
 | `selection.max_quanta` | 1 モードあたりの振動量子数の上限 | ≥ 0 または `null`（自動）、既定 `null` |
@@ -59,8 +62,70 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 `run` が読むのは `temperature` / `broadening` / `grid`、`lines` が読むのは
 `temperature` / `selection` で、どちらも同じファイルを使える。`selection` は省略できる。
 
-流儀 `"g"` では S = g² なので `coupling` の符号は結果に効かない。`"huang_rhys"` では
-`coupling` が S そのものなので負の値はエラーになる。
+### 流儀
+
+`coupling` をどの量で書くかを `coupling_convention` で選ぶ。量どうしの関係は
+`docs/theory/vcc.md` にある。
+
+| 流儀 | `coupling` が表すもの | S への変換 | 単位 |
+|---|---|---|---|
+| `"g"` | 無次元化振電相互作用定数 g | S = g² | 無次元 |
+| `"delta"` | 無次元変位 Δ | S = Δ²/2 | 無次元 |
+| `"huang_rhys"` | Huang-Rhys 因子 S | そのまま | 無次元 |
+| `"lambda"` | 再配列エネルギー λ_α | S = λ_α/ε_α | エネルギー |
+
+無次元の流儀（`"g"` / `"delta"` / `"huang_rhys"`）では `coupling_unit` を書いてはいけない。
+`"lambda"` では必ず書く。振電相互作用定数 V（`"vcc"`）はまだ使えない。
+
+流儀 `"g"` と `"delta"` では S が 2 乗で決まるので `coupling` の符号は結果に効かない。
+`"huang_rhys"` と `"lambda"` では負の値はエラーになる。
+
+### 単位
+
+エネルギーの単位は次の 6 つから選べる。省略するとすべて `"cm^-1"` として読まれるので、
+単位を書いていない入力ファイルは今までどおりの意味で動く。
+
+| 名前 | 備考 |
+|---|---|
+| `"cm^-1"` | 既定。内部・出力で使う単位でもある |
+| `"eV"` | |
+| `"hartree"` | 原子単位 |
+| `"THz"` | 振動数だが ε = hν としてエネルギーに読む |
+| `"kJ/mol"` | |
+| `"kcal/mol"` | 熱化学カロリー（1 cal = 4.184 J） |
+
+波長（`nm`）は受け付けない。エネルギーとの関係が逆数なので、等間隔のエネルギーグリッドを
+波長で指定できないためである。
+
+**単位の軸は項目ごとに独立している。** 1 つの指定がファイル全体に効くのではなく、
+`frequency_unit` / `coupling_unit` / `broadening.unit` / `grid.unit` の 4 つがそれぞれ
+別々の単位を取れる。振動数はほぼ常に cm⁻¹ で、`coupling` は値を出した外部プログラムの
+都合で単位が決まり、σ とグリッドは利用者が計算窓として選ぶ量なので、揃うことを前提に
+できないためである。
+
+```json
+{
+  "schema_version": 2,
+  "frequency_unit": "cm^-1",
+  "coupling_convention": "lambda",
+  "coupling_unit": "eV",
+  "modes": [{ "frequency": 1200.0, "coupling": 0.037 }],
+  "temperature": 300.0,
+  "broadening": { "sigma": 0.0186, "unit": "eV" },
+  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0, "unit": "cm^-1" }
+}
+```
+
+この例では振動数を cm⁻¹、λ と σ を eV、グリッドを cm⁻¹ で書いている。結果は単位の
+書き方によらず同じで、出力ファイルの中身は常に cm⁻¹ である。
+
+そのまま動く例が [`examples/sigma-in-ev.json`](examples/sigma-in-ev.json) にある。
+
+```bash
+uv run fcenvelope run docs/readme/examples/sigma-in-ev.json -o result.json
+```
+
+描画の横軸は当面 cm⁻¹ 固定で、この 4 つの軸とは別である。
 
 ### モードを CSV で渡す
 
@@ -89,7 +154,8 @@ frequency,coupling
 - ヘッダ行は省略できる。省略時は `frequency,coupling` の順。ヘッダを書く場合は 1 行目に置き、列の順序は自由。
 - RFC 4180 にはコメントの規定がないため、コメント行は書けない。空行もエラー（ファイル末尾の改行 1 つは可）。
 - 行の順序は計算結果に影響しない。縮重モードは同じ値の行を複数書く。
-- 単位と流儀は JSON 側の `frequency_unit` / `coupling_convention` に従う。
+- 単位と流儀は JSON 側の `frequency_unit` / `coupling_convention` / `coupling_unit` に従う。
+  単位はモードごとではなく JSON 側が担うので、CSV に単位の列は置けない。
 - 区切りはカンマのみ。**構造の誤り**（列数違い、数値として読めない、空行、引用の誤りなど）は
   `modes.csv:3: ...` のように行番号付きで報告される。**値の範囲**（ε ≤ 0 など）は流儀と単位を
   消費した後で判定するので、位置は `modes[2]` のようにモードの番号で報告される。
@@ -104,7 +170,7 @@ E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 # 計算して結果 JSON を書き出す（図も同時に出す場合は --plot）
 uv run fcenvelope run input.json -o result.json --plot spectrum.png
 
-# 条件だけ振る（modes は上書きできない）
+# 条件だけ振る（modes は上書きできない。値は入力ファイルと同じ単位で読む）
 uv run fcenvelope run input.json -o result_0K.json --temperature 0
 
 # 離散 FC 因子の一覧を書き出す

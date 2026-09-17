@@ -4,9 +4,14 @@
 計算用の値の型に任せ、値の型が送出したエラーにフィールドの位置を添える
 （`docs/adr/0051-value-types-validate-their-own-invariants.md`）。
 
-トップレベルの `frequency_unit` / `coupling_convention` は正準化の際に消費され、
+単位の軸は項目ごとに独立している（ADR-0053）。トップレベルの `frequency_unit` は
+`modes[].frequency` だけに効き、sigma とグリッドは各ブロックの `unit` を持つ。
+
+トップレベルの `frequency_unit` / `coupling_convention` / `coupling_unit` は正準化の
+際に消費され、
 `to_system()` を通った後の表現は常に (frequency [cm^-1], huang_rhys) である。
-以降のコードは流儀も単位も知らない。
+変換が起こるのはこのモジュールの中だけで（ADR-0054）、以降のコードは流儀も単位も
+知らない。
 
 `modes` はモードの配列を直接書くか、`{"path": "modes.csv"}` で CSV のモード表を
 参照する。参照はパース時に解決され、パース後は配列で書いた場合と区別がない。
@@ -41,11 +46,11 @@ from .models import (
     validate_temperature,
 )
 from .units import (
-    CANONICAL_FREQUENCY_UNIT,
+    CANONICAL_ENERGY_UNIT,
     DEFAULT_COUPLING_CONVENTION,
     CouplingConvention,
-    check_frequency_unit,
     coupling_convention,
+    energy_conversion_factor,
 )
 
 #: つまみの既定値の唯一の出どころ（ADR-0050）。`Selection` は slots 付きの
@@ -81,20 +86,47 @@ class _Spec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class _EnergySpec(_Spec):
+    """エネルギーの単位を自分で持つブロック。
+
+    単位の軸は項目ごとに独立で、入力ファイル全体で 1 つにはしない（ADR-0053）。
+    sigma とグリッドは同じエネルギー軸上の量だが、出どころが違うので指定は
+    ブロックごとに分けて持つ。省略時は正準単位である。
+    """
+
+    unit: str = CANONICAL_ENERGY_UNIT
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def _check_unit(cls, value: object) -> str:
+        """単位が換算表にあることを確かめる。保つのは名前のままである。"""
+        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
+        return str(value)
+
+    @property
+    def to_canonical(self) -> float:
+        """このブロックの値に掛けると cm^-1 になる係数。"""
+        return energy_conversion_factor(self.unit)
+
+
 class ModeSpec(_Spec):
-    """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。"""
+    """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。
+
+    単位はモードごとではなくトップレベルに置く。CSV でモードを渡すときも単位を
+    担うのは JSON の側である（ADR-0019, 0053）。
+    """
 
     frequency: float
     coupling: float
 
 
-class BroadeningSpec(_Spec):
+class BroadeningSpec(_EnergySpec):
     """線形状のブロック。"""
 
     sigma: float
 
 
-class EnergyGridSpec(_Spec):
+class EnergyGridSpec(_EnergySpec):
     """エネルギーグリッドのブロック。"""
 
     e_min: float
@@ -179,13 +211,20 @@ class FCEnvelopeInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal[2] = SCHEMA_VERSION
-    frequency_unit: str = CANONICAL_FREQUENCY_UNIT
+    frequency_unit: str = CANONICAL_ENERGY_UNIT
     coupling_convention: str = DEFAULT_COUPLING_CONVENTION.name
     """流儀の**名前**。流儀そのものは `convention` から引く。
 
     ファイルに現れるのは名前なので、pydantic のフィールドも名前のままにする。
     こうしておくと `model_dump()` がそのまま入力ファイルの形に戻り、CLI の上書きが
     同じ経路を通れる（ADR-0050）。
+    """
+
+    coupling_unit: str | None = None
+    """有次元の流儀の `coupling` の単位。無次元の流儀では書いてはならない。
+
+    位置はトップレベルで、モードごとではない。CSV でモードを渡すときも単位を担うのは
+    JSON の側である（ADR-0019, 0053）。
     """
 
     modes: list[ModeSpec] = Field(min_length=1)
@@ -225,13 +264,28 @@ class FCEnvelopeInput(BaseModel):
     @field_validator("frequency_unit", mode="before")
     @classmethod
     def _check_frequency_unit(cls, value: object) -> str:
-        return check_frequency_unit(value)
+        """単位が換算表にあることを確かめる。保つのは名前のままである。"""
+        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
+        return str(value)
 
     @field_validator("coupling_convention", mode="before")
     @classmethod
     def _check_coupling_convention(cls, value: object) -> str:
         """名前が既知の流儀を指すことを確かめる。保つのは名前のままである。"""
         coupling_convention(value)  # 未知の名前・型はここで報告される
+        return str(value)
+
+    @field_validator("coupling_unit", mode="before")
+    @classmethod
+    def _check_coupling_unit(cls, value: object) -> str | None:
+        """単位が換算表にあることを確かめる。流儀との噛み合わせは正準化で見る。
+
+        省略（`None`）はここでは通す。単位が要るかどうかは流儀が決めることなので、
+        流儀の分からないこの位置では判定できない。
+        """
+        if value is None:
+            return None
+        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
         return str(value)
 
     @property
@@ -242,18 +296,19 @@ class FCEnvelopeInput(BaseModel):
     def to_system(self) -> VibrationalSystem:
         """単位と流儀を消費して正準形の系を返す。"""
         convention = self.convention
-        # 今の入力フォーマットは coupling の単位を持たない。無次元の流儀ならこれで
-        # 正しく、単位を持つ流儀（V, lambda）ならここで弾かれる（ADR-0033）。
-        convention.check_coupling_unit(None)
+        # 軸は独立なので、frequency と coupling はそれぞれの単位から別々に正準単位へ
+        # 直す（ADR-0053）。coupling の係数は流儀の次元のぶんだけべきが乗る。
+        frequency_to_canonical = energy_conversion_factor(self.frequency_unit)
+        coupling_to_canonical = convention.coupling_to_canonical(self.coupling_unit)
         modes: list[VibrationalMode] = []
         for index, spec in enumerate(self.modes):
+            frequency = spec.frequency * frequency_to_canonical
+            coupling = spec.coupling * coupling_to_canonical
             try:
                 modes.append(
                     VibrationalMode(
-                        frequency=spec.frequency,
-                        huang_rhys=convention.to_huang_rhys(
-                            spec.coupling, spec.frequency
-                        ),
+                        frequency=frequency,
+                        huang_rhys=convention.to_huang_rhys(coupling, frequency),
                     )
                 )
             except InvalidInputError as exc:
@@ -261,17 +316,21 @@ class FCEnvelopeInput(BaseModel):
         return VibrationalSystem(modes)
 
     def to_broadening(self) -> Broadening:
-        """線形状を計算用の値にする。"""
+        """単位を消費して線形状を計算用の値にする。"""
+        to_canonical = self.broadening.to_canonical
         try:
-            return Broadening(sigma=self.broadening.sigma)
+            return Broadening(sigma=self.broadening.sigma * to_canonical)
         except InvalidInputError as exc:
             raise _at("broadening", exc) from exc
 
     def to_grid(self) -> EnergyGrid:
-        """エネルギーグリッドを計算用の値にする。"""
+        """単位を消費してエネルギーグリッドを計算用の値にする。"""
+        to_canonical = self.grid.to_canonical
         try:
             return EnergyGrid(
-                e_min=self.grid.e_min, e_max=self.grid.e_max, de=self.grid.de
+                e_min=self.grid.e_min * to_canonical,
+                e_max=self.grid.e_max * to_canonical,
+                de=self.grid.de * to_canonical,
             )
         except InvalidInputError as exc:
             raise _at("grid", exc) from exc

@@ -14,7 +14,7 @@
 
 | 項目 | 値 |
 |---|---|
-| エネルギー | cm⁻¹（入力・内部・出力すべて） |
+| エネルギー | cm⁻¹（内部・出力）。入力は単位を書ける（下表）。読み込みの際に cm⁻¹ へ畳む |
 | τ | cm |
 | 温度 | K |
 | 結合の内部正準量 | S（Huang-Rhys 因子） |
@@ -24,6 +24,21 @@
 | E 軸 | E = 0 が ZPL。k 量子生成のサイドバンドは E = −k·ε（負側） |
 
 単位は結果クラスではなく `io`（ファイル形式）と `plotting`（軸ラベル）が持つ（ADR-0047）。
+
+入力で受け付けるエネルギー単位は `cm^-1` / `eV` / `hartree` / `THz` / `kJ/mol` /
+`kcal/mol`。波長（`nm`）は入れない（ADR-0054）。**単位の軸は項目ごとに独立**で、入力
+ファイル全体で 1 つではない（ADR-0053）。
+
+| 軸 | 何の単位か | 既定 |
+|---|---|---|
+| `frequency_unit` | `modes[].frequency` | `cm^-1` |
+| `coupling_unit` | `modes[].coupling`。無次元の流儀では指定してはならない | 流儀による |
+| `broadening.unit` | σ | `cm^-1` |
+| `grid.unit` | `e_min` / `e_max` / `de` | `cm^-1` |
+
+変換は入力ファイルの型（`inputs.py`）の中だけで起こる。`to_system()` / `to_broadening()`
+/ `to_grid()` が単位と流儀を消費し、計算用の値の型には常に正準形が渡る（ADR-0054）。
+描画の横軸は当面 `cm^-1` 固定で、この 4 つとは別の軸になる。
 
 ## 公開 API
 
@@ -91,6 +106,8 @@ FCEnvelopeInput.to_selection()   -> Selection
 
 - `FCEnvelopeInput` — 入力ファイル全体。構造・単位・流儀だけを検査する
 - `ModeSpec(frequency, coupling)` / `BroadeningSpec` / `EnergyGridSpec` / `SelectionSpec`
+- `BroadeningSpec` と `EnergyGridSpec` は `_EnergySpec` を継承し、自分の `unit` と
+  `.to_canonical`（cm⁻¹ への換算係数）を持つ
 
 範囲の検査は値の型に任せ、値の型が送出したエラーにフィールドの位置（`modes[1]`、`grid` など）
 を添える（ADR-0045, 0051）。
@@ -98,12 +115,22 @@ FCEnvelopeInput.to_selection()   -> Selection
 ### 単位と流儀（`units.py`）
 
 - `CouplingConvention(name, energy_power, converter)` — 流儀。`.to_huang_rhys(coupling,
-  frequency)` / `.is_dimensionless` / `.check_coupling_unit(unit)`（ADR-0033）
-- `G` / `HUANG_RHYS` と `COUPLING_CONVENTIONS`（名前 → 流儀）
-- `check_frequency_unit(unit)` / `CANONICAL_FREQUENCY_UNIT`
+  frequency)` / `.is_dimensionless` / `.check_coupling_unit(unit)` /
+  `.coupling_to_canonical(unit)`（ADR-0033）
+- `G` / `DELTA` / `HUANG_RHYS` / `LAMBDA` と `COUPLING_CONVENTIONS`（名前 → 流儀）
+- `ENERGY_UNITS`（名前 → cm⁻¹ への換算係数）/ `energy_conversion_factor(unit)` /
+  `CANONICAL_ENERGY_UNIT`
 
-`energy_power` は coupling の次元をエネルギーのべきで表したもの。無次元の流儀は `None`。
-V（1.5）と λ（1.0）は**まだ登録していない**が、型はこれらを表現できる。
+換算係数は `scipy.constants` から導出し、自前の数値定数表は持たない。単位の追加は表への
+1 行で済む（ADR-0054）。
+
+`energy_power` は coupling の次元をエネルギーのべきで表したもの。無次元の流儀は `None`、
+λ は `1.0`。**V は登録していない**——相手プログラムが V をどの単位で出すかが未調査で、
+次元が単一のべき指数で表せるかどうかもそこで決まる（ADR-0055）。
+
+coupling と frequency の単位が揃うことは前提にできないので、両者はそれぞれの単位から
+別々に正準単位へ直してから変換式に入る。coupling には換算係数を `energy_power` 乗した
+ものが掛かる（ADR-0053）。
 
 ### 結果（`result.py`、frozen dataclass）
 
@@ -134,8 +161,8 @@ V（1.5）と λ（1.0）は**まだ登録していない**が、型はこれら
     { "frequency":  450.0, "coupling": 0.8 }
   ],
   "temperature": 300.0,
-  "broadening": { "sigma": 150.0 },
-  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 },
+  "broadening": { "sigma": 150.0, "unit": "cm^-1" },
+  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0, "unit": "cm^-1" },
   "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
 }
 ```
@@ -143,15 +170,22 @@ V（1.5）と λ（1.0）は**まだ登録していない**が、型はこれら
 | フィールド | 型 | 制約 | 意味 |
 |---|---|---|---|
 | `schema_version` | int | `2` 固定 | 不一致は `SchemaVersionError`。1 の互換層は置かない（ADR-0040） |
-| `frequency_unit` | str | `"cm^-1"` 固定 | 他は `UnsupportedUnitError` |
-| `coupling_convention` | str | `"g"` \| `"huang_rhys"` | 既定 `"g"` |
-| `modes[].frequency` | float | > 0 | ε_α [cm⁻¹] |
-| `modes[].coupling` | float | 流儀による | 流儀に従った値 |
+| `frequency_unit` | str | `ENERGY_UNITS` のいずれか | `modes[].frequency` の単位。既定 `"cm^-1"` |
+| `coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` | 既定 `"g"` |
+| `coupling_unit` | str \| null | `ENERGY_UNITS` のいずれか | `modes[].coupling` の単位。無次元の流儀では書いてはならず、有次元の流儀では要る |
+| `modes[].frequency` | float | > 0（正準化後） | ε_α。単位は `frequency_unit` |
+| `modes[].coupling` | float | 流儀による | 流儀に従った値。単位は `coupling_unit` |
 | `temperature` | float | ≥ 0 | T [K]。0 は許可（n_α = 0） |
-| `broadening.sigma` | float | > 0 | σ [cm⁻¹] |
-| `grid.e_min` / `e_max` | float | `e_min` < `e_max` | 出力窓 [cm⁻¹] |
-| `grid.de` | float | > 0 | 出力グリッド間隔 [cm⁻¹] |
+| `broadening.sigma` | float | > 0 | σ。単位は `broadening.unit` |
+| `broadening.unit` | str | `ENERGY_UNITS` のいずれか | 既定 `"cm^-1"` |
+| `grid.e_min` / `e_max` | float | `e_min` < `e_max` | 出力窓。単位は `grid.unit` |
+| `grid.de` | float | > 0 | 出力グリッド間隔。単位は `grid.unit` |
+| `grid.unit` | str | `ENERGY_UNITS` のいずれか | 既定 `"cm^-1"` |
 | `selection` | object | 省略可 | 省略時は `Selection` の既定値 |
+
+単位フィールドは 4 つとも省略でき、省略時はすべて `cm^-1` である。単位を書いていない
+入力ファイルは従来どおりの意味で読まれるので、`schema_version` は 2 に据え置く
+（ADR-0053）。単位の実例は `docs/readme/examples/` にある（ADR-0056）。
 
 `modes` は最低 1 要素。配列の代わりに `{"path": "<file>.csv"}` を置くと外部 CSV を参照する
 （相対パスは入力 JSON のディレクトリ基準）。CSV は RFC 4180 準拠で、列は `frequency` /
@@ -250,7 +284,8 @@ fcenvelope --version
 
 上書きできるのは `temperature` / `broadening` / `grid` / `selection` で、`modes` は上書き
 しない（ADR-0012, 0035）。上書きの値は**入力ファイルと同じ単位・流儀で読み**、入力ファイルの
-型に適用してから正準化する（ADR-0050）。上書き系オプションの既定値はすべて「上書きしない」
+型に適用してから正準化する（ADR-0050）。`--sigma` はファイルの `broadening.unit` で、
+`--e-min` / `--e-max` / `--de` はファイルの `grid.unit` で読む。上書き系オプションの既定値はすべて「上書きしない」
 という意味の `None` で、つまみの既定値は `Selection` の 1 箇所にしかない。
 
 `plot` は `kind` を見てエンベロープと棒スペクトルのどちらかを描く。ファイルを 2 つ
@@ -361,7 +396,7 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 | `physics.py` | `K_B_CM`、占有数 n_α、梯子 P(n)。配列と数値だけを扱う | — |
 | `logs.py` | 節目のログの出力先（ADR-0052） | errors |
 | `models.py` | 計算用の値の型 | errors, physics |
-| `units.py` | 流儀オブジェクト、単位の検証と変換 | errors |
+| `units.py` | 流儀オブジェクト、エネルギー単位の換算表 | errors |
 | `inputs.py` | 入力ファイルの型（pydantic）と正準化 | errors, logs, units, models |
 | `result.py` | 結果クラス、`Provenance` | models |
 | `envelope.py` | グリッド構成・FFT | errors, logs, models, result |
@@ -394,7 +429,8 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 | 将来の機能 | 入る場所 | 参照 |
 |---|---|---|
 | ローレンツ型・Voigt 型の線形状 | `Broadening`。線形状の知識はここに閉じており、`envelope.py` と `plotting.py` は種類を知らない | ADR-0034、提案 ADR-0038 / 0039 |
-| 流儀 V・λ、および単位変換 | `units.py` の `CouplingConvention`。`energy_power` が結合の次元を表すので、無次元でない流儀も登録できる | ADR-0033、`docs/theory/vcc.md` |
+| 流儀 V | `units.py` の `COUPLING_CONVENTIONS`。相手プログラムが V をどの単位で出すかが判明した時点で、`energy_power` を据え置けるか流儀の単位の表し方そのものを見直すかを決める | ADR-0055、`docs/theory/vcc.md` |
+| 描画の横軸の単位 | `plotting.py`。当面 `cm^-1` 固定。指定場所（CLI オプションか入力ファイルか）も未決 | ADR-0053 |
 | 入力フォーマットの見直し | `inputs.py`。入力ファイルの型と計算用の値の型が分かれており、計算側に触れずに変えられる | ADR-0045 |
 | 非対角な基底からの入力（対角化） | 別命令 `fcenvelope diagonalize` として足し、出力のモード CSV を `{"path": ...}` で読む。正準化の行き先は `VibrationalSystem` 1 つ | 提案 ADR-0037、ADR-0044 |
 | 結果の種類の追加 | 関心ごとの表（`RESULT_KINDS` / `DRAWERS` / `REPORTERS`）に行を足す | ADR-0049 |
