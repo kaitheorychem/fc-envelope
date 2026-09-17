@@ -38,15 +38,31 @@ def analytic_element(g: float, m: int, n: int) -> float:
     )
 
 
+#: 漸化式と解析形の一致を見る相対許容誤差（`docs/adr/0042-tolerance-relative-to-the-largest-element.md`）。
+#: 12 ステップぶんの漸化で桁落ちが積もり、S = 6 では ~1e-11 の相対誤差が残る。1e-9 は
+#: そこに 2 桁の余裕を置いた値で、本物の退行なら桁で外れる。
+#:
+#: これは ADR-0024 が記録した漸化式の**破綻ではない**。破綻は S = 25・n = 29 から始まり、
+#: そこでの列和のずれは -0.26 と桁違いに大きい（`test_large_coupling_and_high_n_breaks_
+#: the_recurrence_upwards`）。ここで見ているのは打ち消しによる通常の丸め誤差である。
+RECURRENCE_VS_ANALYTIC_RTOL = 1e-9
+
+
 @pytest.mark.parametrize("huang_rhys", HUANG_RHYS)
 def test_recurrence_matches_the_closed_form(huang_rhys):
-    """漸化式で組んだ行列要素が解析形と一致する。"""
+    """漸化式で組んだ行列要素が解析形と一致する。
+
+    判定は最大値で正規化した相対誤差にする（ADR-0042）。要素ごとの相対誤差は使えない
+    ——行列の要素の大半がほぼ 0 で 0/0 になるため。絶対許容誤差も使えない——比べている
+    のが両方とも打ち消しを含む近似計算なので、S を広げるたびに同じ形で破綻する。
+    """
     g = math.sqrt(huang_rhys)
     elements = displacement_matrix(g, 25, 12)
     expected = np.array(
         [[analytic_element(g, m, n) for n in range(13)] for m in range(26)]
     )
-    assert np.max(np.abs(elements - expected)) < 1e-11
+    largest = np.max(np.abs(expected))
+    assert np.max(np.abs(elements - expected)) / largest < RECURRENCE_VS_ANALYTIC_RTOL
 
 
 @pytest.mark.parametrize("huang_rhys", HUANG_RHYS)
