@@ -146,10 +146,10 @@ def _warn_on_mismatch(envelope: EnvelopeResult, lines: LinesResult) -> None:
             "the sticks do not decompose this envelope",
             stacklevel=3,
         )
-    elif envelope.conditions.temperature != lines.temperature:
+    elif envelope.temperature != lines.temperature:
         warnings.warn(
             f"temperature mismatch: the envelope is at "
-            f"{envelope.conditions.temperature:g} K but the line list is at "
+            f"{envelope.temperature:g} K but the line list is at "
             f"{lines.temperature:g} K; the sticks do not decompose this envelope",
             stacklevel=3,
         )
@@ -187,7 +187,7 @@ def plot_overlay(
 
     figure, ax = _resolve_axes(ax)
 
-    scale = magnify * _gaussian_peak(envelope.conditions.sigma)
+    scale = magnify * _gaussian_peak(envelope.broadening.sigma)
     if lines_label is not None and magnify != 1.0:
         lines_label = rf"{lines_label} ($\times${magnify:g})"
 

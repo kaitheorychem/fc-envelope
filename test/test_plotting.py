@@ -9,23 +9,27 @@ import pytest
 from conftest import compute_quietly, lines_quietly
 
 from fcenvelope import (
-    Conditions,
+    Broadening,
+    EnergyGrid,
     VibrationalMode,
+    VibrationalSystem,
+    plot_envelope,
     plot_lines,
     plot_overlay,
-    plot_envelope,
 )
 from fcenvelope.errors import InvalidInputError
 
-MODES = [VibrationalMode(frequency=1200.0, huang_rhys=0.5)]
+SYSTEM = VibrationalSystem([VibrationalMode(frequency=1200.0, huang_rhys=0.5)])
 
 
 @pytest.fixture
 def result():
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-8000.0, e_max=4000.0, de=5.0
+    return compute_quietly(
+        SYSTEM,
+        temperature=300.0,
+        broadening=Broadening(sigma=150.0),
+        grid=EnergyGrid(e_min=-8000.0, e_max=4000.0, de=5.0),
     )
-    return compute_quietly(MODES, conditions)
 
 
 def test_returns_a_figure_and_draws_the_spectrum(result):
@@ -74,7 +78,7 @@ def test_saving_is_left_to_the_caller(result, tmp_path):
 
 @pytest.fixture
 def lines_result():
-    return lines_quietly(MODES, temperature=300.0, min_weight=1e-4)
+    return lines_quietly(SYSTEM, temperature=300.0, min_weight=1e-4)
 
 
 def test_fc_lines_draws_one_stick_per_line(lines_result):
@@ -114,16 +118,17 @@ def test_fc_lines_title_is_applied(lines_result):
 # --- エンベロープと離散 FC 因子の重ね描き ---
 
 
-OVERLAY_CONDITIONS = Conditions(
-    temperature=0.0, sigma=80.0, e_min=-6000.0, e_max=2000.0, de=2.0
-)
+OVERLAY_BROADENING = Broadening(sigma=80.0)
+OVERLAY_GRID = EnergyGrid(e_min=-6000.0, e_max=2000.0, de=2.0)
 
 
 @pytest.fixture
 def overlay_pair():
-    """同じモード・同じ温度で求めたエンベロープと線リストの組。"""
-    envelope = compute_quietly(MODES, OVERLAY_CONDITIONS)
-    lines = lines_quietly(MODES, temperature=0.0, min_weight=1e-6)
+    """同じ系・同じ温度で求めたエンベロープと線リストの組。"""
+    envelope = compute_quietly(
+        SYSTEM, temperature=0.0, broadening=OVERLAY_BROADENING, grid=OVERLAY_GRID
+    )
+    lines = lines_quietly(SYSTEM, temperature=0.0, min_weight=1e-6)
     return envelope, lines
 
 
@@ -156,7 +161,7 @@ def test_overlay_scales_sticks_into_the_unit_of_the_envelope(overlay_pair):
         drawn = np.array(
             [(segment[0][0], segment[1][1]) for segment in collection.get_segments()]
         )
-        scale = 1.0 / (OVERLAY_CONDITIONS.sigma * np.sqrt(2.0 * np.pi))
+        scale = 1.0 / (OVERLAY_BROADENING.sigma * np.sqrt(2.0 * np.pi))
         expected = np.column_stack((lines.energies, lines.weights * scale))
         np.testing.assert_allclose(sorted(map(tuple, drawn)), sorted(map(tuple, expected)))
         # 底辺は 0 で、曲線と同じゼロ線から立ち上がる。
@@ -237,7 +242,7 @@ def test_overlay_accepts_an_existing_axes(overlay_pair):
 
 def test_overlay_warns_when_the_temperature_does_not_match(overlay_pair):
     envelope, _ = overlay_pair
-    hot = lines_quietly(MODES, temperature=300.0, min_weight=1e-4)
+    hot = lines_quietly(SYSTEM, temperature=300.0, min_weight=1e-4)
     with pytest.warns(UserWarning, match="temperature mismatch"):
         plt.close(plot_overlay(envelope, hot))
 
@@ -245,7 +250,8 @@ def test_overlay_warns_when_the_temperature_does_not_match(overlay_pair):
 def test_overlay_warns_when_the_modes_do_not_match(overlay_pair):
     envelope, _ = overlay_pair
     other = lines_quietly(
-        [VibrationalMode(frequency=800.0, huang_rhys=0.3)], temperature=0.0
+        VibrationalSystem([VibrationalMode(frequency=800.0, huang_rhys=0.3)]),
+        temperature=0.0,
     )
     with pytest.warns(UserWarning, match="different modes"):
         plt.close(plot_overlay(envelope, other))

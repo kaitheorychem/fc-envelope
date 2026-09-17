@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 import typer
 
@@ -15,9 +15,9 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
 
 from .envelope import compute_envelope
 from .errors import FCEnvelopeError
+from .inputs import FCEnvelopeInput
 from .io import ENVELOPE_KIND, LINES_KIND, load_any, save_envelope, save_lines
 from .lines import compute_fc_lines
-from .models import Conditions, FCEnvelopeInput
 from .result import EnvelopeResult, FCLine, LinesResult
 from .version import __version__
 
@@ -35,26 +35,23 @@ def _fail(exc: FCEnvelopeError) -> typer.Exit:
     return typer.Exit(1)
 
 
-def _override_conditions(
-    conditions: Conditions,
-    *,
-    temperature: float | None,
-    sigma: float | None,
-    e_min: float | None,
-    e_max: float | None,
-    de: float | None,
-) -> Conditions:
-    """CLI オプションで指定されたフィールドのみ差し替えて再検証する。"""
-    overrides = {
-        "temperature": temperature,
-        "sigma": sigma,
-        "e_min": e_min,
-        "e_max": e_max,
-        "de": de,
-    }
-    merged = conditions.model_dump()
-    merged.update({key: value for key, value in overrides.items() if value is not None})
-    return Conditions.from_obj(merged)
+def _override(
+    parsed: FCEnvelopeInput, *, temperature: float | None = None, **blocks: dict[str, Any]
+) -> FCEnvelopeInput:
+    """CLI の上書きを入力ファイルの型に適用し、同じ経路で検証し直す。
+
+    上書きの値は入力ファイルと同じ単位・流儀で読む。正準化の前に差し替えるので、
+    ファイルに書いてある値をそのまま CLI に移しても結果は変わらない（ADR-0050）。
+    指定のないオプションは `None`、すなわち「上書きしない」を意味する。
+    """
+    data = parsed.model_dump(mode="json")
+    if temperature is not None:
+        data["temperature"] = temperature
+    for name, values in blocks.items():
+        given = {key: value for key, value in values.items() if value is not None}
+        if given:
+            data[name] = {**data[name], **given}
+    return FCEnvelopeInput.from_obj(data)
 
 
 def _report(result: EnvelopeResult, output: Path) -> None:
@@ -73,7 +70,7 @@ def _report(result: EnvelopeResult, output: Path) -> None:
 def run(
     input_path: Annotated[
         Path,
-        typer.Argument(metavar="INPUT.json", help="Input JSON with modes (inline or a CSV reference) and conditions."),
+        typer.Argument(metavar="INPUT.json", help="Input JSON with modes (inline or a CSV reference) and the computation conditions."),
     ],
     output: Annotated[
         Path,
@@ -85,38 +82,40 @@ def run(
     ] = None,
     temperature: Annotated[
         Optional[float],
-        typer.Option("--temperature", help="Override conditions.temperature [K]."),
+        typer.Option("--temperature", help="Override temperature [K]."),
     ] = None,
     sigma: Annotated[
         Optional[float],
-        typer.Option("--sigma", help="Override conditions.sigma [cm^-1]."),
+        typer.Option("--sigma", help="Override broadening.sigma [cm^-1]."),
     ] = None,
     e_min: Annotated[
         Optional[float],
-        typer.Option("--e-min", help="Override conditions.e_min [cm^-1]."),
+        typer.Option("--e-min", help="Override grid.e_min [cm^-1]."),
     ] = None,
     e_max: Annotated[
         Optional[float],
-        typer.Option("--e-max", help="Override conditions.e_max [cm^-1]."),
+        typer.Option("--e-max", help="Override grid.e_max [cm^-1]."),
     ] = None,
     de: Annotated[
         Optional[float],
-        typer.Option("--de", help="Override conditions.de [cm^-1]."),
+        typer.Option("--de", help="Override grid.de [cm^-1]."),
     ] = None,
     dpi: Annotated[int, typer.Option("--dpi", help="Resolution of --plot.")] = 150,
 ) -> None:
     """Compute the Franck-Condon envelope and write it to a result JSON."""
     try:
-        parsed = FCEnvelopeInput.from_path(input_path)
-        conditions = _override_conditions(
-            parsed.conditions,
+        parsed = _override(
+            FCEnvelopeInput.from_path(input_path),
             temperature=temperature,
-            sigma=sigma,
-            e_min=e_min,
-            e_max=e_max,
-            de=de,
+            broadening={"sigma": sigma},
+            grid={"e_min": e_min, "e_max": e_max, "de": de},
         )
-        result = compute_envelope(parsed.to_modes(), conditions)
+        result = compute_envelope(
+            parsed.to_system(),
+            temperature=parsed.to_temperature(),
+            broadening=parsed.to_broadening(),
+            grid=parsed.to_grid(),
+        )
         save_envelope(result, output)
     except FCEnvelopeError as exc:
         raise _fail(exc) from exc
@@ -133,7 +132,7 @@ def lines(
         Path,
         typer.Argument(
             metavar="INPUT.json",
-            help="Input JSON with modes (inline or a CSV reference) and conditions.",
+            help="Input JSON with modes (inline or a CSV reference) and the computation conditions.",
         ),
     ],
     output: Annotated[
@@ -146,20 +145,19 @@ def lines(
     ] = None,
     temperature: Annotated[
         Optional[float],
-        typer.Option("--temperature", help="Override conditions.temperature [K]."),
+        typer.Option("--temperature", help="Override temperature [K]."),
     ] = None,
     min_weight: Annotated[
-        float,
-        typer.Option("--min-weight", help="Keep every line at or above this weight."),
-    ] = 1e-4,
+        Optional[float],
+        typer.Option("--min-weight", help="Override selection.min_weight."),
+    ] = None,
     max_lines: Annotated[
-        int, typer.Option("--max-lines", help="Upper bound on the number of lines kept.")
-    ] = 10000,
+        Optional[int],
+        typer.Option("--max-lines", help="Override selection.max_lines."),
+    ] = None,
     max_quanta: Annotated[
         Optional[int],
-        typer.Option(
-            "--max-quanta", help="Cap on vibrational quanta per mode (default: automatic)."
-        ),
+        typer.Option("--max-quanta", help="Override selection.max_quanta."),
     ] = None,
     show: Annotated[
         int, typer.Option("--show", help="Print this many of the strongest lines (0 disables).")
@@ -168,15 +166,19 @@ def lines(
 ) -> None:
     """List the discrete Franck-Condon factors with their transition energies."""
     try:
-        parsed = FCEnvelopeInput.from_path(input_path)
+        parsed = _override(
+            FCEnvelopeInput.from_path(input_path),
+            temperature=temperature,
+            selection={
+                "min_weight": min_weight,
+                "max_lines": max_lines,
+                "max_quanta": max_quanta,
+            },
+        )
         result = compute_fc_lines(
-            parsed.to_modes(),
-            temperature=(
-                parsed.conditions.temperature if temperature is None else temperature
-            ),
-            min_weight=min_weight,
-            max_lines=max_lines,
-            max_quanta=max_quanta,
+            parsed.to_system(),
+            temperature=parsed.to_temperature(),
+            selection=parsed.to_selection(),
         )
         save_lines(result, output)
     except FCEnvelopeError as exc:

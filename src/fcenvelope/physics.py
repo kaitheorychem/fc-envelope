@@ -11,18 +11,14 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 
 import numpy as np
 from scipy import constants
-
-from .models import VibrationalMode
 
 __all__ = [
     "K_B_CM",
     "boltzmann_populations",
     "occupation_numbers",
-    "reorganization_energy",
 ]
 
 #: ボルツマン定数 [cm^-1 / K]。scipy から導出し、値をハードコードしない。
@@ -54,8 +50,3 @@ def boltzmann_populations(frequency: float, temperature: float, n_max: int) -> n
     ratio = math.exp(-frequency / (K_B_CM * temperature))
     populations[:] = (1.0 - ratio) * ratio ** np.arange(n_max + 1)
     return populations
-
-
-def reorganization_energy(modes: Sequence[VibrationalMode]) -> float:
-    """再配列エネルギー lambda = sum_alpha S_alpha * eps_alpha [cm^-1]。"""
-    return float(sum(mode.huang_rhys * mode.frequency for mode in modes))

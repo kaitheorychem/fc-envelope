@@ -7,23 +7,24 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 from conftest import compute_quietly, moments
 
-from fcenvelope import Conditions, VibrationalMode
-from fcenvelope.physics import occupation_numbers
+from fcenvelope import Broadening, EnergyGrid, VibrationalSystem
 
 TEMPERATURES = [0.0, 77.0, 300.0]
 
+BROADENING = Broadening(sigma=150.0)
+GRID = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0)
 
-def expected_variance(modes: list[VibrationalMode], temperature: float, sigma: float) -> float:
-    occupations = occupation_numbers(
-        np.array([mode.frequency for mode in modes]), temperature
-    )
+
+def expected_variance(
+    system: VibrationalSystem, temperature: float, sigma: float
+) -> float:
+    occupations = system.occupations(temperature)
     vibrational = sum(
         mode.huang_rhys * mode.frequency**2 * (2.0 * n_alpha + 1.0)
-        for mode, n_alpha in zip(modes, occupations, strict=True)
+        for mode, n_alpha in zip(system.modes, occupations, strict=True)
     )
     return float(vibrational + sigma**2)
 
@@ -33,40 +34,38 @@ def temperature(request: pytest.FixtureRequest) -> float:
     return request.param
 
 
-def _conditions(temperature: float) -> Conditions:
-    return Conditions(
-        temperature=temperature, sigma=150.0, e_min=-12000.0, e_max=12000.0, de=2.0
+def _envelope(system: VibrationalSystem, temperature: float):
+    return compute_quietly(
+        system, temperature=temperature, broadening=BROADENING, grid=GRID
     )
 
 
 def test_normalization_over_full_grid(multi_mode, temperature):
     """全域グリッドでの面積は離散和として厳密に 1 になる。"""
-    result = compute_quietly(multi_mode, _conditions(temperature))
+    result = _envelope(multi_mode, temperature)
     assert result.diagnostics.total_area == pytest.approx(1.0, abs=1e-12)
 
 
 def test_zeroth_moment(multi_mode, temperature):
-    result = compute_quietly(multi_mode, _conditions(temperature))
+    result = _envelope(multi_mode, temperature)
     area, _, _ = moments(result)
     assert area == pytest.approx(1.0, abs=1e-9)
 
 
 def test_first_moment_is_minus_reorganization_energy(multi_mode, temperature):
     """<E> = -lambda。温度に依存しない。"""
-    result = compute_quietly(multi_mode, _conditions(temperature))
+    result = _envelope(multi_mode, temperature)
     _, mean, _ = moments(result)
-    expected = -sum(mode.huang_rhys * mode.frequency for mode in multi_mode)
+    expected = -multi_mode.reorganization_energy
     assert result.reorganization_energy == pytest.approx(-expected)
     assert mean == pytest.approx(expected, rel=1e-8)
 
 
 def test_second_moment_carries_the_temperature(multi_mode, temperature):
     """Var(E) にのみ温度が効く。"""
-    conditions = _conditions(temperature)
-    result = compute_quietly(multi_mode, conditions)
-    _, _, variance = moments(result)
+    _, _, variance = moments(_envelope(multi_mode, temperature))
     assert variance == pytest.approx(
-        expected_variance(multi_mode, temperature, conditions.sigma), rel=1e-8
+        expected_variance(multi_mode, temperature, BROADENING.sigma), rel=1e-8
     )
 
 
@@ -75,7 +74,7 @@ def test_first_moment_is_temperature_independent(multi_mode):
     means = []
     variances = []
     for temperature in TEMPERATURES:
-        _, mean, variance = moments(compute_quietly(multi_mode, _conditions(temperature)))
+        _, mean, variance = moments(_envelope(multi_mode, temperature))
         means.append(mean)
         variances.append(variance)
 
@@ -85,11 +84,9 @@ def test_first_moment_is_temperature_independent(multi_mode):
 
 
 def test_single_mode_moments(single_mode, temperature):
-    conditions = _conditions(temperature)
-    result = compute_quietly(single_mode, conditions)
-    area, mean, variance = moments(result)
+    area, mean, variance = moments(_envelope(single_mode, temperature))
     assert area == pytest.approx(1.0, abs=1e-9)
-    assert mean == pytest.approx(-single_mode[0].huang_rhys * single_mode[0].frequency, rel=1e-8)
+    assert mean == pytest.approx(-single_mode.reorganization_energy, rel=1e-8)
     assert variance == pytest.approx(
-        expected_variance(single_mode, temperature, conditions.sigma), rel=1e-8
+        expected_variance(single_mode, temperature, BROADENING.sigma), rel=1e-8
     )

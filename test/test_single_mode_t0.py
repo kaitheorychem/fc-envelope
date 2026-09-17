@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from conftest import compute_quietly
 
-from fcenvelope import Conditions, VibrationalMode
+from fcenvelope import Broadening, EnergyGrid, VibrationalMode, VibrationalSystem
 
 
 def poisson_series(
@@ -33,12 +33,16 @@ def poisson_series(
 def test_matches_poisson_series_at_zero_temperature(huang_rhys):
     frequency = 1200.0
     sigma = 120.0
-    conditions = Conditions(
-        temperature=0.0, sigma=sigma, e_min=-20000.0, e_max=6000.0, de=4.0
+    system = VibrationalSystem(
+        [VibrationalMode(frequency=frequency, huang_rhys=huang_rhys)]
     )
-    modes = [VibrationalMode(frequency=frequency, huang_rhys=huang_rhys)]
 
-    result = compute_quietly(modes, conditions)
+    result = compute_quietly(
+        system,
+        temperature=0.0,
+        broadening=Broadening(sigma=sigma),
+        grid=EnergyGrid(e_min=-20000.0, e_max=6000.0, de=4.0),
+    )
     expected = poisson_series(result.energy, huang_rhys, frequency, sigma)
 
     assert np.max(np.abs(result.density - expected)) < 1e-9 * np.max(expected)
@@ -47,17 +51,17 @@ def test_matches_poisson_series_at_zero_temperature(huang_rhys):
 def test_sidebands_sit_on_the_negative_side():
     """振動量子 k 個生成のサイドバンドは E = -k eps に立つ（符号規約 §3）。"""
     frequency = 1000.0
-    conditions = Conditions(
-        temperature=0.0, sigma=60.0, e_min=-8000.0, e_max=4000.0, de=2.0
+    grid = EnergyGrid(e_min=-8000.0, e_max=4000.0, de=2.0)
+    system = VibrationalSystem([VibrationalMode(frequency=frequency, huang_rhys=1.0)])
+    result = compute_quietly(
+        system, temperature=0.0, broadening=Broadening(sigma=60.0), grid=grid
     )
-    modes = [VibrationalMode(frequency=frequency, huang_rhys=1.0)]
-    result = compute_quietly(modes, conditions)
 
     for k in range(4):
         center = -k * frequency
         near = np.abs(result.energy - center) < frequency / 2.0
         peak_energy = result.energy[near][np.argmax(result.density[near])]
-        assert peak_energy == pytest.approx(center, abs=conditions.de)
+        assert peak_energy == pytest.approx(center, abs=grid.de)
 
     # S = 1 のとき 0-0 と 0-1 のピーク高さは等しく、それ以降は単調に落ちる。
     heights = [
@@ -71,10 +75,12 @@ def test_sidebands_sit_on_the_negative_side():
 def test_zero_coupling_gives_a_pure_gaussian():
     """S = 0 なら ZPL のガウシアンそのもの。"""
     sigma = 100.0
-    conditions = Conditions(
-        temperature=300.0, sigma=sigma, e_min=-2000.0, e_max=2000.0, de=1.0
+    result = compute_quietly(
+        VibrationalSystem([VibrationalMode(frequency=800.0, huang_rhys=0.0)]),
+        temperature=300.0,
+        broadening=Broadening(sigma=sigma),
+        grid=EnergyGrid(e_min=-2000.0, e_max=2000.0, de=1.0),
     )
-    result = compute_quietly([VibrationalMode(frequency=800.0, huang_rhys=0.0)], conditions)
 
     expected = np.exp(-0.5 * (result.energy / sigma) ** 2) / (sigma * math.sqrt(2.0 * math.pi))
     assert np.max(np.abs(result.density - expected)) < 1e-12
@@ -84,14 +90,14 @@ def test_zero_coupling_gives_a_pure_gaussian():
 def test_hot_band_appears_on_the_positive_side():
     """有限温度では n 項により E > 0 側にもホットバンドが立ち、左右非対称になる。"""
     frequency = 300.0
-    conditions_cold = Conditions(
-        temperature=0.0, sigma=40.0, e_min=-4000.0, e_max=2000.0, de=2.0
-    )
-    conditions_hot = conditions_cold.model_copy(update={"temperature": 600.0})
-    modes = [VibrationalMode(frequency=frequency, huang_rhys=0.5)]
+    shared = {
+        "broadening": Broadening(sigma=40.0),
+        "grid": EnergyGrid(e_min=-4000.0, e_max=2000.0, de=2.0),
+    }
+    system = VibrationalSystem([VibrationalMode(frequency=frequency, huang_rhys=0.5)])
 
-    cold = compute_quietly(modes, conditions_cold)
-    hot = compute_quietly(modes, conditions_hot)
+    cold = compute_quietly(system, temperature=0.0, **shared)
+    hot = compute_quietly(system, temperature=600.0, **shared)
 
     window = np.abs(cold.energy - frequency) < frequency / 2.0
     assert np.max(hot.density[window]) > 100.0 * np.max(cold.density[window])

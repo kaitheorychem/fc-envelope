@@ -16,14 +16,12 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Sequence
 from datetime import datetime, timezone
 
 import numpy as np
 
 from .errors import NumericalQualityWarning
-from .models import Conditions, VibrationalMode
-from .physics import occupation_numbers, reorganization_energy
+from .models import Broadening, EnergyGrid, VibrationalSystem, validate_temperature
 from .result import Diagnostics, EnvelopeResult
 from .version import __version__
 
@@ -47,14 +45,14 @@ def _next_pow2(value: int) -> int:
     return 1 << (value - 1).bit_length()
 
 
-def build_grids(conditions: Conditions) -> tuple[np.ndarray, np.ndarray, int, float]:
+def build_grids(grid: EnergyGrid) -> tuple[np.ndarray, np.ndarray, int, float]:
     """FFT 標準順序の (energy, tau) グリッドと (N, d_tau) を構成する。
 
     0 対称な全域 E グリッド上で計算し、最後に窓へ切り出す。この取り方により
     出力の dE は指定した `de` ちょうどになり、E = 0 が必ずグリッド点に乗る。
     """
-    de = conditions.de
-    e_half = max(abs(conditions.e_min), abs(conditions.e_max))
+    de = grid.de
+    e_half = max(abs(grid.e_min), abs(grid.e_max))
     n_fft = _next_pow2(math.ceil(2.0 * e_half / de))
     d_tau = 2.0 * math.pi / (n_fft * de)
 
@@ -65,18 +63,17 @@ def build_grids(conditions: Conditions) -> tuple[np.ndarray, np.ndarray, int, fl
 
 def _log_rho(
     tau: np.ndarray,
-    modes: Sequence[VibrationalMode],
+    system: VibrationalSystem,
     temperature: float,
 ) -> np.ndarray:
     """ln rho(tau) をモードについてループ加算で構成する。
 
     全モード x 全 tau の外積は作らない（N = 2^17・200 モードで数百 MB になる）。
     """
-    frequencies = np.array([mode.frequency for mode in modes], dtype=float)
-    occupations = occupation_numbers(frequencies, temperature)
+    occupations = system.occupations(temperature)
 
     log_rho = np.zeros(tau.shape, dtype=np.complex128)
-    for mode, n_alpha in zip(modes, occupations, strict=True):
+    for mode, n_alpha in zip(system.modes, occupations, strict=True):
         s_alpha = mode.huang_rhys
         if s_alpha == 0.0:
             continue
@@ -90,27 +87,32 @@ def _log_rho(
 
 
 def compute_envelope(
-    modes: Sequence[VibrationalMode],
-    conditions: Conditions,
+    system: VibrationalSystem,
+    *,
+    temperature: float,
+    broadening: Broadening,
+    grid: EnergyGrid,
 ) -> EnvelopeResult:
     """Franck-Condon エンベロープ F(E) を計算する。
 
     Args:
-        modes: 正準表現の振動モード列（frequency [cm^-1], huang_rhys）。
-        conditions: 温度・広がり・出力 E グリッドの指定。
+        system: 正準形の振動モードの集まり。
+        temperature: T [K]。始状態の熱占有に効く。
+        broadening: 線形状。現在はガウス幅 sigma だけ。
+        grid: エンベロープを標本する E 軸上の点列。
 
     Returns:
         窓へ切り出した F(E) と、入力エコー・診断値・来歴を含む結果クラス。
     """
-    modes = tuple(modes)
-    energy_full, tau, n_fft, d_tau = build_grids(conditions)
+    validate_temperature(temperature)
+    energy_full, tau, n_fft, d_tau = build_grids(grid)
 
-    log_rho = _log_rho(tau, modes, conditions.temperature)
-    damping = -0.5 * conditions.sigma**2 * tau**2
+    log_rho = _log_rho(tau, system, temperature)
+    damping = -0.5 * broadening.sigma**2 * tau**2
     m_tau = np.exp(log_rho + damping)
 
     # F(E_j) = (1 / dE) * ifft(M)_j （tau・E ともに FFT 標準順序のため位相因子は不要）
-    spectrum_full = np.fft.ifft(m_tau) / conditions.de
+    spectrum_full = np.fft.ifft(m_tau) / grid.de
 
     real_full = spectrum_full.real
     peak = float(np.max(np.abs(real_full)))
@@ -120,21 +122,21 @@ def compute_envelope(
     energy_full = np.fft.fftshift(energy_full)
     real_full = np.ascontiguousarray(np.fft.fftshift(real_full))
 
-    total_area = float(np.sum(real_full) * conditions.de)
+    total_area = float(np.sum(real_full) * grid.de)
     edge_intensity = max(abs(float(real_full[0])), abs(float(real_full[-1])))
     edge_intensity_ratio = edge_intensity / peak if peak > 0.0 else 0.0
 
     # 端点は de の整数倍にスナップされる。丸め誤差でグリッド点を落とさないよう緩衝を置く。
-    tol = 1e-9 * conditions.de
-    window = (energy_full >= conditions.e_min - tol) & (energy_full <= conditions.e_max + tol)
+    tol = 1e-9 * grid.de
+    window = (energy_full >= grid.e_min - tol) & (energy_full <= grid.e_max + tol)
     energy = np.ascontiguousarray(energy_full[window])
     density = np.ascontiguousarray(real_full[window])
 
-    window_area = float(np.sum(density) * conditions.de)
+    window_area = float(np.sum(density) * grid.de)
     window_captured_fraction = window_area / total_area if total_area != 0.0 else 0.0
 
-    tau_max = math.pi / conditions.de
-    sigma_tau_max = conditions.sigma * tau_max
+    tau_max = math.pi / grid.de
+    sigma_tau_max = broadening.sigma * tau_max
 
     messages = _quality_messages(
         sigma_tau_max=sigma_tau_max,
@@ -161,9 +163,11 @@ def compute_envelope(
     return EnvelopeResult(
         energy=energy,
         density=density,
-        modes=modes,
-        conditions=conditions,
-        reorganization_energy=reorganization_energy(modes),
+        modes=system.modes,
+        temperature=temperature,
+        broadening=broadening,
+        grid=grid,
+        reorganization_energy=system.reorganization_energy,
         diagnostics=diagnostics,
         fcenvelope_version=__version__,
         created_at=datetime.now(timezone.utc).replace(microsecond=0),

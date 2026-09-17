@@ -8,7 +8,7 @@ import json
 import pytest
 
 from fcenvelope import FCEnvelopeInput, InvalidInputError, ModeSpec, VibrationalMode
-from fcenvelope.models import read_mode_specs_csv
+from fcenvelope.inputs import read_mode_specs_csv
 
 
 def _write(path, text: str):
@@ -87,9 +87,6 @@ def test_first_line_that_is_neither_header_nor_mode(tmp_path, text):
     [
         ("frequency,coupling\n1200.0,0.5\n450.0\n", "modes.csv:3: expected 2 fields, got 1"),
         ("frequency,coupling\n1200.0,0.5\nabc,0.8\n", "modes.csv:3"),
-        ("frequency,coupling\n1200.0,-0.5\n", "modes.csv:2"),
-        ("frequency,coupling\n0.0,0.5\n", "modes.csv:2"),
-        ("1200.0,0.5\n-450.0,0.8\n", "modes.csv:2"),
         ("1200.0,0.5\n1,2,3\n", "modes.csv:2: expected 2 fields, got 3"),
         ("frequency,coupling\n# comment\n1200.0,0.5\n", "modes.csv:2: expected 2 fields, got 1"),
         ("frequency,coupling\n\n1200.0,0.5\n", "blank lines are not allowed"),
@@ -125,7 +122,9 @@ def test_input_json_references_csv_relative_to_itself(tmp_path, input_payload, m
     from_csv = FCEnvelopeInput.from_path(input_path)
     inline = FCEnvelopeInput.from_obj(input_payload)
     assert from_csv == inline
-    assert from_csv.to_modes()[0] == VibrationalMode(frequency=1200.0, huang_rhys=0.25)
+    assert from_csv.to_system().modes[0] == VibrationalMode(
+        frequency=1200.0, huang_rhys=0.25
+    )
 
 
 def test_from_obj_resolves_against_base_dir(tmp_path, input_payload):
@@ -157,8 +156,24 @@ def test_malformed_reference(tmp_path, input_payload, reference):
 
 
 def test_errors_inside_referenced_csv_are_input_errors(tmp_path, input_payload):
-    _write(tmp_path / "modes.csv", "frequency,coupling\n1200.0,-0.5\n")
+    """CSV の構造の誤りは、読んだ時点で行番号つきで報告される。"""
+    _write(tmp_path / "modes.csv", "frequency,coupling\n1200.0,abc\n")
     payload = copy.deepcopy(input_payload)
     payload["modes"] = {"path": "modes.csv"}
     with pytest.raises(InvalidInputError, match="modes.csv:2"):
         FCEnvelopeInput.from_obj(payload, base_dir=tmp_path)
+
+
+def test_out_of_range_values_in_csv_are_reported_by_mode_index(tmp_path, input_payload):
+    """値の範囲は正準化のときに値の型が見るので、位置はモードの番号になる。
+
+    CSV の行番号は構造の誤りにしか付かない。範囲の検査は流儀と単位を消費した
+    後でなければできず、その時点では行の出どころが配列かファイルかを区別しない
+    （ADR-0051）。
+    """
+    _write(tmp_path / "modes.csv", "frequency,coupling\n1200.0,0.5\n0.0,0.8\n")
+    payload = copy.deepcopy(input_payload)
+    payload["modes"] = {"path": "modes.csv"}
+    parsed = FCEnvelopeInput.from_obj(payload, base_dir=tmp_path)
+    with pytest.raises(InvalidInputError, match=r"modes\[1\]"):
+        parsed.to_system()

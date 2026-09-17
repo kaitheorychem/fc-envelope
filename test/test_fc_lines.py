@@ -15,10 +15,13 @@ import pytest
 from conftest import lines_quietly
 
 from fcenvelope import (
-    Conditions,
+    Broadening,
+    EnergyGrid,
     InvalidInputError,
     NumericalQualityWarning,
+    Selection,
     VibrationalMode,
+    VibrationalSystem,
     compute_fc_lines,
 )
 
@@ -42,7 +45,7 @@ def temperature(request: pytest.FixtureRequest) -> float:
 
 def test_single_mode_at_zero_temperature_is_the_poisson_series(single_mode):
     """T = 0・単一モードでは FC = exp(-S) S^k / k! が E = -k eps に並ぶ。"""
-    mode = single_mode[0]
+    mode = single_mode.modes[0]
     result = lines_quietly(single_mode, temperature=0.0, min_weight=1e-12)
 
     for line in result.lines:
@@ -67,7 +70,7 @@ def test_zero_phonon_line_comes_first_and_sits_at_zero(multi_mode, temperature):
     assert len(zero_phonon) == 1
     assert zero_phonon[0].energy == 0.0
     assert zero_phonon[0].fc_factor == pytest.approx(
-        math.exp(-sum(mode.huang_rhys for mode in multi_mode))
+        math.exp(-sum(mode.huang_rhys for mode in multi_mode.modes))
     )
 
 
@@ -75,7 +78,7 @@ def test_lines_are_sorted_by_weight(multi_mode, temperature):
     result = lines_quietly(multi_mode, temperature=temperature, min_weight=1e-6)
     weights = result.weights
     assert np.all(np.diff(weights) <= 0.0)
-    assert np.all(weights >= result.min_weight)
+    assert np.all(weights >= result.selection.min_weight)
 
 
 def test_broadened_lines_reproduce_the_envelope(multi_mode, temperature):
@@ -83,10 +86,12 @@ def test_broadened_lines_reproduce_the_envelope(multi_mode, temperature):
     from conftest import compute_quietly
 
     sigma = 150.0
-    conditions = Conditions(
-        temperature=temperature, sigma=sigma, e_min=-12000.0, e_max=12000.0, de=4.0
+    envelope = compute_quietly(
+        multi_mode,
+        temperature=temperature,
+        broadening=Broadening(sigma=sigma),
+        grid=EnergyGrid(e_min=-12000.0, e_max=12000.0, de=4.0),
     )
-    envelope = compute_quietly(multi_mode, conditions)
     result = lines_quietly(
         multi_mode, temperature=temperature, min_weight=1e-7, max_lines=200000
     )
@@ -114,7 +119,7 @@ def test_mean_energy_approaches_minus_reorganization_energy(multi_mode, temperat
     result = lines_quietly(
         multi_mode, temperature=temperature, min_weight=1e-7, max_lines=200000
     )
-    expected = -sum(mode.huang_rhys * mode.frequency for mode in multi_mode)
+    expected = -multi_mode.reorganization_energy
     assert result.reorganization_energy == pytest.approx(-expected)
     assert result.diagnostics.mean_energy == pytest.approx(expected, rel=1e-3)
 
@@ -137,12 +142,15 @@ def test_threshold_is_exhaustive(multi_mode):
 
 def test_sidebands_are_negative_and_hot_bands_positive(single_mode):
     """符号規約 §3: 量子生成は負側、ホットバンドは正側。"""
-    mode = single_mode[0]
+    mode = single_mode.modes[0]
     cold = lines_quietly(single_mode, temperature=0.0, min_weight=1e-8)
     assert all(line.energy <= 0.0 for line in cold.lines)
 
-    hot = lines_quietly([VibrationalMode(frequency=200.0, huang_rhys=0.5)],
-                        temperature=600.0, min_weight=1e-4)
+    hot = lines_quietly(
+        VibrationalSystem([VibrationalMode(frequency=200.0, huang_rhys=0.5)]),
+        temperature=600.0,
+        min_weight=1e-4,
+    )
     positive = [line for line in hot.lines if line.energy > 0.0]
     assert positive
     for line in positive:
@@ -161,7 +169,8 @@ def test_zero_coupling_puts_every_line_at_the_zero_phonon_energy():
     強度の総和は 1 になる。エネルギーが縮退した遷移はまとめずに別の線として残す。
     """
     result = lines_quietly(
-        [VibrationalMode(frequency=800.0, huang_rhys=0.0)], temperature=300.0
+        VibrationalSystem([VibrationalMode(frequency=800.0, huang_rhys=0.0)]),
+        temperature=300.0,
     )
     assert all(line.energy == 0.0 for line in result.lines)
     assert all(line.fc_factor == pytest.approx(1.0) for line in result.lines)
@@ -184,7 +193,9 @@ def test_temperature_zero_keeps_the_initial_state_in_the_ground_state(multi_mode
 def test_max_lines_truncates_and_warns(multi_mode):
     with pytest.warns(NumericalQualityWarning, match="max_lines"):
         result = compute_fc_lines(
-            multi_mode, temperature=300.0, min_weight=1e-8, max_lines=50
+            multi_mode,
+            temperature=300.0,
+            selection=Selection(min_weight=1e-8, max_lines=50),
         )
     assert result.diagnostics.n_lines == 50
     assert result.diagnostics.beam_truncated is True
@@ -193,53 +204,66 @@ def test_max_lines_truncates_and_warns(multi_mode):
 def test_low_coverage_warns(multi_mode):
     """線は拾えているが強度の大半を取りこぼしている場合。"""
     with pytest.warns(NumericalQualityWarning, match="captured_weight"):
-        result = compute_fc_lines(multi_mode, temperature=300.0, min_weight=0.02)
+        result = compute_fc_lines(
+            multi_mode, temperature=300.0, selection=Selection(min_weight=0.02)
+        )
     assert result.diagnostics.n_lines > 0
     assert result.diagnostics.captured_weight < 0.9
 
 
 def test_no_line_above_the_threshold_reports_the_strongest(multi_mode):
     with pytest.warns(NumericalQualityWarning, match="strongest possible line"):
-        result = compute_fc_lines(multi_mode, temperature=300.0, min_weight=1.0)
+        result = compute_fc_lines(
+            multi_mode, temperature=300.0, selection=Selection(min_weight=1.0)
+        )
     assert result.lines == ()
     assert result.diagnostics.captured_weight == 0.0
 
 
 def test_max_quanta_caps_the_ladder_and_warns(single_mode):
     with pytest.warns(NumericalQualityWarning, match="min_mode_completeness"):
-        result = compute_fc_lines(single_mode, temperature=0.0, max_quanta=1)
+        result = compute_fc_lines(
+            single_mode, temperature=0.0, selection=Selection(max_quanta=1)
+        )
     assert result.diagnostics.max_final_quanta == 1
     assert result.diagnostics.min_mode_completeness < 1.0
 
 
 def test_recurrence_limited_initial_state_warns():
     """g も n も大きい領域では漸化式の破綻を避けて n を打ち切る。"""
-    modes = [VibrationalMode(frequency=40.0, huang_rhys=25.0)]
+    system = VibrationalSystem([VibrationalMode(frequency=40.0, huang_rhys=25.0)])
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        result = compute_fc_lines(modes, temperature=300.0, min_weight=1e-4)
+        result = compute_fc_lines(
+            system, temperature=300.0, selection=Selection(min_weight=1e-4)
+        )
     assert result.diagnostics.recurrence_limited is True
     assert any("recurrence" in str(entry.message) for entry in caught)
+
+
+def test_negative_temperature_is_rejected(single_mode):
+    with pytest.raises(InvalidInputError):
+        compute_fc_lines(single_mode, temperature=-1.0)
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"temperature": -1.0},
-        {"temperature": 0.0, "min_weight": 0.0},
-        {"temperature": 0.0, "min_weight": 2.0},
-        {"temperature": 0.0, "max_lines": 0},
-        {"temperature": 0.0, "max_quanta": -1},
+        {"min_weight": 0.0},
+        {"min_weight": 2.0},
+        {"max_lines": 0},
+        {"max_quanta": -1},
     ],
 )
-def test_invalid_arguments(single_mode, kwargs):
+def test_selection_rejects_invalid_knobs(kwargs):
+    """つまみの不変条件は `Selection` 自身が守る（ADR-0051）。"""
     with pytest.raises(InvalidInputError):
-        compute_fc_lines(single_mode, **kwargs)
+        Selection(**kwargs)
 
 
-def test_empty_modes_are_rejected():
+def test_empty_system_is_rejected():
     with pytest.raises(InvalidInputError):
-        compute_fc_lines([], temperature=0.0)
+        VibrationalSystem([])
 
 
 def test_arrays_follow_the_line_order(multi_mode):

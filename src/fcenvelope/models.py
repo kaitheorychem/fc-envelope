@@ -1,259 +1,183 @@
-"""入力の pydantic モデル、振電相互作用の流儀レジストリ、単位検証。
+"""計算用の値の型。常に正準形で、pydantic に依存しない。
 
-入力ファイルのトップレベルにある `frequency_unit` / `coupling_convention` は
-パース時に消費され、`FCEnvelopeInput.to_modes()` を通った後の内部表現は常に
-(frequency [cm^-1], huang_rhys) に正準化されている。以降のコードは流儀も
-単位も知らない。
+入力ファイルの形（単位・流儀・構造）は `inputs.py` が扱う。このモジュールの型は
+その先にあり、振動数は常に cm^-1、結合は常に Huang-Rhys 因子 S である
+（`docs/adr/0045-separate-input-file-types-from-computation-values.md`）。
 
-`modes` はモードの配列を直接書くか、`{"path": "modes.csv"}` で CSV のモード表を
-参照する。参照はパース時に解決され、パース後は配列で書いた場合と区別がない。
+どの型も `__post_init__` で自分の不変条件を検証し、違反は `InvalidInputError` に
+する。入口が入力ファイルでもライブラリの直接呼び出しでも同じように守られる
+（`docs/adr/0051-value-types-validate-their-own-invariants.md`）。
 """
 
 from __future__ import annotations
 
-import csv
-import io
-import json
-from collections.abc import Callable
-from enum import Enum
-from pathlib import Path
-from typing import Any, Literal
+from collections.abc import Sequence
+from dataclasses import dataclass
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ValidationError,
-    ValidationInfo,
-    field_validator,
-    model_validator,
-)
+import numpy as np
 
-from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
+from .errors import InvalidInputError
+from .physics import occupation_numbers
 
 __all__ = [
-    "CANONICAL_FREQUENCY_UNIT",
-    "MODES_CSV_COLUMNS",
-    "SCHEMA_VERSION",
-    "CouplingConvention",
-    "Conditions",
-    "FCEnvelopeInput",
-    "ModeSpec",
+    "Broadening",
+    "EnergyGrid",
+    "Selection",
     "VibrationalMode",
-    "read_mode_specs_csv",
-    "to_huang_rhys",
+    "VibrationalSystem",
+    "validate_temperature",
 ]
 
-SCHEMA_VERSION = 1
-CANONICAL_FREQUENCY_UNIT = "cm^-1"
 
+def validate_temperature(temperature: float) -> float:
+    """T [K] の不変条件 T >= 0 を検証して返す。
 
-class CouplingConvention(str, Enum):
-    """入力ファイルが用いる振電相互作用パラメータの流儀。"""
-
-    G = "g"
-    HUANG_RHYS = "huang_rhys"
-
-
-#: 流儀 -> Huang-Rhys 因子 S への変換関数。
-#: 流儀の追加は 1 エントリの追加で済む。
-COUPLING_REGISTRY: dict[CouplingConvention, Callable[[float], float]] = {
-    CouplingConvention.G: lambda g: g * g,
-    CouplingConvention.HUANG_RHYS: lambda s: s,
-}
-
-
-def to_huang_rhys(value: float, convention: CouplingConvention) -> float:
-    """流儀に従った coupling 値を Huang-Rhys 因子 S に変換する。"""
-    return COUPLING_REGISTRY[convention](value)
-
-
-class VibrationalMode(BaseModel):
-    """正準表現の振動モード。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    frequency: float = Field(gt=0.0, description="epsilon_alpha [cm^-1]")
-    huang_rhys: float = Field(ge=0.0, description="S_alpha (無次元)")
-
-
-class Conditions(BaseModel):
-    """計算条件。正準表現とファイル表現が一致するため共用する。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    temperature: float = Field(ge=0.0, description="T [K]")
-    sigma: float = Field(gt=0.0, description="sigma [cm^-1]")
-    e_min: float = Field(description="出力窓の下端 [cm^-1]")
-    e_max: float = Field(description="出力窓の上端 [cm^-1]")
-    de: float = Field(gt=0.0, description="出力グリッド間隔 [cm^-1]")
-
-    @model_validator(mode="after")
-    def _check_window(self) -> "Conditions":
-        if not self.e_min < self.e_max:
-            raise ValueError(f"e_min must be smaller than e_max (got {self.e_min} >= {self.e_max})")
-        return self
-
-    @classmethod
-    def from_obj(cls, data: Any) -> "Conditions":
-        """辞書から生成する。pydantic の検証失敗は `InvalidInputError` になる。"""
-        try:
-            return cls.model_validate(data)
-        except ValidationError as exc:
-            raise InvalidInputError(str(exc)) from exc
-
-
-class ModeSpec(BaseModel):
-    """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    frequency: float = Field(gt=0.0)
-    coupling: float = Field(ge=0.0)
-
-
-#: モード表 CSV の列。ヘッダを省略した場合はこの順に並んでいるものとする。
-MODES_CSV_COLUMNS = ("frequency", "coupling")
-
-
-def read_mode_specs_csv(path: str | Path) -> list[ModeSpec]:
-    """モード表 CSV（RFC 4180）を読み込む。
-
-    列はちょうど `MODES_CSV_COLUMNS` の 2 列。ヘッダは省略でき、1 行目がこの列名の
-    組（順序は問わない）ならヘッダとして扱い、そうでなければ `frequency, coupling`
-    の順のデータ行として扱う。列名は数値にならないため、この判定は曖昧にならない。
-    RFC 4180 にないコメント行は受け付けず、空行は空のレコードとしてエラーにする。
-    `coupling` の流儀と単位は参照元の入力 JSON に従う。
+    温度は系にも条件のどの型にも属さない独立したフィールドなので（ADR-0046）、
+    型の `__post_init__` ではなくこの関数が唯一の置き場になる。制約を 2 箇所に
+    書かないための措置で、狙いは ADR-0051 と同じである。
     """
-    p = Path(path)
-    try:
-        with p.open(encoding="utf-8-sig", newline="") as stream:
-            text = stream.read()
-    except (OSError, UnicodeDecodeError) as exc:
-        raise InvalidInputError(f"cannot read modes file {p}: {exc}") from exc
-
-    reader = csv.reader(io.StringIO(text, newline=""), strict=True)
-    try:
-        records = [(reader.line_num, fields) for fields in reader]
-    except csv.Error as exc:
-        raise InvalidInputError(f"{p}:{reader.line_num}: malformed CSV: {exc}") from exc
-
-    if not records:
-        raise InvalidInputError(f"{p}: modes file is empty")
-    first = records[0][1]
-    has_header = len(first) == len(MODES_CSV_COLUMNS) and set(first) == set(MODES_CSV_COLUMNS)
-    columns = first if has_header else list(MODES_CSV_COLUMNS)
-    rows = records[1:] if has_header else records
-    if not rows:
-        raise InvalidInputError(f"{p}: modes file has no mode rows")
-
-    specs: list[ModeSpec] = []
-    for index, (lineno, fields) in enumerate(rows):
-        location = f"{p}:{lineno}"
-        hint = (
-            f" (a header, if present, must consist of exactly the columns "
-            f"{list(MODES_CSV_COLUMNS)})"
-            if index == 0 and not has_header
-            else ""
+    if not temperature >= 0.0:
+        raise InvalidInputError(
+            f"temperature must be non-negative (got {temperature})"
         )
-        if len(fields) != len(columns):
-            blank = " (blank lines are not allowed)" if not fields else ""
+    return temperature
+
+
+@dataclass(frozen=True, slots=True)
+class VibrationalMode:
+    """基底状態の調和ポテンシャルにおける 1 つの基準振動。正準形。"""
+
+    frequency: float
+    """epsilon_alpha [cm^-1]。"""
+
+    huang_rhys: float
+    """S_alpha（無次元）。"""
+
+    def __post_init__(self) -> None:
+        if not self.frequency > 0.0:
             raise InvalidInputError(
-                f"{location}: expected {len(columns)} fields, got {len(fields)}{blank}{hint}"
+                f"frequency must be positive (got {self.frequency})"
             )
-        try:
-            specs.append(ModeSpec.model_validate(dict(zip(columns, fields))))
-        except ValidationError as exc:
-            raise InvalidInputError(f"{location}: {exc}{hint}") from exc
-    return specs
-
-
-class FCEnvelopeInput(BaseModel):
-    """入力ファイル全体。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    schema_version: Literal[1] = SCHEMA_VERSION
-    frequency_unit: str = CANONICAL_FREQUENCY_UNIT
-    coupling_convention: CouplingConvention = CouplingConvention.G
-    modes: list[ModeSpec] = Field(min_length=1)
-    conditions: Conditions
-
-    @field_validator("schema_version", mode="before")
-    @classmethod
-    def _check_schema_version(cls, value: Any) -> Any:
-        if value != SCHEMA_VERSION:
-            raise SchemaVersionError(
-                f"unsupported schema_version {value!r} (this build supports {SCHEMA_VERSION})"
+        if not self.huang_rhys >= 0.0:
+            raise InvalidInputError(
+                f"huang_rhys must be non-negative (got {self.huang_rhys})"
             )
-        return value
 
-    @field_validator("modes", mode="before")
-    @classmethod
-    def _resolve_modes_file(cls, value: Any, info: ValidationInfo) -> Any:
-        """`{"path": ...}` を CSV から読んだモード列に置き換える。
 
-        相対パスは検証コンテキストの `base_dir`（`from_path` では入力ファイルの
-        ディレクトリ）を基準に解決する。
+@dataclass(frozen=True, slots=True)
+class VibrationalSystem:
+    """計算対象の分子の振動モードの集まり。分子に固有で、条件は含まない。
+
+    単位変換・流儀・非対角な基底からの入力といった入口がいくつ増えても、正準化の
+    行き先はこの型 1 つである（`docs/adr/0044-vibrational-system-class.md`）。
+    """
+
+    modes: tuple[VibrationalMode, ...]
+    """1 つ以上の振動モード。"""
+
+    def __init__(self, modes: Sequence[VibrationalMode]) -> None:
+        object.__setattr__(self, "modes", tuple(modes))
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if not self.modes:
+            raise InvalidInputError("a system must have at least one mode")
+        for index, mode in enumerate(self.modes):
+            if not isinstance(mode, VibrationalMode):
+                raise InvalidInputError(
+                    f"modes[{index}] must be a VibrationalMode "
+                    f"(got {type(mode).__name__})"
+                )
+
+    @property
+    def frequencies(self) -> np.ndarray:
+        """(A,) float64, cm^-1。`modes` と同じ順序。"""
+        return np.array([mode.frequency for mode in self.modes], dtype=np.float64)
+
+    @property
+    def huang_rhys(self) -> np.ndarray:
+        """(A,) float64, 無次元。`modes` と同じ順序。"""
+        return np.array([mode.huang_rhys for mode in self.modes], dtype=np.float64)
+
+    @property
+    def reorganization_energy(self) -> float:
+        """再配列エネルギー lambda = sum_alpha S_alpha * eps_alpha [cm^-1]。
+
+        系から一意に決まるので結果クラスには持たせない（ADR-0047）。
         """
-        if not isinstance(value, dict):
-            return value
-        if set(value) != {"path"} or not isinstance(value["path"], str) or not value["path"]:
-            raise ValueError('modes must be a list of modes or {"path": "<modes>.csv"}')
-        base_dir = Path((info.context or {}).get("base_dir") or ".")
-        return read_mode_specs_csv(base_dir / value["path"])
+        return float(sum(mode.huang_rhys * mode.frequency for mode in self.modes))
 
-    @field_validator("frequency_unit", mode="before")
-    @classmethod
-    def _check_frequency_unit(cls, value: Any) -> Any:
-        if value != CANONICAL_FREQUENCY_UNIT:
-            raise UnsupportedUnitError(
-                f"unsupported frequency_unit {value!r} "
-                f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
+    def occupations(self, temperature: float) -> np.ndarray:
+        """温度 T [K] での占有数 n_alpha。式そのものは `physics.py` にある。"""
+        return occupation_numbers(self.frequencies, temperature)
+
+
+@dataclass(frozen=True, slots=True)
+class Broadening:
+    """1 本の線が E 軸上で持つ幅と形。現在はガウス幅 sigma だけを扱う。
+
+    線形状に依存する計算はこの型に集める（ADR-0034）。型階層にはしない——
+    ガウス・ローレンツ・Voigt は時間領域ではいずれも rho(tau) に掛かる実数の
+    減衰因子で、パラメータ (sigma, gamma) を持つ 1 つの族だからである。
+    """
+
+    sigma: float
+    """sigma [cm^-1]。"""
+
+    def __post_init__(self) -> None:
+        if not self.sigma > 0.0:
+            raise InvalidInputError(f"sigma must be positive (got {self.sigma})")
+
+
+@dataclass(frozen=True, slots=True)
+class EnergyGrid:
+    """エンベロープを標本する E 軸上の点列。省略値も自動推定もない。"""
+
+    e_min: float
+    """出力窓の下端 [cm^-1]。"""
+
+    e_max: float
+    """出力窓の上端 [cm^-1]。"""
+
+    de: float
+    """出力グリッド間隔 [cm^-1]。"""
+
+    def __post_init__(self) -> None:
+        if not self.de > 0.0:
+            raise InvalidInputError(f"de must be positive (got {self.de})")
+        if not self.e_min < self.e_max:
+            raise InvalidInputError(
+                f"e_min must be smaller than e_max (got {self.e_min} >= {self.e_max})"
             )
-        return value
 
-    def to_modes(self) -> list[VibrationalMode]:
-        """流儀を消費して正準表現のモード列を返す。"""
-        convention = self.coupling_convention
-        return [
-            VibrationalMode(
-                frequency=spec.frequency,
-                huang_rhys=to_huang_rhys(spec.coupling, convention),
+
+@dataclass(frozen=True, slots=True)
+class Selection:
+    """離散線のうちどれを保持するかを決めるつまみの組。
+
+    既定値はここにしかない。CLI の既定値は「上書きしない」という意味の `None`
+    である（ADR-0050）。
+    """
+
+    min_weight: float = 1e-4
+    """保持する重みの下限（0 < x <= 1）。"""
+
+    max_lines: int = 10000
+    """保持・列挙する線数の上限。"""
+
+    max_quanta: int | None = None
+    """1 モードあたりの振動量子数の上限。None なら自動。"""
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.min_weight <= 1.0:
+            raise InvalidInputError(
+                f"min_weight must lie in (0, 1] (got {self.min_weight})"
             )
-            for spec in self.modes
-        ]
-
-    @classmethod
-    def from_obj(
-        cls, data: Any, *, base_dir: str | Path | None = None
-    ) -> "FCEnvelopeInput":
-        """辞書から生成する。pydantic の検証失敗は `InvalidInputError` になる。
-
-        `base_dir` は `modes.path` の相対パスの基準。省略時はカレントディレクトリ。
-        """
-        try:
-            return cls.model_validate(data, context={"base_dir": base_dir})
-        except ValidationError as exc:
-            raise InvalidInputError(str(exc)) from exc
-
-    @classmethod
-    def from_json(
-        cls, text: str | bytes, *, base_dir: str | Path | None = None
-    ) -> "FCEnvelopeInput":
-        """JSON 文字列から生成する。"""
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise InvalidInputError(f"invalid JSON: {exc}") from exc
-        return cls.from_obj(data, base_dir=base_dir)
-
-    @classmethod
-    def from_path(cls, path: str | Path) -> "FCEnvelopeInput":
-        """入力 JSON ファイルを読み込む。`modes.path` はこのファイルからの相対パス。"""
-        p = Path(path)
-        try:
-            text = p.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise InvalidInputError(f"cannot read input file {p}: {exc}") from exc
-        return cls.from_json(text, base_dir=p.parent)
+        if self.max_lines < 1:
+            raise InvalidInputError(
+                f"max_lines must be at least 1 (got {self.max_lines})"
+            )
+        if self.max_quanta is not None and self.max_quanta < 0:
+            raise InvalidInputError(
+                f"max_quanta must be non-negative (got {self.max_quanta})"
+            )

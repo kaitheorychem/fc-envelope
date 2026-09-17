@@ -6,26 +6,34 @@ import numpy as np
 import pytest
 from conftest import compute_quietly
 
-from fcenvelope import CouplingConvention, FCEnvelopeInput, VibrationalMode
-from fcenvelope.models import to_huang_rhys
-
-CONDITIONS = {
-    "temperature": 300.0,
-    "sigma": 150.0,
-    "e_min": -4000.0,
-    "e_max": 1000.0,
-    "de": 5.0,
-}
+from fcenvelope import (
+    CouplingConvention,
+    FCEnvelopeInput,
+    VibrationalMode,
+    VibrationalSystem,
+)
+from fcenvelope.inputs import to_huang_rhys
 
 
 def _payload(convention: str, coupling: float) -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "frequency_unit": "cm^-1",
         "coupling_convention": convention,
         "modes": [{"frequency": 1200.0, "coupling": coupling}],
-        "conditions": CONDITIONS,
+        "temperature": 300.0,
+        "broadening": {"sigma": 150.0},
+        "grid": {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0},
     }
+
+
+def _envelope(parsed: FCEnvelopeInput):
+    return compute_quietly(
+        parsed.to_system(),
+        temperature=parsed.to_temperature(),
+        broadening=parsed.to_broadening(),
+        grid=parsed.to_grid(),
+    )
 
 
 def test_registry_conversions():
@@ -38,12 +46,11 @@ def test_g_and_huang_rhys_agree():
     from_g = FCEnvelopeInput.from_obj(_payload("g", 0.5))
     from_s = FCEnvelopeInput.from_obj(_payload("huang_rhys", 0.25))
 
-    assert from_g.to_modes() == from_s.to_modes() == [
-        VibrationalMode(frequency=1200.0, huang_rhys=0.25)
-    ]
+    expected = VibrationalSystem([VibrationalMode(frequency=1200.0, huang_rhys=0.25)])
+    assert from_g.to_system() == from_s.to_system() == expected
 
-    result_g = compute_quietly(from_g.to_modes(), from_g.conditions)
-    result_s = compute_quietly(from_s.to_modes(), from_s.conditions)
+    result_g = _envelope(from_g)
+    result_s = _envelope(from_s)
 
     np.testing.assert_array_equal(result_g.density, result_s.density)
     assert result_g.reorganization_energy == result_s.reorganization_energy
@@ -54,7 +61,7 @@ def test_default_convention_is_g():
     del payload["coupling_convention"]
     parsed = FCEnvelopeInput.from_obj(payload)
     assert parsed.coupling_convention is CouplingConvention.G
-    assert parsed.to_modes()[0].huang_rhys == 0.25
+    assert parsed.to_system().modes[0].huang_rhys == 0.25
 
 
 @pytest.mark.parametrize("convention", ["Delta", "reorganization", ""])

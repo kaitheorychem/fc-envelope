@@ -9,26 +9,36 @@ import pytest
 from conftest import compute_quietly, lines_quietly
 
 from fcenvelope import (
-    Conditions,
+    Broadening,
+    EnergyGrid,
     FCEnvelopeInput,
     SchemaVersionError,
+    Selection,
     UnsupportedUnitError,
     VibrationalMode,
-    load_lines,
     load_envelope,
-    save_lines,
+    load_lines,
     save_envelope,
+    save_lines,
 )
+from fcenvelope import inputs as inputs_module
 from fcenvelope.errors import InvalidInputError
-from fcenvelope.io import load_any
+from fcenvelope.io import SCHEMA_VERSION, load_any
 
 
 @pytest.fixture
 def result(multi_mode):
-    conditions = Conditions(
-        temperature=300.0, sigma=150.0, e_min=-6000.0, e_max=2000.0, de=5.0
+    return compute_quietly(
+        multi_mode,
+        temperature=300.0,
+        broadening=Broadening(sigma=150.0),
+        grid=EnergyGrid(e_min=-6000.0, e_max=2000.0, de=5.0),
     )
-    return compute_quietly(multi_mode, conditions)
+
+
+def test_input_and_result_files_share_one_schema_version():
+    """`io` は `inputs` に依存しない（ADR-0041）ので版の一致はここで確かめる。"""
+    assert SCHEMA_VERSION == inputs_module.SCHEMA_VERSION
 
 
 def test_round_trip_is_exact(result, tmp_path):
@@ -39,7 +49,9 @@ def test_round_trip_is_exact(result, tmp_path):
     np.testing.assert_array_equal(restored.energy, result.energy)
     np.testing.assert_array_equal(restored.density, result.density)
     assert restored.modes == result.modes
-    assert restored.conditions == result.conditions
+    assert restored.temperature == result.temperature
+    assert restored.broadening == result.broadening
+    assert restored.grid == result.grid
     assert restored.reorganization_energy == result.reorganization_energy
     assert restored.diagnostics == result.diagnostics
     assert restored.fcenvelope_version == result.fcenvelope_version
@@ -61,26 +73,33 @@ def test_written_input_echo_is_canonical(tmp_path):
     """入力エコーは常に huang_rhys 流儀で書き出される。"""
     parsed = FCEnvelopeInput.from_obj(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "coupling_convention": "g",
             "modes": [{"frequency": 1200.0, "coupling": 0.5}],
-            "conditions": {
-                "temperature": 300.0,
-                "sigma": 150.0,
-                "e_min": -4000.0,
-                "e_max": 1000.0,
-                "de": 5.0,
-            },
+            "temperature": 300.0,
+            "broadening": {"sigma": 150.0},
+            "grid": {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0},
         }
     )
     path = tmp_path / "result.json"
-    save_envelope(compute_quietly(parsed.to_modes(), parsed.conditions), path)
+    save_envelope(
+        compute_quietly(
+            parsed.to_system(),
+            temperature=parsed.to_temperature(),
+            broadening=parsed.to_broadening(),
+            grid=parsed.to_grid(),
+        ),
+        path,
+    )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["kind"] == "fcenvelope.envelope"
     assert payload["input"]["coupling_convention"] == "huang_rhys"
     assert payload["input"]["frequency_unit"] == "cm^-1"
     assert payload["input"]["modes"] == [{"frequency": 1200.0, "coupling": 0.25}]
+    assert payload["input"]["temperature"] == 300.0
+    assert payload["input"]["broadening"] == {"sigma": 150.0}
+    assert payload["input"]["grid"] == {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0}
     assert payload["energy_unit"] == "cm^-1"
     assert payload["density_unit"] == "1/cm^-1"
     assert payload["derived"]["reorganization_energy"] == 300.0
@@ -112,7 +131,7 @@ def _corrupt(path, mutate):
 def test_schema_version_mismatch(result, tmp_path):
     path = tmp_path / "result.json"
     save_envelope(result, path)
-    _corrupt(path, lambda p: p.update(schema_version=2))
+    _corrupt(path, lambda p: p.update(schema_version=1))
     with pytest.raises(SchemaVersionError):
         load_envelope(path)
 
@@ -157,8 +176,10 @@ def test_load_input_file(tmp_path, input_payload):
     path = tmp_path / "input.json"
     path.write_text(json.dumps(input_payload), encoding="utf-8")
     parsed = FCEnvelopeInput.from_path(path)
-    assert parsed.to_modes()[0] == VibrationalMode(frequency=1200.0, huang_rhys=0.25)
-    assert parsed.conditions.temperature == 300.0
+    assert parsed.to_system().modes[0] == VibrationalMode(
+        frequency=1200.0, huang_rhys=0.25
+    )
+    assert parsed.to_temperature() == 300.0
 
 
 # --- 離散 FC 因子の save -> load ---
@@ -189,11 +210,15 @@ def test_fc_lines_payload_shape(lines_result, tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["kind"] == "fcenvelope.fc_lines"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["energy_unit"] == "cm^-1"
     assert payload["input"]["coupling_convention"] == "huang_rhys"
     assert payload["input"]["temperature"] == 300.0
-    assert payload["selection"] == {"min_weight": 1e-4, "max_lines": 10000}
+    assert payload["input"]["selection"] == {
+        "min_weight": 1e-4,
+        "max_lines": 10000,
+        "max_quanta": None,
+    }
     assert len(payload["lines"]) == lines_result.diagnostics.n_lines
     first = payload["lines"][0]
     assert set(first) == {"energy", "fc_factor", "weight", "transitions"}
@@ -229,7 +254,7 @@ def test_load_any_dispatches_on_kind(result, lines_result, tmp_path):
 def test_fc_lines_schema_version_mismatch(lines_result, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p.update(schema_version=2))
+    _corrupt(path, lambda p: p.update(schema_version=1))
     with pytest.raises(SchemaVersionError):
         load_lines(path)
 
@@ -251,12 +276,39 @@ def test_fc_lines_non_canonical_echo_is_rejected(lines_result, tmp_path):
         load_lines(path)
 
 
-@pytest.mark.parametrize("section", ["lines", "selection", "diagnostics", "input"])
+@pytest.mark.parametrize("section", ["lines", "diagnostics", "input"])
 def test_fc_lines_missing_section(lines_result, tmp_path, section):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
     _corrupt(path, lambda p: p.pop(section))
     with pytest.raises(InvalidInputError):
+        load_lines(path)
+
+
+def test_fc_lines_missing_selection_echo(lines_result, tmp_path):
+    path = tmp_path / "lines.json"
+    save_lines(lines_result, path)
+    _corrupt(path, lambda p: p["input"].pop("selection"))
+    with pytest.raises(InvalidInputError, match="input.selection"):
+        load_lines(path)
+
+
+def test_max_quanta_round_trips(multi_mode, tmp_path):
+    """`Selection` を丸ごとエコーするので `max_quanta` も往復する（ADR-0035）。"""
+    result = lines_quietly(multi_mode, temperature=300.0, min_weight=1e-3, max_quanta=4)
+    path = tmp_path / "lines.json"
+    save_lines(result, path)
+    assert load_lines(path).selection == Selection(
+        min_weight=1e-3, max_lines=10000, max_quanta=4
+    )
+
+
+def test_out_of_range_echo_is_rejected_with_its_location(lines_result, tmp_path):
+    """結果ファイル側でも範囲は値の型が見る（ADR-0051）。"""
+    path = tmp_path / "lines.json"
+    save_lines(lines_result, path)
+    _corrupt(path, lambda p: p["input"]["selection"].update(min_weight=0.0))
+    with pytest.raises(InvalidInputError, match="input.selection"):
         load_lines(path)
 
 

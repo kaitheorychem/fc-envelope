@@ -14,16 +14,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from pydantic import ValidationError
 
 from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
-from .models import (
-    CANONICAL_FREQUENCY_UNIT,
-    SCHEMA_VERSION,
-    CouplingConvention,
-    FCEnvelopeInput,
-    VibrationalMode,
-)
+from .models import Broadening, EnergyGrid, Selection, VibrationalMode
 from .result import (
     Diagnostics,
     EnvelopeResult,
@@ -45,8 +38,18 @@ __all__ = [
 
 ENVELOPE_KIND = "fcenvelope.envelope"
 LINES_KIND = "fcenvelope.fc_lines"
+
+#: 結果ファイルの版。入力ファイルの版（`inputs.SCHEMA_VERSION`）と同じ番号を共有
+#: するが、`io` は `inputs` に依存しないので（ADR-0041）ここに別に持つ。両者が
+#: 一致していることはテストで確かめる。
+SCHEMA_VERSION = 2
+
+#: 結果ファイルの形式の知識。計算側は常に cm^-1 しか扱わないので、単位は結果クラス
+#: ではなく io が持つ（ADR-0047）。入力エコーは常に正準形なので流儀も固定である。
 CANONICAL_ENERGY_UNIT = "cm^-1"
 CANONICAL_DENSITY_UNIT = "1/cm^-1"
+CANONICAL_FREQUENCY_UNIT = "cm^-1"
+CANONICAL_COUPLING_CONVENTION = "huang_rhys"
 
 _DIAGNOSTIC_FLOAT_FIELDS = (
     "d_tau",
@@ -97,12 +100,18 @@ def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
         "density_unit": result.density_unit,
         "input": {
             "frequency_unit": CANONICAL_FREQUENCY_UNIT,
-            "coupling_convention": CouplingConvention.HUANG_RHYS.value,
+            "coupling_convention": CANONICAL_COUPLING_CONVENTION,
             "modes": [
                 {"frequency": mode.frequency, "coupling": mode.huang_rhys}
                 for mode in result.modes
             ],
-            "conditions": result.conditions.model_dump(),
+            "temperature": result.temperature,
+            "broadening": {"sigma": result.broadening.sigma},
+            "grid": {
+                "e_min": result.grid.e_min,
+                "e_max": result.grid.e_max,
+                "de": result.grid.de,
+            },
         },
         "derived": {"reorganization_energy": result.reorganization_energy},
         "diagnostics": {
@@ -137,9 +146,73 @@ def save_envelope(result: EnvelopeResult, path: str | Path) -> None:
 
 
 def _require(data: dict[str, Any], key: str, path: str) -> Any:
+    if not isinstance(data, dict):
+        raise InvalidInputError(f"{path!r}: expected a JSON object in result file")
     if key not in data:
         raise InvalidInputError(f"missing field {path!r} in result file")
     return data[key]
+
+
+def _require_float(data: dict[str, Any], key: str, path: str) -> float:
+    value = _require(data, key, path)
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidInputError(f"{path!r} must be a number (got {value!r})") from exc
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidInputError(f"max_quanta must be an integer or null (got {value!r})") from exc
+
+
+def _build(factory, location: str, **kwargs: Any):
+    """値の型を組み立て、不変条件の違反に結果ファイル中の位置を添える。"""
+    try:
+        return factory(**kwargs)
+    except InvalidInputError as exc:
+        raise InvalidInputError(f"{location}: {exc}") from exc
+
+
+def _check_echo_header(echo: Any) -> None:
+    """入力エコーが正準形（cm^-1・huang_rhys）であることを確かめる。"""
+    if not isinstance(echo, dict):
+        raise InvalidInputError(f"'input' must be a JSON object, got {type(echo).__name__}")
+    frequency_unit = echo.get("frequency_unit", CANONICAL_FREQUENCY_UNIT)
+    if frequency_unit != CANONICAL_FREQUENCY_UNIT:
+        raise UnsupportedUnitError(
+            f"unsupported frequency_unit {frequency_unit!r} "
+            f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
+        )
+    convention = echo.get("coupling_convention", CANONICAL_COUPLING_CONVENTION)
+    if convention != CANONICAL_COUPLING_CONVENTION:
+        raise InvalidInputError(
+            f"input.coupling_convention must be "
+            f"{CANONICAL_COUPLING_CONVENTION!r} (got {convention!r})"
+        )
+
+
+def _modes_from_echo(echo: dict[str, Any]) -> tuple[VibrationalMode, ...]:
+    """入力エコーのモード列を正準形の値の型にする。"""
+    specs = _require(echo, "modes", "input.modes")
+    if not isinstance(specs, list):
+        raise InvalidInputError(f"input.modes must be a list, got {type(specs).__name__}")
+    modes: list[VibrationalMode] = []
+    for index, spec in enumerate(specs):
+        location = f"input.modes[{index}]"
+        modes.append(
+            _build(
+                VibrationalMode,
+                location,
+                frequency=_require_float(spec, "frequency", f"{location}.frequency"),
+                huang_rhys=_require_float(spec, "coupling", f"{location}.coupling"),
+            )
+        )
+    return tuple(modes)
 
 
 def envelope_from_dict(data: Any) -> EnvelopeResult:
@@ -169,9 +242,23 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
             f"(only {CANONICAL_DENSITY_UNIT!r} is supported)"
         )
 
-    echo = dict(_require(data, "input", "input"))
-    echo.setdefault("schema_version", SCHEMA_VERSION)
-    parsed_input = FCEnvelopeInput.from_obj(echo)
+    echo = _require(data, "input", "input")
+    _check_echo_header(echo)
+    modes = _modes_from_echo(echo)
+    broadening_echo = _require(echo, "broadening", "input.broadening")
+    broadening = _build(
+        Broadening,
+        "input.broadening",
+        sigma=_require_float(broadening_echo, "sigma", "input.broadening.sigma"),
+    )
+    grid_echo = _require(echo, "grid", "input.grid")
+    grid = _build(
+        EnergyGrid,
+        "input.grid",
+        e_min=_require_float(grid_echo, "e_min", "input.grid.e_min"),
+        e_max=_require_float(grid_echo, "e_max", "input.grid.e_max"),
+        de=_require_float(grid_echo, "de", "input.grid.de"),
+    )
 
     diagnostics_data = _require(data, "diagnostics", "diagnostics")
     try:
@@ -197,8 +284,10 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
     return EnvelopeResult(
         energy=energy,
         density=density,
-        modes=tuple(parsed_input.to_modes()),
-        conditions=parsed_input.conditions,
+        modes=modes,
+        temperature=_require_float(echo, "temperature", "input.temperature"),
+        broadening=broadening,
+        grid=grid,
         reorganization_energy=float(_require(derived, "reorganization_energy", "derived.reorganization_energy")),
         diagnostics=diagnostics,
         fcenvelope_version=str(_require(data, "fcenvelope_version", "fcenvelope_version")),
@@ -236,16 +325,17 @@ def lines_to_dict(result: LinesResult) -> dict[str, Any]:
         "energy_unit": result.energy_unit,
         "input": {
             "frequency_unit": CANONICAL_FREQUENCY_UNIT,
-            "coupling_convention": CouplingConvention.HUANG_RHYS.value,
+            "coupling_convention": CANONICAL_COUPLING_CONVENTION,
             "modes": [
                 {"frequency": mode.frequency, "coupling": mode.huang_rhys}
                 for mode in result.modes
             ],
             "temperature": result.temperature,
-        },
-        "selection": {
-            "min_weight": result.min_weight,
-            "max_lines": result.max_lines,
+            "selection": {
+                "min_weight": result.selection.min_weight,
+                "max_lines": result.selection.max_lines,
+                "max_quanta": result.selection.max_quanta,
+            },
         },
         "derived": {"reorganization_energy": result.reorganization_energy},
         "diagnostics": {
@@ -323,25 +413,8 @@ def lines_from_dict(data: Any) -> LinesResult:
         )
 
     echo = _require(data, "input", "input")
-    frequency_unit = echo.get("frequency_unit", CANONICAL_FREQUENCY_UNIT)
-    if frequency_unit != CANONICAL_FREQUENCY_UNIT:
-        raise UnsupportedUnitError(
-            f"unsupported frequency_unit {frequency_unit!r} "
-            f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
-        )
-    convention = echo.get("coupling_convention", CouplingConvention.HUANG_RHYS.value)
-    if convention != CouplingConvention.HUANG_RHYS.value:
-        raise InvalidInputError(
-            f"input.coupling_convention must be "
-            f"{CouplingConvention.HUANG_RHYS.value!r} (got {convention!r})"
-        )
-    try:
-        modes = tuple(
-            VibrationalMode(frequency=spec["frequency"], huang_rhys=spec["coupling"])
-            for spec in _require(echo, "modes", "input.modes")
-        )
-    except (KeyError, TypeError, ValidationError) as exc:
-        raise InvalidInputError(f"malformed input.modes: {exc}") from exc
+    _check_echo_header(echo)
+    modes = _modes_from_echo(echo)
 
     diagnostics_data = _require(data, "diagnostics", "diagnostics")
     try:
@@ -354,7 +427,14 @@ def lines_from_dict(data: Any) -> LinesResult:
     except KeyError as exc:
         raise InvalidInputError(f"missing diagnostics field {exc.args[0]!r}") from exc
 
-    selection = _require(data, "selection", "selection")
+    selection_echo = _require(echo, "selection", "input.selection")
+    selection = _build(
+        Selection,
+        "input.selection",
+        min_weight=_require_float(selection_echo, "min_weight", "input.selection.min_weight"),
+        max_lines=int(_require(selection_echo, "max_lines", "input.selection.max_lines")),
+        max_quanta=_optional_int(selection_echo.get("max_quanta")),
+    )
     lines_data = _require(data, "lines", "lines")
     if not isinstance(lines_data, list):
         raise InvalidInputError(f"lines must be a list, got {type(lines_data).__name__}")
@@ -376,9 +456,8 @@ def lines_from_dict(data: Any) -> LinesResult:
     return LinesResult(
         lines=lines,
         modes=modes,
-        temperature=float(_require(echo, "temperature", "input.temperature")),
-        min_weight=float(_require(selection, "min_weight", "selection.min_weight")),
-        max_lines=int(_require(selection, "max_lines", "selection.max_lines")),
+        temperature=_require_float(echo, "temperature", "input.temperature"),
+        selection=selection,
         reorganization_energy=float(
             _require(derived, "reorganization_energy", "derived.reorganization_energy")
         ),
