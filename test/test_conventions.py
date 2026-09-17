@@ -1,4 +1,4 @@
-"""振電相互作用の流儀（g / huang_rhys）の正準化。"""
+"""振電相互作用の流儀（g / delta / huang_rhys）の正準化。"""
 
 from __future__ import annotations
 
@@ -41,12 +41,13 @@ def _envelope(parsed: FCEnvelopeInput):
 
 def test_registry_conversions():
     assert units.G.to_huang_rhys(0.5, 1200.0) == 0.25
+    assert units.DELTA.to_huang_rhys(1.0, 1200.0) == 0.5
     assert units.HUANG_RHYS.to_huang_rhys(0.25, 1200.0) == 0.25
 
 
 def test_the_dimensionless_conventions_ignore_the_frequency():
-    """g / huang_rhys は omega を要しない（`docs/theory/vcc.md` の表）。"""
-    for convention in (units.G, units.HUANG_RHYS):
+    """g / Delta / huang_rhys は omega を要しない（`docs/theory/vcc.md` の表）。"""
+    for convention in (units.G, units.DELTA, units.HUANG_RHYS):
         assert convention.is_dimensionless
         assert convention.to_huang_rhys(0.5, 1200.0) == convention.to_huang_rhys(
             0.5, 300.0
@@ -102,6 +103,35 @@ def test_g_and_huang_rhys_agree():
 
     np.testing.assert_array_equal(result_g.density, result_s.density)
     assert result_g.system.reorganization_energy == result_s.system.reorganization_energy
+
+
+def test_delta_and_g_agree():
+    """Delta = sqrt(2)*g は同じ S を与える（`docs/theory/vcc.md` の表）。"""
+    g = 0.5
+    from_g = FCEnvelopeInput.from_obj(_payload("g", g))
+    from_delta = FCEnvelopeInput.from_obj(_payload("delta", math.sqrt(2.0) * g))
+
+    assert from_delta.to_system().modes[0].huang_rhys == pytest.approx(
+        from_g.to_system().modes[0].huang_rhys
+    )
+    # sqrt(2) を往復するぶん S が 1 ULP ずれるので、判定は最大値で正規化した
+    # 相対誤差にする（ADR-0042）。要素ごとの相対誤差は裾がほぼ 0 なので使えない。
+    from_delta_density = _envelope(from_delta).density
+    from_g_density = _envelope(from_g).density
+    np.testing.assert_allclose(
+        from_delta_density,
+        from_g_density,
+        rtol=0.0,
+        atol=1e-12 * float(from_g_density.max()),
+    )
+
+
+def test_delta_is_dimensionless():
+    """Delta は無次元なので coupling の単位を添えるのは誤り（ADR-0055）。"""
+    assert units.DELTA.is_dimensionless
+    assert units.DELTA.check_coupling_unit(None) is None
+    with pytest.raises(InvalidInputError, match="dimensionless"):
+        units.DELTA.check_coupling_unit("eV")
 
 
 def test_default_convention_is_g():

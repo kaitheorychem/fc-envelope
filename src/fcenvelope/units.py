@@ -14,8 +14,8 @@
 | vcc (V) | S = V^2 / (2 h_bar omega^3) | 必要 | エネルギー^(3/2) |
 | lambda | S = lambda / (h_bar omega) | 必要 | エネルギー |
 
-**このリファクタリングで実装するのは g と huang_rhys だけである。** V と lambda を
-足すことは目的ではなく、足せる構造にすることが目的なので、登録するのは 2 つに留める。
+流儀は無次元のものから順に足す（ADR-0055）。現在登録しているのは g / Delta /
+huang_rhys の 3 つで、有次元の lambda と V はまだ登録していない。
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ __all__ = [
     "CANONICAL_FREQUENCY_UNIT",
     "COUPLING_CONVENTIONS",
     "DEFAULT_COUPLING_CONVENTION",
+    "DELTA",
     "G",
     "HUANG_RHYS",
     "CouplingConvention",
@@ -109,6 +110,11 @@ class CouplingConvention:
 G = CouplingConvention(name="g", energy_power=None, converter=lambda g, _: g * g)
 """無次元化振電相互作用定数。S = g^2。g の符号は S に効かない（ADR-0003）。"""
 
+DELTA = CouplingConvention(
+    name="delta", energy_power=None, converter=lambda d, _: 0.5 * d * d
+)
+"""無次元変位。S = Delta^2 / 2。g とは Delta = sqrt(2) g の関係にある。"""
+
 HUANG_RHYS = CouplingConvention(
     name="huang_rhys", energy_power=None, converter=lambda s, _: s
 )
@@ -116,7 +122,7 @@ HUANG_RHYS = CouplingConvention(
 
 #: 名前 -> 流儀。流儀の追加は 1 エントリの追加で済む。
 COUPLING_CONVENTIONS: dict[str, CouplingConvention] = {
-    convention.name: convention for convention in (G, HUANG_RHYS)
+    convention.name: convention for convention in (G, DELTA, HUANG_RHYS)
 }
 
 #: 入力ファイルで `coupling_convention` を省略したときの流儀。
