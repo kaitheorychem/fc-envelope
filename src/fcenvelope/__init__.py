@@ -34,7 +34,7 @@ from .errors import (
     SchemaVersionError,
     UnsupportedUnitError,
 )
-from .inputs import CouplingConvention, FCEnvelopeInput, ModeSpec
+from .inputs import FCEnvelopeInput, ModeSpec
 from .io import load_envelope, load_lines, save_envelope, save_lines
 from .lines import compute_fc_lines, fc_factor_matrix
 from .models import (
@@ -54,6 +54,8 @@ from .result import (
     ModeTransition,
     Provenance,
 )
+from . import units
+from .units import CouplingConvention
 from .version import __version__
 
 __all__ = [
@@ -77,9 +79,11 @@ __all__ = [
     "VibrationalMode",
     "VibrationalSystem",
     # 入力ファイルの型
-    "CouplingConvention",
     "FCEnvelopeInput",
     "ModeSpec",
+    # 単位と流儀
+    "CouplingConvention",
+    "units",
     # 結果
     "Diagnostics",
     "EnvelopeResult",

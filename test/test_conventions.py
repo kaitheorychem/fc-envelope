@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 from conftest import compute_quietly
@@ -11,8 +13,9 @@ from fcenvelope import (
     FCEnvelopeInput,
     VibrationalMode,
     VibrationalSystem,
+    units,
 )
-from fcenvelope.inputs import to_huang_rhys
+from fcenvelope.errors import InvalidInputError, UnsupportedUnitError
 
 
 def _payload(convention: str, coupling: float) -> dict:
@@ -37,8 +40,53 @@ def _envelope(parsed: FCEnvelopeInput):
 
 
 def test_registry_conversions():
-    assert to_huang_rhys(0.5, CouplingConvention.G) == 0.25
-    assert to_huang_rhys(0.25, CouplingConvention.HUANG_RHYS) == 0.25
+    assert units.G.to_huang_rhys(0.5, 1200.0) == 0.25
+    assert units.HUANG_RHYS.to_huang_rhys(0.25, 1200.0) == 0.25
+
+
+def test_the_dimensionless_conventions_ignore_the_frequency():
+    """g / huang_rhys は omega を要しない（`docs/theory/vcc.md` の表）。"""
+    for convention in (units.G, units.HUANG_RHYS):
+        assert convention.is_dimensionless
+        assert convention.to_huang_rhys(0.5, 1200.0) == convention.to_huang_rhys(
+            0.5, 300.0
+        )
+
+
+def test_a_dimensionless_convention_rejects_a_coupling_unit():
+    with pytest.raises(InvalidInputError, match="dimensionless"):
+        units.G.check_coupling_unit("cm^-1")
+    assert units.G.check_coupling_unit(None) is None
+
+
+def test_the_convention_type_can_express_a_dimensioned_convention():
+    """V と lambda を足せる構造であることを確かめる（ADR-0033）。
+
+    登録はしない——このリファクタリングの目的は足せる構造にすることであって、
+    流儀を増やすことではない。
+    """
+    reorganization = CouplingConvention(
+        name="lambda", energy_power=1.0, converter=lambda value, freq: value / freq
+    )
+    assert not reorganization.is_dimensionless
+    assert reorganization.to_huang_rhys(300.0, 1200.0) == 0.25
+    with pytest.raises(UnsupportedUnitError, match="carries units"):
+        reorganization.check_coupling_unit(None)
+
+    vibronic = CouplingConvention(
+        name="vcc",
+        energy_power=1.5,
+        converter=lambda value, freq: value**2 / (2.0 * freq**3),
+    )
+    assert not vibronic.is_dimensionless
+    assert vibronic.to_huang_rhys(math.sqrt(2.0 * 1200.0**3 * 0.25), 1200.0) == (
+        pytest.approx(0.25)
+    )
+
+
+def test_an_unknown_name_names_the_known_conventions():
+    with pytest.raises(InvalidInputError, match="huang_rhys"):
+        units.coupling_convention("Delta")
 
 
 def test_g_and_huang_rhys_agree():
@@ -60,13 +108,11 @@ def test_default_convention_is_g():
     payload = _payload("g", 0.5)
     del payload["coupling_convention"]
     parsed = FCEnvelopeInput.from_obj(payload)
-    assert parsed.coupling_convention is CouplingConvention.G
+    assert parsed.convention is units.G
     assert parsed.to_system().modes[0].huang_rhys == 0.25
 
 
 @pytest.mark.parametrize("convention", ["Delta", "reorganization", ""])
 def test_unknown_convention_is_rejected(convention):
-    from fcenvelope.errors import InvalidInputError
-
     with pytest.raises(InvalidInputError):
         FCEnvelopeInput.from_obj(_payload(convention, 0.5))

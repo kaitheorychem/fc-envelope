@@ -17,8 +17,6 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections.abc import Callable
-from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
@@ -31,7 +29,7 @@ from pydantic import (
     field_validator,
 )
 
-from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
+from .errors import InvalidInputError, SchemaVersionError
 from .models import (
     Broadening,
     EnergyGrid,
@@ -40,49 +38,33 @@ from .models import (
     VibrationalSystem,
     validate_temperature,
 )
+from .units import (
+    CANONICAL_FREQUENCY_UNIT,
+    COUPLING_CONVENTIONS,
+    DEFAULT_COUPLING_CONVENTION,
+    CouplingConvention,
+    check_frequency_unit,
+    coupling_convention,
+)
 
 #: つまみの既定値の唯一の出どころ（ADR-0050）。`Selection` は slots 付きの
 #: dataclass なのでクラス属性から既定値は読めず、既定のインスタンスから引く。
 _DEFAULT_SELECTION = Selection()
 
 __all__ = [
-    "CANONICAL_FREQUENCY_UNIT",
     "MODES_CSV_COLUMNS",
     "SCHEMA_VERSION",
     "BroadeningSpec",
-    "CouplingConvention",
     "EnergyGridSpec",
     "FCEnvelopeInput",
     "ModeSpec",
     "SelectionSpec",
     "read_mode_specs_csv",
-    "to_huang_rhys",
 ]
 
 #: 入力ファイルの版（`docs/adr/0040-schema-version-2-without-a-compatibility-layer.md`）。
 #: 1 は互換層を置かずに拒否する。
 SCHEMA_VERSION = 2
-CANONICAL_FREQUENCY_UNIT = "cm^-1"
-
-
-class CouplingConvention(str, Enum):
-    """入力ファイルが用いる振電相互作用パラメータの流儀。"""
-
-    G = "g"
-    HUANG_RHYS = "huang_rhys"
-
-
-#: 流儀 -> Huang-Rhys 因子 S への変換関数。
-#: 流儀の追加は 1 エントリの追加で済む。
-COUPLING_REGISTRY: dict[CouplingConvention, Callable[[float], float]] = {
-    CouplingConvention.G: lambda g: g * g,
-    CouplingConvention.HUANG_RHYS: lambda s: s,
-}
-
-
-def to_huang_rhys(value: float, convention: CouplingConvention) -> float:
-    """流儀に従った coupling 値を Huang-Rhys 因子 S に変換する。"""
-    return COUPLING_REGISTRY[convention](value)
 
 
 def _at(location: str, exc: InvalidInputError) -> InvalidInputError:
@@ -194,7 +176,14 @@ class FCEnvelopeInput(BaseModel):
 
     schema_version: Literal[2] = SCHEMA_VERSION
     frequency_unit: str = CANONICAL_FREQUENCY_UNIT
-    coupling_convention: CouplingConvention = CouplingConvention.G
+    coupling_convention: str = DEFAULT_COUPLING_CONVENTION.name
+    """流儀の**名前**。流儀そのものは `convention` から引く。
+
+    ファイルに現れるのは名前なので、pydantic のフィールドも名前のままにする。
+    こうしておくと `model_dump()` がそのまま入力ファイルの形に戻り、CLI の上書きが
+    同じ経路を通れる（ADR-0050）。
+    """
+
     modes: list[ModeSpec] = Field(min_length=1)
     temperature: float
     broadening: BroadeningSpec
@@ -228,23 +217,35 @@ class FCEnvelopeInput(BaseModel):
     @field_validator("frequency_unit", mode="before")
     @classmethod
     def _check_frequency_unit(cls, value: Any) -> Any:
-        if value != CANONICAL_FREQUENCY_UNIT:
-            raise UnsupportedUnitError(
-                f"unsupported frequency_unit {value!r} "
-                f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
-            )
+        return check_frequency_unit(value)
+
+    @field_validator("coupling_convention", mode="before")
+    @classmethod
+    def _check_coupling_convention(cls, value: Any) -> Any:
+        if value not in COUPLING_CONVENTIONS:
+            coupling_convention(value)  # 未知の名前をここで報告させる
         return value
+
+    @property
+    def convention(self) -> CouplingConvention:
+        """`coupling_convention` の名前が指す流儀オブジェクト。"""
+        return coupling_convention(self.coupling_convention)
 
     def to_system(self) -> VibrationalSystem:
         """単位と流儀を消費して正準形の系を返す。"""
-        convention = self.coupling_convention
+        convention = self.convention
+        # 今の入力フォーマットは coupling の単位を持たない。無次元の流儀ならこれで
+        # 正しく、単位を持つ流儀（V, lambda）ならここで弾かれる（ADR-0033）。
+        convention.check_coupling_unit(None)
         modes: list[VibrationalMode] = []
         for index, spec in enumerate(self.modes):
             try:
                 modes.append(
                     VibrationalMode(
                         frequency=spec.frequency,
-                        huang_rhys=to_huang_rhys(spec.coupling, convention),
+                        huang_rhys=convention.to_huang_rhys(
+                            spec.coupling, spec.frequency
+                        ),
                     )
                 )
             except InvalidInputError as exc:
