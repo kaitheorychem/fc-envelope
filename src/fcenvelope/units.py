@@ -40,7 +40,6 @@ __all__ = [
     "G",
     "HUANG_RHYS",
     "CouplingConvention",
-    "check_frequency_unit",
     "coupling_convention",
     "energy_conversion_factor",
 ]
@@ -82,20 +81,6 @@ def energy_conversion_factor(unit: object) -> float:
         raise UnsupportedUnitError(
             f"unsupported energy unit {unit!r} (known units: {known})"
         ) from exc
-
-
-def check_frequency_unit(unit: object) -> str:
-    """振動数の単位を検証して返す。
-
-    受けるのは検証前のファイルの値なので `object` で取り、正準な単位そのものを返す。
-    換算表は用意できたが、消費する側（`inputs.py`）はまだ差し替えていない。
-    """
-    if unit != CANONICAL_ENERGY_UNIT:
-        raise UnsupportedUnitError(
-            f"unsupported frequency_unit {unit!r} "
-            f"(only {CANONICAL_ENERGY_UNIT!r} is supported)"
-        )
-    return CANONICAL_ENERGY_UNIT
 
 
 @dataclass(frozen=True, slots=True)

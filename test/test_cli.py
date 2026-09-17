@@ -159,7 +159,7 @@ def test_plot_subcommand(tmp_path, input_file):
 
 
 def test_invalid_input_exits_with_one(tmp_path, input_payload):
-    input_payload["frequency_unit"] = "eV"
+    input_payload["frequency_unit"] = "nm"
     path = tmp_path / "input.json"
     path.write_text(json.dumps(input_payload), encoding="utf-8")
 
@@ -167,7 +167,7 @@ def test_invalid_input_exits_with_one(tmp_path, input_payload):
 
     assert invocation.exit_code == 1
     assert "error:" in invocation.output
-    assert "eV" in invocation.output
+    assert "nm" in invocation.output
 
 
 def test_bad_override_exits_with_one(tmp_path, input_file):

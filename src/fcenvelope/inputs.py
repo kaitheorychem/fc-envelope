@@ -6,7 +6,8 @@
 
 トップレベルの `frequency_unit` / `coupling_convention` は正準化の際に消費され、
 `to_system()` を通った後の表現は常に (frequency [cm^-1], huang_rhys) である。
-以降のコードは流儀も単位も知らない。
+変換が起こるのはこのモジュールの中だけで（ADR-0054）、以降のコードは流儀も単位も
+知らない。
 
 `modes` はモードの配列を直接書くか、`{"path": "modes.csv"}` で CSV のモード表を
 参照する。参照はパース時に解決され、パース後は配列で書いた場合と区別がない。
@@ -44,8 +45,8 @@ from .units import (
     CANONICAL_ENERGY_UNIT,
     DEFAULT_COUPLING_CONVENTION,
     CouplingConvention,
-    check_frequency_unit,
     coupling_convention,
+    energy_conversion_factor,
 )
 
 #: つまみの既定値の唯一の出どころ（ADR-0050）。`Selection` は slots 付きの
@@ -225,7 +226,9 @@ class FCEnvelopeInput(BaseModel):
     @field_validator("frequency_unit", mode="before")
     @classmethod
     def _check_frequency_unit(cls, value: object) -> str:
-        return check_frequency_unit(value)
+        """単位が換算表にあることを確かめる。保つのは名前のままである。"""
+        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
+        return str(value)
 
     @field_validator("coupling_convention", mode="before")
     @classmethod
@@ -242,18 +245,18 @@ class FCEnvelopeInput(BaseModel):
     def to_system(self) -> VibrationalSystem:
         """単位と流儀を消費して正準形の系を返す。"""
         convention = self.convention
+        to_canonical = energy_conversion_factor(self.frequency_unit)
         # 今の入力フォーマットは coupling の単位を持たない。無次元の流儀ならこれで
         # 正しく、単位を持つ流儀（V, lambda）ならここで弾かれる（ADR-0033）。
         convention.check_coupling_unit(None)
         modes: list[VibrationalMode] = []
         for index, spec in enumerate(self.modes):
+            frequency = spec.frequency * to_canonical
             try:
                 modes.append(
                     VibrationalMode(
-                        frequency=spec.frequency,
-                        huang_rhys=convention.to_huang_rhys(
-                            spec.coupling, spec.frequency
-                        ),
+                        frequency=frequency,
+                        huang_rhys=convention.to_huang_rhys(spec.coupling, frequency),
                     )
                 )
             except InvalidInputError as exc:
