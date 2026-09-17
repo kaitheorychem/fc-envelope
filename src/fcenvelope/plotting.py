@@ -11,9 +11,9 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
     import matplotlib.figure
 
 from .errors import InvalidInputError
-from .result import FCEnvelopeResult, FCLinesResult
+from .result import EnvelopeResult, LinesResult
 
-__all__ = ["plot_fc_lines", "plot_overlay", "plot_result"]
+__all__ = ["plot_envelope", "plot_lines", "plot_overlay"]
 
 ENVELOPE_COLOR = "C0"
 """重ね描きでエンベロープ F(E) に割り当てる色。"""
@@ -48,7 +48,7 @@ def _gaussian_peak(sigma: float) -> float:
 
 def _draw_envelope(
     ax: "matplotlib.axes.Axes",
-    result: FCEnvelopeResult,
+    result: EnvelopeResult,
     *,
     label: str | None,
     color: str | None = None,
@@ -61,9 +61,9 @@ def _draw_envelope(
     if zorder is not None:
         style["zorder"] = zorder
 
-    ax.plot(result.energy, result.intensity, label=label, **style)
+    ax.plot(result.energy, result.density, label=label, **style)
     ax.set_xlabel(f"$E$ / {_mathtext_unit(result.energy_unit)}")
-    ax.set_ylabel(f"$F(E)$ / {_mathtext_unit(result.intensity_unit)}")
+    ax.set_ylabel(f"$F(E)$ / {_mathtext_unit(result.density_unit)}")
 
 
 def _draw_sticks(
@@ -85,8 +85,8 @@ def _draw_sticks(
     ax.vlines(energies, 0.0, heights, label=label, **style)
 
 
-def plot_result(
-    result: FCEnvelopeResult,
+def plot_envelope(
+    result: EnvelopeResult,
     *,
     ax: "matplotlib.axes.Axes | None" = None,
     label: str | None = None,
@@ -110,8 +110,8 @@ def plot_result(
     return figure
 
 
-def plot_fc_lines(
-    result: FCLinesResult,
+def plot_lines(
+    result: LinesResult,
     *,
     ax: "matplotlib.axes.Axes | None" = None,
     label: str | None = None,
@@ -119,14 +119,14 @@ def plot_fc_lines(
 ) -> "matplotlib.figure.Figure":
     """離散 FC 因子を棒スペクトルとして描画し `Figure` を返す。
 
-    縦軸は熱占有を掛けた線強度（無次元）で、エンベロープ F(E)（1/cm^-1）とは
+    縦軸は熱占有を掛けた重み（無次元）で、エンベロープ F(E)（1/cm^-1）とは
     次元が異なる。エンベロープと 1 枚に重ねる場合は `plot_overlay` を使う。
     """
     figure, ax = _resolve_axes(ax)
 
-    _draw_sticks(ax, result.energies, result.intensities, label=label)
+    _draw_sticks(ax, result.energies, result.weights, label=label)
     ax.set_xlabel(f"$E$ / {_mathtext_unit(result.energy_unit)}")
-    ax.set_ylabel("line intensity")
+    ax.set_ylabel("weight")
     ax.axhline(0.0, **_GUIDE)
     ax.axvline(0.0, **_GUIDE)
 
@@ -138,7 +138,7 @@ def plot_fc_lines(
     return figure
 
 
-def _warn_on_mismatch(envelope: FCEnvelopeResult, lines: FCLinesResult) -> None:
+def _warn_on_mismatch(envelope: EnvelopeResult, lines: LinesResult) -> None:
     """同じ系・同じ温度の結果どうしでないなら、重ねる前に知らせる。"""
     if envelope.modes != lines.modes:
         warnings.warn(
@@ -156,8 +156,8 @@ def _warn_on_mismatch(envelope: FCEnvelopeResult, lines: FCLinesResult) -> None:
 
 
 def plot_overlay(
-    envelope: FCEnvelopeResult,
-    lines: FCLinesResult,
+    envelope: EnvelopeResult,
+    lines: LinesResult,
     *,
     ax: "matplotlib.axes.Axes | None" = None,
     envelope_label: str | None = "envelope",
@@ -167,7 +167,7 @@ def plot_overlay(
 ) -> "matplotlib.figure.Figure":
     """エンベロープ F(E) と離散 FC 因子を 1 枚に重ねて描画する。
 
-    縦軸は 1 本だけで、単位は F(E) と同じ 1/cm^-1。線強度 I は幅 sigma の
+    縦軸は 1 本だけで、単位は F(E) と同じ 1/cm^-1。線の重み w は幅 sigma の
     規格化ガウシアンの頂点 G_sigma(0) = 1/(sigma*sqrt(2pi)) を掛けて描く。
     これは「その線が F(E) に立てる山の高さそのもの」であり、F(E) は線を
     sigma で畳んで足し上げたものなので（`docs/theory/fc-factor.md`）、
@@ -195,7 +195,7 @@ def plot_overlay(
     _draw_sticks(
         ax,
         lines.energies,
-        lines.intensities * scale,
+        lines.weights * scale,
         label=lines_label,
         color=LINES_COLOR,
         zorder=2.1,

@@ -9,7 +9,8 @@ import pytest
 from conftest import compute_quietly
 
 from fcenvelope import Conditions, NumericalQualityWarning, VibrationalMode, compute_envelope
-from fcenvelope.core import K_B_CM, build_grids, occupation_numbers
+from fcenvelope.envelope import build_grids
+from fcenvelope.physics import K_B_CM, occupation_numbers
 
 MODES = [VibrationalMode(frequency=1200.0, huang_rhys=0.5)]
 
@@ -144,11 +145,11 @@ def test_boltzmann_constant_value():
     assert K_B_CM == pytest.approx(0.6950348, rel=1e-6)
 
 
-def test_result_intensity_is_real_and_finite():
+def test_density_is_real_and_finite():
     conditions = Conditions(
         temperature=300.0, sigma=150.0, e_min=-8000.0, e_max=4000.0, de=4.0
     )
     result = compute_quietly(MODES, conditions)
-    assert result.intensity.dtype == np.float64
-    assert np.all(np.isfinite(result.intensity))
+    assert result.density.dtype == np.float64
+    assert np.all(np.isfinite(result.density))
     assert result.diagnostics.max_imaginary_ratio < 1e-12

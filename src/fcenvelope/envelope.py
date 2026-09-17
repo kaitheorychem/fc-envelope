@@ -1,4 +1,4 @@
-"""数値コア: 占有数、rho(tau)、グリッド構成、FFT、診断値算出。
+"""エンベロープ F(E): グリッド構成、rho(tau)、FFT、診断値算出。
 
 理論は `docs/theory/time-ft.md` の式そのもの:
 
@@ -20,23 +20,17 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 
 import numpy as np
-from scipy import constants
 
 from .errors import NumericalQualityWarning
 from .models import Conditions, VibrationalMode
-from .result import Diagnostics, FCEnvelopeResult
+from .physics import occupation_numbers, reorganization_energy
+from .result import Diagnostics, EnvelopeResult
 from .version import __version__
 
 __all__ = [
-    "K_B_CM",
     "build_grids",
     "compute_envelope",
-    "occupation_numbers",
-    "reorganization_energy",
 ]
-
-#: ボルツマン定数 [cm^-1 / K]。scipy から導出し、値をハードコードしない。
-K_B_CM = constants.k / (constants.h * constants.c * 100.0)
 
 # --- 診断値の警告閾値（§7 の表） ---
 MIN_SIGMA_TAU_MAX = 6.0
@@ -44,24 +38,6 @@ MAX_EDGE_INTENSITY_RATIO = 1e-4
 MAX_AREA_DEVIATION = 1e-6
 MIN_WINDOW_CAPTURED_FRACTION = 0.99
 MAX_IMAGINARY_RATIO = 1e-8
-
-
-def occupation_numbers(frequencies: np.ndarray, temperature: float) -> np.ndarray:
-    """ボーズ分布による占有数 n_alpha を返す。
-
-    `expm1` を用いることで eps / kT が大きい領域は inf -> n = 0 と正しく畳まれる。
-    T = 0 は分岐して n = 0 を直接与える。
-    """
-    freq = np.asarray(frequencies, dtype=float)
-    if temperature == 0.0:
-        return np.zeros_like(freq)
-    with np.errstate(over="ignore"):
-        return 1.0 / np.expm1(freq / (K_B_CM * temperature))
-
-
-def reorganization_energy(modes: Sequence[VibrationalMode]) -> float:
-    """再配列エネルギー lambda = sum_alpha S_alpha * eps_alpha [cm^-1]。"""
-    return float(sum(mode.huang_rhys * mode.frequency for mode in modes))
 
 
 def _next_pow2(value: int) -> int:
@@ -116,7 +92,7 @@ def _log_rho(
 def compute_envelope(
     modes: Sequence[VibrationalMode],
     conditions: Conditions,
-) -> FCEnvelopeResult:
+) -> EnvelopeResult:
     """Franck-Condon エンベロープ F(E) を計算する。
 
     Args:
@@ -152,9 +128,9 @@ def compute_envelope(
     tol = 1e-9 * conditions.de
     window = (energy_full >= conditions.e_min - tol) & (energy_full <= conditions.e_max + tol)
     energy = np.ascontiguousarray(energy_full[window])
-    intensity = np.ascontiguousarray(real_full[window])
+    density = np.ascontiguousarray(real_full[window])
 
-    window_area = float(np.sum(intensity) * conditions.de)
+    window_area = float(np.sum(density) * conditions.de)
     window_captured_fraction = window_area / total_area if total_area != 0.0 else 0.0
 
     tau_max = math.pi / conditions.de
@@ -182,9 +158,9 @@ def compute_envelope(
         messages=messages,
     )
 
-    return FCEnvelopeResult(
+    return EnvelopeResult(
         energy=energy,
-        intensity=intensity,
+        density=density,
         modes=modes,
         conditions=conditions,
         reorganization_energy=reorganization_energy(modes),

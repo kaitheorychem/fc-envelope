@@ -10,18 +10,18 @@
 
     <m|U|0> = exp(-g^2 / 2) g^m / sqrt(m!)
 
-符号規約は `core.py` のエンベロープと同一で、反転しない。E = 0 が ZPL であり、
+符号規約は `envelope.py` のエンベロープと同一で、反転しない。E = 0 が ZPL であり、
 振動量子を正味 k 個生成する線は E = -k * eps_alpha（負側）に立つ。多モードでは
 
     E = -sum_alpha (m_alpha - n_alpha) eps_alpha
 
-線強度は始状態の熱占有 P(n_alpha) を掛けた
+線の重みは始状態の熱占有 P(n_alpha) を掛けた
 
-    I = prod_alpha P(n_alpha) * FC_{m_alpha n_alpha}
+    w = prod_alpha P(n_alpha) * FC_{m_alpha n_alpha}
 
-とする。この I を中心 E・標準偏差 sigma のガウシアンで畳んで足し上げたものが
+とする。この w を中心 E・標準偏差 sigma のガウシアンで畳んで足し上げたものが
 `compute_envelope` の F(E) に一致する（`docs/theory/time-ft.md` の rho(tau) の
-母関数展開そのもの）。したがって全遷移にわたる I の総和は厳密に 1 である。
+母関数展開そのもの）。したがって全遷移にわたる w の総和は厳密に 1 である。
 """
 
 from __future__ import annotations
@@ -34,15 +34,14 @@ from datetime import datetime, timezone
 import numpy as np
 from scipy.special import gammaln
 
-from .core import K_B_CM, reorganization_energy
 from .errors import InvalidInputError, NumericalQualityWarning
 from .models import VibrationalMode
-from .result import FCLine, FCLineDiagnostics, FCLinesResult, ModeTransition
+from .physics import K_B_CM, boltzmann_populations, reorganization_energy
+from .result import FCLine, FCLineDiagnostics, LinesResult, ModeTransition
 from .version import __version__
 
 __all__ = [
     "MAX_QUANTA_PER_MODE",
-    "boltzmann_populations",
     "compute_fc_lines",
     "displacement_matrix",
     "fc_factor_matrix",
@@ -55,7 +54,7 @@ MAX_QUANTA_PER_MODE = 200
 RECURRENCE_TOLERANCE = 1e-8
 
 # --- 診断値の警告閾値 ---
-MIN_CAPTURED_INTENSITY = 0.9
+MIN_CAPTURED_WEIGHT = 0.9
 
 
 def displacement_matrix(g: float, m_max: int, n_max: int) -> np.ndarray:
@@ -100,20 +99,6 @@ def fc_factor_matrix(huang_rhys: float, m_max: int, n_max: int = 0) -> np.ndarra
         raise ValueError(f"huang_rhys must be non-negative (got {huang_rhys})")
     elements = displacement_matrix(math.sqrt(huang_rhys), m_max, n_max)
     return elements * elements
-
-
-def boltzmann_populations(frequency: float, temperature: float, n_max: int) -> np.ndarray:
-    """調和振動子の始状態占有 P(n) = (1 - x) x^n, x = exp(-eps / kT) を返す。
-
-    T = 0 は分岐して P(0) = 1 を直接与える。
-    """
-    populations = np.zeros(n_max + 1, dtype=float)
-    if temperature == 0.0:
-        populations[0] = 1.0
-        return populations
-    ratio = math.exp(-frequency / (K_B_CM * temperature))
-    populations[:] = (1.0 - ratio) * ratio ** np.arange(n_max + 1)
-    return populations
 
 
 def _max_initial_quanta(frequency: float, temperature: float, min_population: float) -> int:
@@ -167,7 +152,7 @@ class _ModeCandidates:
 
 
 def _stable_fc_matrix(
-    huang_rhys: float, n_max: int, min_intensity: float, cap: int
+    huang_rhys: float, n_max: int, min_weight: float, cap: int
 ) -> tuple[np.ndarray, float, bool]:
     """数値的に信頼できる範囲の FC 行列を返す。
 
@@ -195,7 +180,7 @@ def _stable_fc_matrix(
             factors = factors[:, :limit]
             sums = sums[:limit]
         completeness = float(np.min(sums))
-        if completeness > 1.0 - min_intensity or m_max >= cap:
+        if completeness > 1.0 - min_weight or m_max >= cap:
             return factors, completeness, recurrence_limited
         m_max = min(2 * m_max, cap)
 
@@ -203,20 +188,20 @@ def _stable_fc_matrix(
 def _mode_candidates(
     mode: VibrationalMode,
     temperature: float,
-    min_intensity: float,
+    min_weight: float,
     max_quanta: int | None,
 ) -> _ModeCandidates:
     """1 モードの候補表を作る。"""
     cap = MAX_QUANTA_PER_MODE if max_quanta is None else max_quanta
-    n_max = min(_max_initial_quanta(mode.frequency, temperature, min_intensity), cap)
+    n_max = min(_max_initial_quanta(mode.frequency, temperature, min_weight), cap)
     factors, completeness, recurrence_limited = _stable_fc_matrix(
-        mode.huang_rhys, n_max, min_intensity, cap
+        mode.huang_rhys, n_max, min_weight, cap
     )
     m_max, n_used = factors.shape[0] - 1, factors.shape[1] - 1
     populations = boltzmann_populations(mode.frequency, temperature, n_used)
 
     weights = factors * populations[np.newaxis, :]
-    finals, initials = np.nonzero(weights >= min_intensity)
+    finals, initials = np.nonzero(weights >= min_weight)
     entries = [
         (int(n), int(m), float(factors[m, n]), float(weights[m, n]))
         for m, n in zip(finals, initials, strict=True)
@@ -229,13 +214,13 @@ def _mode_candidates(
 
 
 def _validate(
-    temperature: float, min_intensity: float, max_lines: int, max_quanta: int | None
+    temperature: float, min_weight: float, max_lines: int, max_quanta: int | None
 ) -> None:
     """公開関数の引数を検証する。違反は `InvalidInputError`。"""
     if temperature < 0.0:
         raise InvalidInputError(f"temperature must be non-negative (got {temperature})")
-    if not 0.0 < min_intensity <= 1.0:
-        raise InvalidInputError(f"min_intensity must lie in (0, 1] (got {min_intensity})")
+    if not 0.0 < min_weight <= 1.0:
+        raise InvalidInputError(f"min_weight must lie in (0, 1] (got {min_weight})")
     if max_lines < 1:
         raise InvalidInputError(f"max_lines must be at least 1 (got {max_lines})")
     if max_quanta is not None and max_quanta < 0:
@@ -246,61 +231,61 @@ def compute_fc_lines(
     modes: Sequence[VibrationalMode],
     *,
     temperature: float,
-    min_intensity: float = 1e-4,
+    min_weight: float = 1e-4,
     max_lines: int = 10000,
     max_quanta: int | None = None,
-) -> FCLinesResult:
-    """離散 FC 因子と対応するエネルギーを、強度の大きい順に列挙する。
+) -> LinesResult:
+    """離散 FC 因子と対応するエネルギーを、重みの大きい順に列挙する。
 
-    `min_intensity` 以上の線を**すべて**返す（`diagnostics.beam_truncated` が
+    `min_weight` 以上の線を**すべて**返す（`diagnostics.beam_truncated` が
     False である限り）。1 モードあたりの寄与 P(n) * FC_mn は 1 以下なので、
-    完成した線の強度は途中経過の積を超えない。したがってモードを 1 つずつ
+    完成した線の重みは途中経過の積を超えない。したがってモードを 1 つずつ
     合成しながら閾値で枝刈りしても、閾値以上の線を取りこぼさない。
 
     Args:
         modes: 正準表現の振動モード列（frequency [cm^-1], huang_rhys）。
         temperature: T [K]。始状態の熱占有に効く。0 なら始状態は振動基底状態のみ。
-        min_intensity: 保持する線強度の下限（0 < x <= 1）。
-        max_lines: 保持・列挙する線数の上限。超えると強度上位のみを残して警告する。
+        min_weight: 保持する重みの下限（0 < x <= 1）。
+        max_lines: 保持・列挙する線数の上限。超えると重みの上位のみを残して警告する。
         max_quanta: 1 モードあたりの振動量子数の上限。省略時は打ち切り残差が
-            `min_intensity` を下回るまで自動で伸ばす（上限 `MAX_QUANTA_PER_MODE`）。
+            `min_weight` を下回るまで自動で伸ばす（上限 `MAX_QUANTA_PER_MODE`）。
 
     Returns:
         線の列と、入力エコー・診断値・来歴を含む結果クラス。
     """
-    _validate(temperature, min_intensity, max_lines, max_quanta)
+    _validate(temperature, min_weight, max_lines, max_quanta)
     modes = tuple(modes)
     if not modes:
         raise InvalidInputError("modes must not be empty")
 
     candidates = [
-        _mode_candidates(mode, temperature, min_intensity, max_quanta) for mode in modes
+        _mode_candidates(mode, temperature, min_weight, max_quanta) for mode in modes
     ]
 
     # suffix_bound[i] = 未処理のモード i.. が到達しうる重みの積の上限。
     # これを掛けて枝刈りすることで、途中経過の本数を抑えたまま網羅性を保てる。
-    # モードごとの選択は独立なので suffix_bound[0] は最強の線の強度そのものになる。
+    # モードごとの選択は独立なので suffix_bound[0] は最大の線の重みそのものになる。
     suffix_bound = [1.0] * (len(modes) + 1)
     for index in reversed(range(len(modes))):
         suffix_bound[index] = suffix_bound[index + 1] * candidates[index].max_weight
 
     lines, beam_truncated = _combine(
-        candidates, modes, suffix_bound, min_intensity=min_intensity, max_lines=max_lines
+        candidates, modes, suffix_bound, min_weight=min_weight, max_lines=max_lines
     )
 
     if len(lines) > max_lines:
         lines = lines[:max_lines]
         beam_truncated = True
 
-    captured = float(sum(line.intensity for line in lines))
+    captured = float(sum(line.weight for line in lines))
     mean_energy = (
-        float(sum(line.intensity * line.energy for line in lines) / captured)
+        float(sum(line.weight * line.energy for line in lines) / captured)
         if captured > 0.0
         else 0.0
     )
     diagnostics_kwargs = {
         "n_lines": len(lines),
-        "captured_intensity": captured,
+        "captured_weight": captured,
         "mean_energy": mean_energy,
         "min_mode_completeness": min(candidate.completeness for candidate in candidates),
         "max_initial_quanta": max(candidate.max_initial for candidate in candidates),
@@ -310,19 +295,19 @@ def compute_fc_lines(
     }
 
     messages = _quality_messages(
-        min_intensity=min_intensity,
+        min_weight=min_weight,
         max_lines=max_lines,
-        strongest_intensity=suffix_bound[0],
+        strongest_weight=suffix_bound[0],
         **diagnostics_kwargs,
     )
     for message in messages:
         warnings.warn(message, NumericalQualityWarning, stacklevel=2)
 
-    return FCLinesResult(
+    return LinesResult(
         lines=tuple(lines),
         modes=modes,
         temperature=temperature,
-        min_intensity=min_intensity,
+        min_weight=min_weight,
         max_lines=max_lines,
         reorganization_energy=reorganization_energy(modes),
         diagnostics=FCLineDiagnostics(messages=messages, **diagnostics_kwargs),
@@ -336,25 +321,25 @@ def _combine(
     modes: Sequence[VibrationalMode],
     suffix_bound: Sequence[float],
     *,
-    min_intensity: float,
+    min_weight: float,
     max_lines: int,
 ) -> tuple[list[FCLine], bool]:
     """モードを 1 つずつ合成して線を組み立てる。"""
-    # (強度, FC 因子, エネルギー, 遷移)
+    # (重み, FC 因子, エネルギー, 遷移)
     partials: list[tuple[float, float, float, tuple[ModeTransition, ...]]] = [(1.0, 1.0, 0.0, ())]
     beam_truncated = False
 
     for index, (candidate, mode) in enumerate(zip(candidates, modes, strict=True)):
         bound = suffix_bound[index + 1]
         combined: list[tuple[float, float, float, tuple[ModeTransition, ...]]] = []
-        for intensity, factor, energy, transitions in partials:
-            for initial, final, mode_factor, weight in candidate.entries:
+        for weight, factor, energy, transitions in partials:
+            for initial, final, mode_factor, mode_weight in candidate.entries:
                 # entries は重みの降順なので、ここで落ちたら以降もすべて落ちる。
-                if intensity * weight * bound < min_intensity:
+                if weight * mode_weight * bound < min_weight:
                     break
                 combined.append(
                     (
-                        intensity * weight,
+                        weight * mode_weight,
                         factor * mode_factor,
                         energy - (final - initial) * mode.frequency,
                         transitions
@@ -371,19 +356,19 @@ def _combine(
             break
 
     lines = [
-        FCLine(energy=energy, fc_factor=factor, intensity=intensity, transitions=transitions)
-        for intensity, factor, energy, transitions in partials
+        FCLine(energy=energy, fc_factor=factor, weight=weight, transitions=transitions)
+        for weight, factor, energy, transitions in partials
     ]
     return lines, beam_truncated
 
 
 def _quality_messages(
     *,
-    min_intensity: float,
+    min_weight: float,
     max_lines: int,
-    strongest_intensity: float,
+    strongest_weight: float,
     n_lines: int,
-    captured_intensity: float,
+    captured_weight: float,
     mean_energy: float,
     min_mode_completeness: float,
     max_initial_quanta: int,
@@ -397,27 +382,27 @@ def _quality_messages(
 
     if n_lines == 0:
         messages.append(
-            f"no transition reaches min_intensity = {min_intensity:g}: the strongest "
-            f"possible line has intensity {strongest_intensity:.3g}. Set min_intensity "
+            f"no transition reaches min_weight = {min_weight:g}: the strongest "
+            f"possible line has weight {strongest_weight:.3g}. Set min_weight "
             "below it, or use fewer modes; with many thermally active modes the "
             "spectrum is spread over too many lines to be described discretely."
         )
-    elif captured_intensity < MIN_CAPTURED_INTENSITY:
+    elif captured_weight < MIN_CAPTURED_WEIGHT:
         messages.append(
-            f"captured_intensity = {captured_intensity:.4g} < {MIN_CAPTURED_INTENSITY:g}: "
+            f"captured_weight = {captured_weight:.4g} < {MIN_CAPTURED_WEIGHT:g}: "
             f"the {n_lines} retained lines account for only part of the spectrum. "
-            "Lower min_intensity (and raise max_lines) to keep more of it."
+            "Lower min_weight (and raise max_lines) to keep more of it."
         )
     if beam_truncated:
         messages.append(
             f"the line list was truncated at max_lines = {max_lines}: lines above "
-            f"min_intensity = {min_intensity:g} are missing. Raise min_intensity "
+            f"min_weight = {min_weight:g} are missing. Raise min_weight "
             "to get an exhaustive list, or raise max_lines."
         )
-    if abs(1.0 - min_mode_completeness) >= min_intensity:
+    if abs(1.0 - min_mode_completeness) >= min_weight:
         messages.append(
             f"min_mode_completeness = {min_mode_completeness:.6g} deviates from 1 by at "
-            f"least min_intensity = {min_intensity:g} at max_final_quanta = "
+            f"least min_weight = {min_weight:g} at max_final_quanta = "
             f"{max_final_quanta}: the vibrational ladder is truncated. Raise max_quanta."
         )
     if recurrence_limited:
@@ -425,7 +410,7 @@ def _quality_messages(
             f"the initial state was capped at max_initial_quanta = {max_initial_quanta} "
             "because the matrix-element recurrence loses accuracy at large g and n; "
             "thermally populated states above it are missing. Use a coarser "
-            "min_intensity or a lower temperature."
+            "min_weight or a lower temperature."
         )
 
     return tuple(messages)

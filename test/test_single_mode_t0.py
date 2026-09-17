@@ -41,7 +41,7 @@ def test_matches_poisson_series_at_zero_temperature(huang_rhys):
     result = compute_quietly(modes, conditions)
     expected = poisson_series(result.energy, huang_rhys, frequency, sigma)
 
-    assert np.max(np.abs(result.intensity - expected)) < 1e-9 * np.max(expected)
+    assert np.max(np.abs(result.density - expected)) < 1e-9 * np.max(expected)
 
 
 def test_sidebands_sit_on_the_negative_side():
@@ -56,12 +56,12 @@ def test_sidebands_sit_on_the_negative_side():
     for k in range(4):
         center = -k * frequency
         near = np.abs(result.energy - center) < frequency / 2.0
-        peak_energy = result.energy[near][np.argmax(result.intensity[near])]
+        peak_energy = result.energy[near][np.argmax(result.density[near])]
         assert peak_energy == pytest.approx(center, abs=conditions.de)
 
     # S = 1 のとき 0-0 と 0-1 のピーク高さは等しく、それ以降は単調に落ちる。
     heights = [
-        float(np.max(result.intensity[np.abs(result.energy + k * frequency) < frequency / 2.0]))
+        float(np.max(result.density[np.abs(result.energy + k * frequency) < frequency / 2.0]))
         for k in range(5)
     ]
     assert heights[0] == pytest.approx(heights[1], rel=1e-6)
@@ -77,7 +77,7 @@ def test_zero_coupling_gives_a_pure_gaussian():
     result = compute_quietly([VibrationalMode(frequency=800.0, huang_rhys=0.0)], conditions)
 
     expected = np.exp(-0.5 * (result.energy / sigma) ** 2) / (sigma * math.sqrt(2.0 * math.pi))
-    assert np.max(np.abs(result.intensity - expected)) < 1e-12
+    assert np.max(np.abs(result.density - expected)) < 1e-12
     assert result.reorganization_energy == 0.0
 
 
@@ -94,4 +94,4 @@ def test_hot_band_appears_on_the_positive_side():
     hot = compute_quietly(modes, conditions_hot)
 
     window = np.abs(cold.energy - frequency) < frequency / 2.0
-    assert np.max(hot.intensity[window]) > 100.0 * np.max(cold.intensity[window])
+    assert np.max(hot.density[window]) > 100.0 * np.max(cold.density[window])

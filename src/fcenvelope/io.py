@@ -1,6 +1,6 @@
 """結果クラスの永続化。単一 JSON を round-trip の正準形式とする。
 
-エンベロープ F(E)（`kind` = `"fcenvelope.result"`）と離散 FC 因子
+エンベロープ F(E)（`kind` = `"fcenvelope.envelope"`）と離散 FC 因子
 （`kind` = `"fcenvelope.fc_lines"`）の 2 種類を扱う。どちらも入力エコーは常に
 正準形（`coupling_convention` = `"huang_rhys"`）で書き出す。これにより
 読み込み側に流儀の曖昧さが残らない。
@@ -26,27 +26,27 @@ from .models import (
 )
 from .result import (
     Diagnostics,
-    FCEnvelopeResult,
+    EnvelopeResult,
     FCLine,
     FCLineDiagnostics,
-    FCLinesResult,
+    LinesResult,
     ModeTransition,
 )
 
 __all__ = [
-    "FC_LINES_KIND",
-    "RESULT_KIND",
+    "ENVELOPE_KIND",
+    "LINES_KIND",
     "load_any",
-    "load_fc_lines",
-    "load_result",
-    "save_fc_lines",
-    "save_result",
+    "load_envelope",
+    "load_lines",
+    "save_envelope",
+    "save_lines",
 ]
 
-RESULT_KIND = "fcenvelope.result"
-FC_LINES_KIND = "fcenvelope.fc_lines"
+ENVELOPE_KIND = "fcenvelope.envelope"
+LINES_KIND = "fcenvelope.fc_lines"
 CANONICAL_ENERGY_UNIT = "cm^-1"
-CANONICAL_INTENSITY_UNIT = "1/cm^-1"
+CANONICAL_DENSITY_UNIT = "1/cm^-1"
 
 _DIAGNOSTIC_FLOAT_FIELDS = (
     "d_tau",
@@ -59,7 +59,7 @@ _DIAGNOSTIC_FLOAT_FIELDS = (
 )
 
 _LINE_DIAGNOSTIC_FLOAT_FIELDS = (
-    "captured_intensity",
+    "captured_weight",
     "mean_energy",
     "min_mode_completeness",
 )
@@ -86,15 +86,15 @@ def _parse_timestamp(text: Any) -> datetime:
     return moment.astimezone(timezone.utc)
 
 
-def result_to_dict(result: FCEnvelopeResult) -> dict[str, Any]:
+def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
     """結果クラスを出力 JSON の構造（§8.2）へ写す。"""
     return {
         "schema_version": SCHEMA_VERSION,
-        "kind": RESULT_KIND,
+        "kind": ENVELOPE_KIND,
         "fcenvelope_version": result.fcenvelope_version,
         "created_at": _format_timestamp(result.created_at),
         "energy_unit": result.energy_unit,
-        "intensity_unit": result.intensity_unit,
+        "density_unit": result.density_unit,
         "input": {
             "frequency_unit": CANONICAL_FREQUENCY_UNIT,
             "coupling_convention": CouplingConvention.HUANG_RHYS.value,
@@ -114,7 +114,7 @@ def result_to_dict(result: FCEnvelopeResult) -> dict[str, Any]:
         },
         "spectrum": {
             "energy": result.energy.tolist(),
-            "intensity": result.intensity.tolist(),
+            "density": result.density.tolist(),
         },
     }
 
@@ -131,9 +131,9 @@ def _write_json(payload: dict[str, Any], path: str | Path) -> None:
         stream.write("\n")
 
 
-def save_result(result: FCEnvelopeResult, path: str | Path) -> None:
+def save_envelope(result: EnvelopeResult, path: str | Path) -> None:
     """エンベロープの結果クラスを JSON として保存する。"""
-    _write_json(result_to_dict(result), path)
+    _write_json(envelope_to_dict(result), path)
 
 
 def _require(data: dict[str, Any], key: str, path: str) -> Any:
@@ -142,7 +142,7 @@ def _require(data: dict[str, Any], key: str, path: str) -> Any:
     return data[key]
 
 
-def result_from_dict(data: Any) -> FCEnvelopeResult:
+def envelope_from_dict(data: Any) -> EnvelopeResult:
     """出力 JSON の構造から結果クラスを復元する。"""
     if not isinstance(data, dict):
         raise InvalidInputError(f"result file must contain a JSON object, got {type(data).__name__}")
@@ -154,19 +154,19 @@ def result_from_dict(data: Any) -> FCEnvelopeResult:
         )
 
     kind = data.get("kind")
-    if kind != RESULT_KIND:
-        raise InvalidInputError(f"unexpected kind {kind!r} (expected {RESULT_KIND!r})")
+    if kind != ENVELOPE_KIND:
+        raise InvalidInputError(f"unexpected kind {kind!r} (expected {ENVELOPE_KIND!r})")
 
     energy_unit = data.get("energy_unit", CANONICAL_ENERGY_UNIT)
-    intensity_unit = data.get("intensity_unit", CANONICAL_INTENSITY_UNIT)
+    density_unit = data.get("density_unit", CANONICAL_DENSITY_UNIT)
     if energy_unit != CANONICAL_ENERGY_UNIT:
         raise UnsupportedUnitError(
             f"unsupported energy_unit {energy_unit!r} (only {CANONICAL_ENERGY_UNIT!r} is supported)"
         )
-    if intensity_unit != CANONICAL_INTENSITY_UNIT:
+    if density_unit != CANONICAL_DENSITY_UNIT:
         raise UnsupportedUnitError(
-            f"unsupported intensity_unit {intensity_unit!r} "
-            f"(only {CANONICAL_INTENSITY_UNIT!r} is supported)"
+            f"unsupported density_unit {density_unit!r} "
+            f"(only {CANONICAL_DENSITY_UNIT!r} is supported)"
         )
 
     echo = dict(_require(data, "input", "input"))
@@ -185,18 +185,18 @@ def result_from_dict(data: Any) -> FCEnvelopeResult:
 
     spectrum = _require(data, "spectrum", "spectrum")
     energy = np.asarray(_require(spectrum, "energy", "spectrum.energy"), dtype=np.float64)
-    intensity = np.asarray(_require(spectrum, "intensity", "spectrum.intensity"), dtype=np.float64)
-    if energy.shape != intensity.shape:
+    density = np.asarray(_require(spectrum, "density", "spectrum.density"), dtype=np.float64)
+    if energy.shape != density.shape:
         raise InvalidInputError(
-            f"spectrum.energy and spectrum.intensity length mismatch: "
-            f"{energy.shape[0]} vs {intensity.shape[0]}"
+            f"spectrum.energy and spectrum.density length mismatch: "
+            f"{energy.shape[0]} vs {density.shape[0]}"
         )
 
     derived = data.get("derived", {})
 
-    return FCEnvelopeResult(
+    return EnvelopeResult(
         energy=energy,
-        intensity=intensity,
+        density=density,
         modes=tuple(parsed_input.to_modes()),
         conditions=parsed_input.conditions,
         reorganization_energy=float(_require(derived, "reorganization_energy", "derived.reorganization_energy")),
@@ -204,7 +204,7 @@ def result_from_dict(data: Any) -> FCEnvelopeResult:
         fcenvelope_version=str(_require(data, "fcenvelope_version", "fcenvelope_version")),
         created_at=_parse_timestamp(_require(data, "created_at", "created_at")),
         energy_unit=energy_unit,
-        intensity_unit=intensity_unit,
+        density_unit=density_unit,
     )
 
 
@@ -220,17 +220,17 @@ def _read_json(path: str | Path) -> Any:
         raise InvalidInputError(f"invalid JSON in {source}: {exc}") from exc
 
 
-def load_result(path: str | Path) -> FCEnvelopeResult:
+def load_envelope(path: str | Path) -> EnvelopeResult:
     """保存済み JSON からエンベロープの結果クラスを復元する。"""
-    return result_from_dict(_read_json(path))
+    return envelope_from_dict(_read_json(path))
 
 
-def fc_lines_to_dict(result: FCLinesResult) -> dict[str, Any]:
+def lines_to_dict(result: LinesResult) -> dict[str, Any]:
     """離散 FC 因子の結果クラスを出力 JSON の構造へ写す。"""
     diagnostics = result.diagnostics
     return {
         "schema_version": SCHEMA_VERSION,
-        "kind": FC_LINES_KIND,
+        "kind": LINES_KIND,
         "fcenvelope_version": result.fcenvelope_version,
         "created_at": _format_timestamp(result.created_at),
         "energy_unit": result.energy_unit,
@@ -244,7 +244,7 @@ def fc_lines_to_dict(result: FCLinesResult) -> dict[str, Any]:
             "temperature": result.temperature,
         },
         "selection": {
-            "min_intensity": result.min_intensity,
+            "min_weight": result.min_weight,
             "max_lines": result.max_lines,
         },
         "derived": {"reorganization_energy": result.reorganization_energy},
@@ -263,7 +263,7 @@ def fc_lines_to_dict(result: FCLinesResult) -> dict[str, Any]:
             {
                 "energy": line.energy,
                 "fc_factor": line.fc_factor,
-                "intensity": line.intensity,
+                "weight": line.weight,
                 "transitions": [
                     {
                         "mode": transition.mode_index,
@@ -278,9 +278,9 @@ def fc_lines_to_dict(result: FCLinesResult) -> dict[str, Any]:
     }
 
 
-def save_fc_lines(result: FCLinesResult, path: str | Path) -> None:
+def save_lines(result: LinesResult, path: str | Path) -> None:
     """離散 FC 因子の結果クラスを JSON として保存する。"""
-    _write_json(fc_lines_to_dict(result), path)
+    _write_json(lines_to_dict(result), path)
 
 
 def _parse_transitions(data: Any, index: int) -> tuple[ModeTransition, ...]:
@@ -299,7 +299,7 @@ def _parse_transitions(data: Any, index: int) -> tuple[ModeTransition, ...]:
         raise InvalidInputError(f"lines[{index}]: malformed transition: {exc}") from exc
 
 
-def fc_lines_from_dict(data: Any) -> FCLinesResult:
+def lines_from_dict(data: Any) -> LinesResult:
     """出力 JSON の構造から離散 FC 因子の結果クラスを復元する。"""
     if not isinstance(data, dict):
         raise InvalidInputError(
@@ -313,8 +313,8 @@ def fc_lines_from_dict(data: Any) -> FCLinesResult:
         )
 
     kind = data.get("kind")
-    if kind != FC_LINES_KIND:
-        raise InvalidInputError(f"unexpected kind {kind!r} (expected {FC_LINES_KIND!r})")
+    if kind != LINES_KIND:
+        raise InvalidInputError(f"unexpected kind {kind!r} (expected {LINES_KIND!r})")
 
     energy_unit = data.get("energy_unit", CANONICAL_ENERGY_UNIT)
     if energy_unit != CANONICAL_ENERGY_UNIT:
@@ -363,7 +363,7 @@ def fc_lines_from_dict(data: Any) -> FCLinesResult:
             FCLine(
                 energy=float(item["energy"]),
                 fc_factor=float(item["fc_factor"]),
-                intensity=float(item["intensity"]),
+                weight=float(item["weight"]),
                 transitions=_parse_transitions(item.get("transitions", []), index),
             )
             for index, item in enumerate(lines_data)
@@ -373,11 +373,11 @@ def fc_lines_from_dict(data: Any) -> FCLinesResult:
 
     derived = data.get("derived", {})
 
-    return FCLinesResult(
+    return LinesResult(
         lines=lines,
         modes=modes,
         temperature=float(_require(echo, "temperature", "input.temperature")),
-        min_intensity=float(_require(selection, "min_intensity", "selection.min_intensity")),
+        min_weight=float(_require(selection, "min_weight", "selection.min_weight")),
         max_lines=int(_require(selection, "max_lines", "selection.max_lines")),
         reorganization_energy=float(
             _require(derived, "reorganization_energy", "derived.reorganization_energy")
@@ -389,15 +389,15 @@ def fc_lines_from_dict(data: Any) -> FCLinesResult:
     )
 
 
-def load_fc_lines(path: str | Path) -> FCLinesResult:
+def load_lines(path: str | Path) -> LinesResult:
     """保存済み JSON から離散 FC 因子の結果クラスを復元する。"""
-    return fc_lines_from_dict(_read_json(path))
+    return lines_from_dict(_read_json(path))
 
 
-def load_any(path: str | Path) -> FCEnvelopeResult | FCLinesResult:
+def load_any(path: str | Path) -> EnvelopeResult | LinesResult:
     """`kind` を見てエンベロープ / 離散 FC 因子のどちらかを復元する。"""
     data = _read_json(path)
     kind = data.get("kind") if isinstance(data, dict) else None
-    if kind == FC_LINES_KIND:
-        return fc_lines_from_dict(data)
-    return result_from_dict(data)
+    if kind == LINES_KIND:
+        return lines_from_dict(data)
+    return envelope_from_dict(data)
