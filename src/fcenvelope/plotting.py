@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -11,9 +12,12 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
     import matplotlib.figure
 
 from .errors import InvalidInputError
+from .logs import stage
 from .result import EnvelopeResult, LinesResult, Result
 
 __all__ = ["DRAWERS", "plot_any", "plot_envelope", "plot_lines", "plot_overlay"]
+
+logger = logging.getLogger(__name__)
 
 ENERGY_UNIT = "cm^-1"
 """軸ラベルに書く E の単位。計算側は常にこの単位しか扱わない（ADR-0047）。"""
@@ -113,11 +117,12 @@ def plot_envelope(
 
     `ax` を渡せば複数条件を 1 枚に重ね描きできる。保存は呼び出し側の責務。
     """
-    figure, ax = _resolve_axes(ax)
+    with stage(logger, f"plot envelope ({result.energy.size} points)"):
+        figure, ax = _resolve_axes(ax)
 
-    _draw_envelope(ax, result, label=label)
-    ax.margins(x=0.0)
-    _finish(ax, title=title, labelled=label is not None)
+        _draw_envelope(ax, result, label=label)
+        ax.margins(x=0.0)
+        _finish(ax, title=title, labelled=label is not None)
 
     return figure
 
@@ -134,13 +139,14 @@ def plot_lines(
     縦軸は熱占有を掛けた重み（無次元）で、エンベロープ F(E)（1/cm^-1）とは
     次元が異なる。エンベロープと 1 枚に重ねる場合は `plot_overlay` を使う。
     """
-    figure, ax = _resolve_axes(ax)
+    with stage(logger, f"plot lines ({len(result.lines)} lines)"):
+        figure, ax = _resolve_axes(ax)
 
-    _draw_sticks(ax, result.energies, result.weights, label=label)
-    _energy_axis(ax)
-    ax.set_ylabel("weight")
-    ax.axhline(0.0, **_GUIDE)
-    _finish(ax, title=title, labelled=label is not None)
+        _draw_sticks(ax, result.energies, result.weights, label=label)
+        _energy_axis(ax)
+        ax.set_ylabel("weight")
+        ax.axhline(0.0, **_GUIDE)
+        _finish(ax, title=title, labelled=label is not None)
 
     return figure
 
@@ -192,31 +198,37 @@ def plot_overlay(
 
     _warn_on_mismatch(envelope, lines)
 
-    figure, ax = _resolve_axes(ax)
+    with stage(
+        logger,
+        f"plot overlay ({envelope.energy.size} points, {len(lines.lines)} lines)",
+    ):
+        figure, ax = _resolve_axes(ax)
 
-    # 頂点値の式は線形状が持つ（ADR-0034）。ここは種類を知らなくてよい。
-    scale = magnify * envelope.broadening.peak_height()
-    if lines_label is not None and magnify != 1.0:
-        lines_label = rf"{lines_label} ($\times${magnify:g})"
+        # 頂点値の式は線形状が持つ（ADR-0034）。ここは種類を知らなくてよい。
+        scale = magnify * envelope.broadening.peak_height()
+        if lines_label is not None and magnify != 1.0:
+            lines_label = rf"{lines_label} ($\times${magnify:g})"
 
-    _draw_envelope(ax, envelope, label=envelope_label, color=ENVELOPE_COLOR, zorder=2.2)
-    _draw_sticks(
-        ax,
-        lines.energies,
-        lines.weights * scale,
-        label=lines_label,
-        color=LINES_COLOR,
-        zorder=2.1,
-    )
-    ax.axhline(0.0, **_GUIDE)
+        _draw_envelope(
+            ax, envelope, label=envelope_label, color=ENVELOPE_COLOR, zorder=2.2
+        )
+        _draw_sticks(
+            ax,
+            lines.energies,
+            lines.weights * scale,
+            label=lines_label,
+            color=LINES_COLOR,
+            zorder=2.1,
+        )
+        ax.axhline(0.0, **_GUIDE)
 
-    ax.margins(x=0.0)
-    ax.set_xlim(float(envelope.energy[0]), float(envelope.energy[-1]))
-    _finish(
-        ax,
-        title=title,
-        labelled=envelope_label is not None or lines_label is not None,
-    )
+        ax.margins(x=0.0)
+        ax.set_xlim(float(envelope.energy[0]), float(envelope.energy[-1]))
+        _finish(
+            ax,
+            title=title,
+            labelled=envelope_label is not None or lines_label is not None,
+        )
 
     return figure
 

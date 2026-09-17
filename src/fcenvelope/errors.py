@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import warnings
 from collections.abc import Sequence
 
@@ -17,6 +18,8 @@ __all__ = [
     "NumericalQualityWarning",
     "report_quality",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class FCEnvelopeError(Exception):
@@ -54,4 +57,6 @@ def report_quality(messages: Sequence[str]) -> tuple[str, ...]:
     for message in reported:
         # 2 つ上が compute_* の呼び出し元になる（compute_* -> report_quality -> warn）。
         warnings.warn(message, NumericalQualityWarning, stacklevel=3)
+        # 品質の警告はここが唯一の出どころなので、ログにも 1 箇所で残せる。
+        logger.warning("%s", message)
     return reported

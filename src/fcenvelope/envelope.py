@@ -17,6 +17,7 @@ D(tau) は線形状に由来する減衰因子で、その形は `Broadening` �
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 from .errors import report_quality
+from .logs import stage
 from .models import Broadening, EnergyGrid, VibrationalSystem, validate_temperature
 from .result import Diagnostics, EnvelopeResult, Provenance
 from .version import __version__
@@ -32,6 +34,8 @@ __all__ = [
     "build_grids",
     "compute_envelope",
 ]
+
+logger = logging.getLogger(__name__)
 
 # --- 診断値の警告閾値（§7 の表） ---
 # tau 窓の打ち切りの閾値だけは線形状の側にある（`Broadening.MIN_TRUNCATION_INDICATOR`）。
@@ -108,7 +112,19 @@ def compute_envelope(
         窓へ切り出した F(E) と、入力エコー・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
-    energy, density, measured = _transform(system, temperature, broadening, grid)
+    # 節目はこの 1 組だけにする。モードや tau 点ごとの記録は取らない（ADR-0052）。
+    with stage(
+        logger,
+        f"envelope: {len(system.modes)} modes, T={temperature:g} K, de={grid.de:g}",
+    ):
+        energy, density, measured = _transform(system, temperature, broadening, grid)
+    logger.info(
+        "envelope: %d points, N_fft=%d, area=%.9g, captured=%.6g",
+        energy.size,
+        measured.n_fft,
+        measured.total_area,
+        measured.window_captured_fraction,
+    )
     messages = report_quality(_quality_messages(broadening, measured))
 
     return EnvelopeResult(

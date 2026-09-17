@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 from pathlib import Path
 from typing import Final, Literal
 
@@ -30,6 +31,7 @@ from pydantic import (
 )
 
 from .errors import InvalidInputError, SchemaVersionError
+from .logs import stage
 from .models import (
     Broadening,
     EnergyGrid,
@@ -49,6 +51,8 @@ from .units import (
 #: つまみの既定値の唯一の出どころ（ADR-0050）。`Selection` は slots 付きの
 #: dataclass なのでクラス属性から既定値は読めず、既定のインスタンスから引く。
 _DEFAULT_SELECTION = Selection()
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "MODES_CSV_COLUMNS",
@@ -161,6 +165,7 @@ def read_mode_specs_csv(path: str | Path) -> list[ModeSpec]:
             specs.append(ModeSpec.model_validate(dict(zip(columns, fields))))
         except ValidationError as exc:
             raise InvalidInputError(f"{location}: {exc}{hint}") from exc
+    logger.info("read %d modes from %s", len(specs), p)
     return specs
 
 
@@ -317,8 +322,9 @@ class FCEnvelopeInput(BaseModel):
     def from_path(cls, path: str | Path) -> "FCEnvelopeInput":
         """入力 JSON ファイルを読み込む。`modes.path` はこのファイルからの相対パス。"""
         p = Path(path)
-        try:
-            text = p.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise InvalidInputError(f"cannot read input file {p}: {exc}") from exc
-        return cls.from_json(text, base_dir=p.parent)
+        with stage(logger, f"read {p}"):
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise InvalidInputError(f"cannot read input file {p}: {exc}") from exc
+            return cls.from_json(text, base_dir=p.parent)

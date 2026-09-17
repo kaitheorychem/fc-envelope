@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from typing import Any, Generic, TypeVar, get_type_hints
 import numpy as np
 
 from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
+from .logs import stage
 from .models import (
     Broadening,
     EnergyGrid,
@@ -62,6 +64,8 @@ __all__ = [
     "save_envelope",
     "save_lines",
 ]
+
+logger = logging.getLogger(__name__)
 
 ENVELOPE_KIND = "fcenvelope.envelope"
 LINES_KIND = "fcenvelope.fc_lines"
@@ -190,9 +194,10 @@ def _write_json(payload: JsonObject, path: str | Path) -> None:
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w", encoding="utf-8") as stream:
-        json.dump(payload, stream, ensure_ascii=False, indent=2)
-        stream.write("\n")
+    with stage(logger, f"write {target}"):
+        with target.open("w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
 
 
 def save_envelope(result: EnvelopeResult, path: str | Path) -> None:
@@ -401,14 +406,15 @@ def envelope_from_dict(data: JsonValue) -> EnvelopeResult:
 
 def _read_json(path: str | Path) -> JsonValue:
     source = Path(path)
-    try:
-        text = source.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise InvalidInputError(f"cannot read result file {source}: {exc}") from exc
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise InvalidInputError(f"invalid JSON in {source}: {exc}") from exc
+    with stage(logger, f"read {source}"):
+        try:
+            text = source.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise InvalidInputError(f"cannot read result file {source}: {exc}") from exc
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise InvalidInputError(f"invalid JSON in {source}: {exc}") from exc
 
 
 def load_envelope(path: str | Path) -> EnvelopeResult:

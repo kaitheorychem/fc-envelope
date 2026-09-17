@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import replace
@@ -35,6 +36,7 @@ import numpy as np
 from scipy.special import gammaln
 
 from .errors import report_quality
+from .logs import stage
 from .models import Selection, VibrationalMode, VibrationalSystem, validate_temperature
 from .physics import K_B_CM, boltzmann_populations
 from .result import FCLine, FCLineDiagnostics, LinesResult, ModeTransition, Provenance
@@ -46,6 +48,8 @@ __all__ = [
     "displacement_matrix",
     "fc_factor_matrix",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: `max_quanta` を省略したときに自動決定が到達しうる 1 モードあたりの量子数の上限。
 MAX_QUANTA_PER_MODE = 200
@@ -237,7 +241,16 @@ def compute_fc_lines(
         線の列と、入力エコー・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
-    lines, measured, strongest_weight = _enumerate(system, temperature, selection)
+    # 節目はこの 1 組だけにする。モードごと・線ごとの記録は取らない（ADR-0052）。
+    with stage(
+        logger,
+        f"fc lines: {len(system.modes)} modes, T={temperature:g} K, "
+        f"min_weight={selection.min_weight:g}",
+    ):
+        lines, measured, strongest_weight = _enumerate(system, temperature, selection)
+    logger.info(
+        "fc lines: %d lines, captured=%.6g", measured.n_lines, measured.captured_weight
+    )
     messages = report_quality(
         _quality_messages(selection, measured, strongest_weight=strongest_weight)
     )
