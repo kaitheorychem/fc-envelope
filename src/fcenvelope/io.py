@@ -9,9 +9,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, get_type_hints
 
 import numpy as np
 
@@ -36,9 +38,13 @@ from .result import (
 __all__ = [
     "ENVELOPE_KIND",
     "LINES_KIND",
+    "RESULT_KINDS",
+    "kind_for",
+    "kind_of",
     "load_any",
     "load_envelope",
     "load_lines",
+    "save_any",
     "save_envelope",
     "save_lines",
 ]
@@ -58,23 +64,50 @@ CANONICAL_DENSITY_UNIT = "1/cm^-1"
 CANONICAL_FREQUENCY_UNIT = "cm^-1"
 CANONICAL_COUPLING_CONVENTION = "huang_rhys"
 
-_DIAGNOSTIC_FLOAT_FIELDS = (
-    "d_tau",
-    "tau_max",
-    "sigma_tau_max",
-    "total_area",
-    "window_captured_fraction",
-    "edge_intensity_ratio",
-    "max_imaginary_ratio",
-)
+#: 診断値の型 -> JSON からの変換。dataclass の型注釈から引く。
+_SCALAR_READERS: dict[type, Callable[[Any], Any]] = {int: int, float: float, bool: bool}
 
-_LINE_DIAGNOSTIC_FLOAT_FIELDS = (
-    "captured_weight",
-    "mean_energy",
-    "min_mode_completeness",
-)
-_LINE_DIAGNOSTIC_INT_FIELDS = ("n_lines", "max_initial_quanta", "max_final_quanta")
-_LINE_DIAGNOSTIC_BOOL_FIELDS = ("beam_truncated", "recurrence_limited")
+
+def _diagnostic_readers(cls: type) -> dict[str, Callable[[Any], Any]]:
+    """診断値クラスの定義からフィールド名と変換関数を導く（ADR-0036）。
+
+    フィールド名のタプルを手で複製すると、dataclass にフィールドを足してタプルに
+    足し忘れたときに静かに壊れる。`messages` だけは他と扱いが違うので除く。
+    """
+    hints = get_type_hints(cls)
+    return {
+        field.name: _SCALAR_READERS[hints[field.name]]
+        for field in fields(cls)
+        if field.name != "messages"
+    }
+
+
+def _diagnostics_to_dict(diagnostics: Any) -> dict[str, Any]:
+    """診断値を JSON の構造へ写す。"""
+    return {
+        **{
+            name: getattr(diagnostics, name)
+            for name in _diagnostic_readers(type(diagnostics))
+        },
+        "messages": list(diagnostics.messages),
+    }
+
+
+def _diagnostics_from_dict(cls: type, data: Any) -> Any:
+    """JSON の構造から診断値を復元する。"""
+    if not isinstance(data, dict):
+        raise InvalidInputError(
+            f"'diagnostics' must be a JSON object, got {type(data).__name__}"
+        )
+    try:
+        values = {
+            name: read(data[name]) for name, read in _diagnostic_readers(cls).items()
+        }
+    except KeyError as exc:
+        raise InvalidInputError(f"missing diagnostics field {exc.args[0]!r}") from exc
+    except (TypeError, ValueError) as exc:
+        raise InvalidInputError(f"malformed diagnostics: {exc}") from exc
+    return cls(messages=tuple(data.get("messages", ())), **values)
 
 
 def _format_timestamp(moment: datetime) -> str:
@@ -99,11 +132,7 @@ def _parse_timestamp(text: Any) -> datetime:
 def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
     """結果クラスを出力 JSON の構造（§8.2）へ写す。"""
     return {
-        "schema_version": SCHEMA_VERSION,
-        "kind": ENVELOPE_KIND,
-        **_provenance_to_dict(result.provenance),
-        "energy_unit": CANONICAL_ENERGY_UNIT,
-        "density_unit": CANONICAL_DENSITY_UNIT,
+        **_header_to_dict(ENVELOPE_KIND, result.provenance),
         "input": {
             **_system_to_dict(result.system),
             "temperature": result.temperature,
@@ -115,13 +144,7 @@ def envelope_to_dict(result: EnvelopeResult) -> dict[str, Any]:
             },
         },
         "derived": _derived_to_dict(result.system),
-        "diagnostics": {
-            "n_fft": result.diagnostics.n_fft,
-            **{
-                name: getattr(result.diagnostics, name) for name in _DIAGNOSTIC_FLOAT_FIELDS
-            },
-            "messages": list(result.diagnostics.messages),
-        },
+        "diagnostics": _diagnostics_to_dict(result.diagnostics),
         "spectrum": {
             "energy": result.energy.tolist(),
             "density": result.density.tolist(),
@@ -197,13 +220,37 @@ def _check_echo_header(echo: Any) -> None:
         )
 
 
-def _check_unit(data: dict[str, Any], key: str, canonical: str) -> None:
-    """単位のフィールドが正準な単位であることを確かめる。"""
-    unit = data.get(key, canonical)
-    if unit != canonical:
-        raise UnsupportedUnitError(
-            f"unsupported {key} {unit!r} (only {canonical!r} is supported)"
+def _header_to_dict(kind: str, provenance: Provenance) -> dict[str, Any]:
+    """どの結果ファイルにも共通する先頭部分。1 箇所で書く（ADR-0036）。"""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": kind,
+        "fcenvelope_version": provenance.fcenvelope_version,
+        "created_at": _format_timestamp(provenance.created_at),
+        **RESULT_KINDS[kind].units,
+    }
+
+
+def _check_header(data: Any, kind: str) -> None:
+    """共通の先頭部分を検査する。1 箇所で読む（ADR-0036）。"""
+    if not isinstance(data, dict):
+        raise InvalidInputError(
+            f"result file must contain a JSON object, got {type(data).__name__}"
         )
+    version = _require(data, "schema_version", "schema_version")
+    if version != SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"unsupported schema_version {version!r} (this build supports {SCHEMA_VERSION})"
+        )
+    found = data.get("kind")
+    if found != kind:
+        raise InvalidInputError(f"unexpected kind {found!r} (expected {kind!r})")
+    for key, canonical in RESULT_KINDS[kind].units.items():
+        unit = data.get(key, canonical)
+        if unit != canonical:
+            raise UnsupportedUnitError(
+                f"unsupported {key} {unit!r} (only {canonical!r} is supported)"
+            )
 
 
 def _system_to_dict(system: VibrationalSystem) -> dict[str, Any]:
@@ -221,13 +268,6 @@ def _system_to_dict(system: VibrationalSystem) -> dict[str, Any]:
 def _derived_to_dict(system: VibrationalSystem) -> dict[str, Any]:
     """系から導かれる量。結果クラスは持たず、io が書き出す（ADR-0047）。"""
     return {"reorganization_energy": system.reorganization_energy}
-
-
-def _provenance_to_dict(provenance: Provenance) -> dict[str, Any]:
-    return {
-        "fcenvelope_version": provenance.fcenvelope_version,
-        "created_at": _format_timestamp(provenance.created_at),
-    }
 
 
 def _provenance_from_dict(data: dict[str, Any]) -> Provenance:
@@ -263,21 +303,7 @@ def _modes_from_echo(echo: dict[str, Any]) -> tuple[VibrationalMode, ...]:
 
 def envelope_from_dict(data: Any) -> EnvelopeResult:
     """出力 JSON の構造から結果クラスを復元する。"""
-    if not isinstance(data, dict):
-        raise InvalidInputError(f"result file must contain a JSON object, got {type(data).__name__}")
-
-    version = _require(data, "schema_version", "schema_version")
-    if version != SCHEMA_VERSION:
-        raise SchemaVersionError(
-            f"unsupported schema_version {version!r} (this build supports {SCHEMA_VERSION})"
-        )
-
-    kind = data.get("kind")
-    if kind != ENVELOPE_KIND:
-        raise InvalidInputError(f"unexpected kind {kind!r} (expected {ENVELOPE_KIND!r})")
-
-    _check_unit(data, "energy_unit", CANONICAL_ENERGY_UNIT)
-    _check_unit(data, "density_unit", CANONICAL_DENSITY_UNIT)
+    _check_header(data, ENVELOPE_KIND)
 
     echo = _require(data, "input", "input")
     _check_echo_header(echo)
@@ -297,15 +323,9 @@ def envelope_from_dict(data: Any) -> EnvelopeResult:
         de=_require_float(grid_echo, "de", "input.grid.de"),
     )
 
-    diagnostics_data = _require(data, "diagnostics", "diagnostics")
-    try:
-        diagnostics = Diagnostics(
-            n_fft=int(diagnostics_data["n_fft"]),
-            messages=tuple(diagnostics_data.get("messages", ())),
-            **{name: float(diagnostics_data[name]) for name in _DIAGNOSTIC_FLOAT_FIELDS},
-        )
-    except KeyError as exc:
-        raise InvalidInputError(f"missing diagnostics field {exc.args[0]!r}") from exc
+    diagnostics = _diagnostics_from_dict(
+        Diagnostics, _require(data, "diagnostics", "diagnostics")
+    )
 
     spectrum = _require(data, "spectrum", "spectrum")
     energy = np.asarray(_require(spectrum, "energy", "spectrum.energy"), dtype=np.float64)
@@ -349,12 +369,8 @@ def load_envelope(path: str | Path) -> EnvelopeResult:
 
 def lines_to_dict(result: LinesResult) -> dict[str, Any]:
     """離散 FC 因子の結果クラスを出力 JSON の構造へ写す。"""
-    diagnostics = result.diagnostics
     return {
-        "schema_version": SCHEMA_VERSION,
-        "kind": LINES_KIND,
-        **_provenance_to_dict(result.provenance),
-        "energy_unit": CANONICAL_ENERGY_UNIT,
+        **_header_to_dict(LINES_KIND, result.provenance),
         "input": {
             **_system_to_dict(result.system),
             "temperature": result.temperature,
@@ -365,17 +381,7 @@ def lines_to_dict(result: LinesResult) -> dict[str, Any]:
             },
         },
         "derived": _derived_to_dict(result.system),
-        "diagnostics": {
-            **{
-                name: getattr(diagnostics, name)
-                for name in (
-                    *_LINE_DIAGNOSTIC_INT_FIELDS,
-                    *_LINE_DIAGNOSTIC_FLOAT_FIELDS,
-                    *_LINE_DIAGNOSTIC_BOOL_FIELDS,
-                )
-            },
-            "messages": list(diagnostics.messages),
-        },
+        "diagnostics": _diagnostics_to_dict(result.diagnostics),
         "lines": [
             {
                 "energy": line.energy,
@@ -418,37 +424,15 @@ def _parse_transitions(data: Any, index: int) -> tuple[ModeTransition, ...]:
 
 def lines_from_dict(data: Any) -> LinesResult:
     """出力 JSON の構造から離散 FC 因子の結果クラスを復元する。"""
-    if not isinstance(data, dict):
-        raise InvalidInputError(
-            f"result file must contain a JSON object, got {type(data).__name__}"
-        )
-
-    version = _require(data, "schema_version", "schema_version")
-    if version != SCHEMA_VERSION:
-        raise SchemaVersionError(
-            f"unsupported schema_version {version!r} (this build supports {SCHEMA_VERSION})"
-        )
-
-    kind = data.get("kind")
-    if kind != LINES_KIND:
-        raise InvalidInputError(f"unexpected kind {kind!r} (expected {LINES_KIND!r})")
-
-    _check_unit(data, "energy_unit", CANONICAL_ENERGY_UNIT)
+    _check_header(data, LINES_KIND)
 
     echo = _require(data, "input", "input")
     _check_echo_header(echo)
     system = _system_from_echo(echo)
 
-    diagnostics_data = _require(data, "diagnostics", "diagnostics")
-    try:
-        diagnostics = FCLineDiagnostics(
-            messages=tuple(diagnostics_data.get("messages", ())),
-            **{name: int(diagnostics_data[name]) for name in _LINE_DIAGNOSTIC_INT_FIELDS},
-            **{name: float(diagnostics_data[name]) for name in _LINE_DIAGNOSTIC_FLOAT_FIELDS},
-            **{name: bool(diagnostics_data[name]) for name in _LINE_DIAGNOSTIC_BOOL_FIELDS},
-        )
-    except KeyError as exc:
-        raise InvalidInputError(f"missing diagnostics field {exc.args[0]!r}") from exc
+    diagnostics = _diagnostics_from_dict(
+        FCLineDiagnostics, _require(data, "diagnostics", "diagnostics")
+    )
 
     selection_echo = _require(echo, "selection", "input.selection")
     selection = _build(
@@ -491,10 +475,74 @@ def load_lines(path: str | Path) -> LinesResult:
     return lines_from_dict(_read_json(path))
 
 
+@dataclass(frozen=True, slots=True)
+class _ResultKind:
+    """結果の 1 種類について、`io` が持つ関心をまとめたもの（ADR-0049）。"""
+
+    kind: str
+    """出力ファイルの `kind`。"""
+
+    result_type: type
+    """対応する結果クラス。"""
+
+    units: dict[str, str]
+    """ファイルに書く単位のフィールド。読み込み時はこの値と突き合わせる。"""
+
+    to_dict: Callable[[Any], dict[str, Any]]
+    from_dict: Callable[[Any], Any]
+
+
+#: `kind` -> 保存・読み込み。種類を足すときはここに 1 行足す。
+#: 描画は `plotting.DRAWERS`、報告は `cli.REPORTERS` にそれぞれの表がある。
+RESULT_KINDS: dict[str, _ResultKind] = {
+    ENVELOPE_KIND: _ResultKind(
+        kind=ENVELOPE_KIND,
+        result_type=EnvelopeResult,
+        units={
+            "energy_unit": CANONICAL_ENERGY_UNIT,
+            "density_unit": CANONICAL_DENSITY_UNIT,
+        },
+        to_dict=envelope_to_dict,
+        from_dict=envelope_from_dict,
+    ),
+    LINES_KIND: _ResultKind(
+        kind=LINES_KIND,
+        result_type=LinesResult,
+        units={"energy_unit": CANONICAL_ENERGY_UNIT},
+        to_dict=lines_to_dict,
+        from_dict=lines_from_dict,
+    ),
+}
+
+_KIND_BY_TYPE: dict[type, str] = {
+    spec.result_type: spec.kind for spec in RESULT_KINDS.values()
+}
+
+
+def kind_for(result_type: type) -> str:
+    """結果クラスに対応する `kind` を返す。種類名を直書きしないための引き口。"""
+    try:
+        return _KIND_BY_TYPE[result_type]
+    except KeyError as exc:
+        raise InvalidInputError(f"unknown result type {result_type.__name__}") from exc
+
+
+def kind_of(result: Any) -> str:
+    """結果に対応する `kind` を返す。"""
+    return kind_for(type(result))
+
+
+def save_any(result: Any, path: str | Path) -> None:
+    """結果の種類を見て保存する。"""
+    _write_json(RESULT_KINDS[kind_of(result)].to_dict(result), path)
+
+
 def load_any(path: str | Path) -> EnvelopeResult | LinesResult:
     """`kind` を見てエンベロープ / 離散 FC 因子のどちらかを復元する。"""
     data = _read_json(path)
     kind = data.get("kind") if isinstance(data, dict) else None
-    if kind == LINES_KIND:
-        return lines_from_dict(data)
-    return envelope_from_dict(data)
+    spec = RESULT_KINDS.get(kind)
+    if spec is None:
+        known = ", ".join(sorted(RESULT_KINDS))
+        raise InvalidInputError(f"unknown kind {kind!r} (known kinds: {known})")
+    return spec.from_dict(data)

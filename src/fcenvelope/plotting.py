@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
     import matplotlib.axes
@@ -12,7 +13,7 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
 from .errors import InvalidInputError
 from .result import EnvelopeResult, LinesResult
 
-__all__ = ["plot_envelope", "plot_lines", "plot_overlay"]
+__all__ = ["DRAWERS", "plot_any", "plot_envelope", "plot_lines", "plot_overlay"]
 
 ENERGY_UNIT = "cm^-1"
 """軸ラベルに書く E の単位。計算側は常にこの単位しか扱わない（ADR-0047）。"""
@@ -46,6 +47,22 @@ def _resolve_axes(
     return plt.subplots(figsize=(7.0, 4.2), layout="constrained")
 
 
+def _energy_axis(ax: "matplotlib.axes.Axes") -> None:
+    """どの図でも共通の E 軸の体裁。"""
+    ax.set_xlabel(f"$E$ / {_mathtext_unit(ENERGY_UNIT)}")
+    ax.axvline(0.0, **_GUIDE)
+
+
+def _finish(
+    ax: "matplotlib.axes.Axes", *, title: str | None, labelled: bool
+) -> None:
+    """表題と凡例。どの描画関数でも同じなのでここにまとめる。"""
+    if title is not None:
+        ax.set_title(title)
+    if labelled:
+        ax.legend()
+
+
 def _draw_envelope(
     ax: "matplotlib.axes.Axes",
     result: EnvelopeResult,
@@ -62,7 +79,7 @@ def _draw_envelope(
         style["zorder"] = zorder
 
     ax.plot(result.energy, result.density, label=label, **style)
-    ax.set_xlabel(f"$E$ / {_mathtext_unit(ENERGY_UNIT)}")
+    _energy_axis(ax)
     ax.set_ylabel(f"$F(E)$ / {_mathtext_unit(DENSITY_UNIT)}")
 
 
@@ -99,13 +116,8 @@ def plot_envelope(
     figure, ax = _resolve_axes(ax)
 
     _draw_envelope(ax, result, label=label)
-    ax.axvline(0.0, **_GUIDE)
     ax.margins(x=0.0)
-
-    if title is not None:
-        ax.set_title(title)
-    if label is not None:
-        ax.legend()
+    _finish(ax, title=title, labelled=label is not None)
 
     return figure
 
@@ -125,15 +137,10 @@ def plot_lines(
     figure, ax = _resolve_axes(ax)
 
     _draw_sticks(ax, result.energies, result.weights, label=label)
-    ax.set_xlabel(f"$E$ / {_mathtext_unit(ENERGY_UNIT)}")
+    _energy_axis(ax)
     ax.set_ylabel("weight")
     ax.axhline(0.0, **_GUIDE)
-    ax.axvline(0.0, **_GUIDE)
-
-    if title is not None:
-        ax.set_title(title)
-    if label is not None:
-        ax.legend()
+    _finish(ax, title=title, labelled=label is not None)
 
     return figure
 
@@ -202,14 +209,33 @@ def plot_overlay(
         zorder=2.1,
     )
     ax.axhline(0.0, **_GUIDE)
-    ax.axvline(0.0, **_GUIDE)
 
     ax.margins(x=0.0)
     ax.set_xlim(float(envelope.energy[0]), float(envelope.energy[-1]))
-
-    if title is not None:
-        ax.set_title(title)
-    if envelope_label is not None or lines_label is not None:
-        ax.legend()
+    _finish(
+        ax,
+        title=title,
+        labelled=envelope_label is not None or lines_label is not None,
+    )
 
     return figure
+
+
+#: 結果の型 -> 描画。種類を足すときはここに 1 行足す（ADR-0049）。
+#: 重ね描きは表に載せない。種類ごとの処理ではなく「エンベロープと線」という特定の
+#: 組み合わせに対する処理だからである。
+DRAWERS: dict[type, Callable[..., "matplotlib.figure.Figure"]] = {
+    EnvelopeResult: plot_envelope,
+    LinesResult: plot_lines,
+}
+
+
+def plot_any(result: Any, **kwargs: Any) -> "matplotlib.figure.Figure":
+    """結果の種類を見て描画する。"""
+    try:
+        draw = DRAWERS[type(result)]
+    except KeyError as exc:
+        raise InvalidInputError(
+            f"no way to draw a {type(result).__name__}"
+        ) from exc
+    return draw(result, **kwargs)

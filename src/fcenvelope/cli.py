@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 import typer
@@ -16,7 +17,7 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
 from .envelope import compute_envelope
 from .errors import FCEnvelopeError
 from .inputs import FCEnvelopeInput
-from .io import ENVELOPE_KIND, LINES_KIND, load_any, save_envelope, save_lines
+from .io import kind_for, load_any, save_any
 from .lines import compute_fc_lines
 from .result import EnvelopeResult, FCLine, LinesResult
 from .version import __version__
@@ -54,7 +55,8 @@ def _override(
     return FCEnvelopeInput.from_obj(data)
 
 
-def _report(result: EnvelopeResult, output: Path) -> None:
+def _report_envelope(result: EnvelopeResult, output: Path, *, show: int = 0) -> None:
+    del show  # エンベロープには行ごとの表示がない。
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
@@ -62,7 +64,11 @@ def _report(result: EnvelopeResult, output: Path) -> None:
         f"area={diagnostics.total_area:.9g}, "
         f"captured={diagnostics.window_captured_fraction:.6g})"
     )
-    for message in diagnostics.messages:
+    _echo_warnings(diagnostics.messages)
+
+
+def _echo_warnings(messages) -> None:
+    for message in messages:
         typer.secho(f"warning: {message}", fg=typer.colors.YELLOW, err=True)
 
 
@@ -116,11 +122,11 @@ def run(
             broadening=parsed.to_broadening(),
             grid=parsed.to_grid(),
         )
-        save_envelope(result, output)
+        save_any(result, output)
     except FCEnvelopeError as exc:
         raise _fail(exc) from exc
 
-    _report(result, output)
+    _report_any(result, output)
 
     if plot is not None:
         _save_figure(result, plot, title=None, dpi=dpi)
@@ -180,11 +186,11 @@ def lines(
             temperature=parsed.to_temperature(),
             selection=parsed.to_selection(),
         )
-        save_lines(result, output)
+        save_any(result, output)
     except FCEnvelopeError as exc:
         raise _fail(exc) from exc
 
-    _report_lines(result, output, show=show)
+    _report_any(result, output, show=show)
 
     if plot is not None:
         _save_figure(result, plot, title=None, dpi=dpi)
@@ -255,7 +261,7 @@ def _transition_label(line: FCLine) -> str:
     )
 
 
-def _report_lines(result: LinesResult, output: Path, *, show: int) -> None:
+def _report_lines(result: LinesResult, output: Path, *, show: int = 0) -> None:
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
@@ -273,27 +279,47 @@ def _report_lines(result: LinesResult, output: Path, *, show: int) -> None:
         )
     if show > 0 and diagnostics.n_lines > show:
         typer.echo(f"  ... {diagnostics.n_lines - show} more (see {output})")
-    for message in diagnostics.messages:
-        typer.secho(f"warning: {message}", fg=typer.colors.YELLOW, err=True)
+    _echo_warnings(diagnostics.messages)
+
+
+#: 結果の型 -> 報告。種類を足すときはここに 1 行足す（ADR-0049）。
+#: 保存・読み込みの表は `io.RESULT_KINDS`、描画の表は `plotting.DRAWERS` にある。
+REPORTERS: dict[type, Callable[..., None]] = {
+    EnvelopeResult: _report_envelope,
+    LinesResult: _report_lines,
+}
+
+
+def _report_any(result: Any, output: Path, *, show: int = 0) -> None:
+    """結果の種類を見て報告する。"""
+    REPORTERS[type(result)](result, output, show=show)
+
+
+#: 重ね描きが取る組み合わせ。表には載せず専用の関数のままにする（ADR-0049）。
+OVERLAY_TYPES = (EnvelopeResult, LinesResult)
 
 
 def _pair_for_overlay(
     results: list[EnvelopeResult | LinesResult], paths: list[Path]
 ) -> tuple[EnvelopeResult, LinesResult]:
-    """重ね描き用に、エンベロープと線リストを 1 つずつ取り出す。与える順序は問わない。"""
-    envelopes = [item for item in results if isinstance(item, EnvelopeResult)]
-    line_lists = [item for item in results if isinstance(item, LinesResult)]
-    if len(results) > 2 or len(envelopes) != 1 or len(line_lists) != 1:
+    """重ね描き用に、エンベロープと線リストを 1 つずつ取り出す。与える順序は問わない。
+
+    使用法エラーの種類名は `io` の表から引く。`kind` 文字列を直接書かない（ADR-0049）。
+    """
+    grouped: dict[type, list[Any]] = {result_type: [] for result_type in OVERLAY_TYPES}
+    for item in results:
+        grouped.setdefault(type(item), []).append(item)
+
+    if len(results) != 2 or any(len(grouped[t]) != 1 for t in OVERLAY_TYPES):
         found = ", ".join(
-            f"{path}: {LINES_KIND if isinstance(item, LinesResult) else ENVELOPE_KIND}"
-            for path, item in zip(paths, results)
+            f"{path}: {kind_for(type(item))}" for path, item in zip(paths, results)
         )
+        expected = " and one ".join(kind_for(t) for t in OVERLAY_TYPES)
         raise typer.BadParameter(
-            f"overlaying takes exactly one {ENVELOPE_KIND} and one {LINES_KIND}, "
-            f"in either order (got {found})",
+            f"overlaying takes exactly one {expected}, in either order (got {found})",
             param_hint="RESULT.json...",
         )
-    return envelopes[0], line_lists[0]
+    return grouped[OVERLAY_TYPES[0]][0], grouped[OVERLAY_TYPES[1]][0]
 
 
 def _write_figure(
@@ -311,13 +337,9 @@ def _write_figure(
 def _save_figure(
     result: EnvelopeResult | LinesResult, output: Path, *, title: str | None, dpi: int
 ) -> None:
-    from .plotting import plot_envelope, plot_lines
+    from .plotting import plot_any
 
-    if isinstance(result, LinesResult):
-        figure = plot_lines(result, title=title)
-    else:
-        figure = plot_envelope(result, title=title)
-    _write_figure(figure, output, dpi=dpi)
+    _write_figure(plot_any(result, title=title), output, dpi=dpi)
 
 
 def _save_overlay(
