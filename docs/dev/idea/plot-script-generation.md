@@ -1,7 +1,7 @@
 # 図の設定を作図スクリプトに追い出す
 
 - 状態: 検討中（受理したら ADR と作業計画に分ける。まだ何も実装していない）
-- 関係する既存の決定: ADR-0005, 0010, 0012, 0027, 0028, 0030, 0047, 0049, 0052, 0053
+- 関係する既存の決定: ADR-0005, 0010, 0011, 0012, 0027, 0028, 0030, 0047, 0049, 0052, 0053
 
 ## 解こうとしていること
 
@@ -42,7 +42,7 @@
 | 何 | どこに書くか | 変えたら何が起きるか |
 |---|---|---|
 | モード・温度・σ・グリッド・選択条件 | 入力 JSON（現状のまま） | 2 をやり直す必要がある |
-| 軸の範囲・目盛り・色・凡例・表題・注釈・図の寸法・dpi・横軸の単位 | 生成された作図スクリプト | 3 をやり直すだけでよい |
+| 軸の範囲・目盛り・色・凡例・表題・注釈・図の寸法・dpi・横軸の単位・出力先 | 生成された作図スクリプト | 3 をやり直すだけでよい |
 
 `grid` が入力側に残るのは、それが「表示窓」ではなく**標本する点そのもの**だからである。
 作図スクリプトの `xlim` は grid の窓の内側を切り出す表示上の窓で、両者は別物である。
@@ -53,14 +53,16 @@
 
 ## ワークフロー
 
+作図スクリプトの生成は**既定で行う**。`run` と `lines` は結果 JSON とスクリプトを対で出す。
+
 ```bash
 # 1 + 2: 読み込みと計算。重いのはここだけ
-uv run fcenvelope run input.json -o result.json --script
-#   -> result.json       計算結果（現状のまま）
-#   -> result_plot.py    作図スクリプト（新規）
+uv run fcenvelope run input.json -o result.json
+#   -> result.json       計算結果
+#   -> result_plot.py    作図スクリプト
 
 # 3: 描画。ここを何度でも繰り返す
-python result_plot.py            # -> result_plot.png
+python result_plot.py            # 端末に図が出て、result_plot.png も書かれる
 vi result_plot.py                # 軸・色・注釈を直す
 python result_plot.py            # すぐ出る
 ```
@@ -68,7 +70,7 @@ python result_plot.py            # すぐ出る
 条件を変えて 2 をやり直しても、**調整済みのスクリプトは上書きされない**（後述）。
 
 ```bash
-uv run fcenvelope run input.json -o result.json --sigma 80 --script
+uv run fcenvelope run input.json -o result.json --sigma 80
 #   -> result.json を更新、result_plot.py はそのまま
 python result_plot.py            # 同じ設定で新しいデータを描く
 ```
@@ -88,6 +90,29 @@ python overlay_plot.py
 足すだけでできるようになる。今の `plot` が「1 つか、エンベロープ 1 + 線 1」しか
 取れないのは CLI の都合であって、図の都合ではない。
 
+## 廃止するもの
+
+図のつまみは CLI から**すべて**なくす。残すと「どちらで調整するのか」が二股になり、
+設定が実行後に残らない方の道が生き続ける。
+
+| 廃止 | 代わりにどこへ行くか |
+|---|---|
+| `fcenvelope plot` サブコマンド | `python <生成されたスクリプト>` |
+| `plot --title` | スクリプトの `TITLE` |
+| `plot --magnify` | 重ね描きスクリプトの `MAGNIFY`（凡例に出す規則 ADR-0028 は雛形が引き継ぐ） |
+| `run --plot` / `lines --plot` | 生成が既定になるので不要。2 は図を作らない |
+| `run --dpi` / `lines --dpi` / `plot --dpi` | スクリプトの `DPI` |
+
+`lines --show N`（強い線を N 本だけ端末に表に出す）は残す。これは図のつまみではなく
+結果の報告で、`run` の要約 1 行と同じ側にある。ただし新しい語彙では「見せる」が端末への
+図の出力を指すようになるので、名前は `--top N` に替えるのがよい（後述の未決）。
+
+`--temperature` / `--sigma` / `--e-min` / `--e-max` / `--de` / `--min-weight` などの
+上書きはそのまま残す。どれも**数を変える**つまみで、境界の内側にある（ADR-0012, 0050）。
+そのうえで規則を 1 つ立てる。
+
+> **図のつまみを CLI に新しく足さない。図を調整したくなったら作図スクリプトを直す。**
+
 ## 生成される作図スクリプト
 
 ### 満たすべき条件
@@ -97,9 +122,21 @@ python overlay_plot.py
 | 単独で動く（`json` + `matplotlib` だけ。`fcenvelope` を import しない） | 環境やパッケージ版に縛られない。中身を読めば何を描いているか全部分かる |
 | 図の設定はすべてスクリプトの中に literal で書かれている | 実行後に読み返せる。これが目的そのもの |
 | データは実行時に結果ファイルから読む | 同じスクリプトを新しいデータに当てられる |
+| **出力先を 2 つ持つ**（画像ファイルと端末） | 「ちょっと見る」も 3 の側で完結する。`plot` サブコマンドが要らなくなる |
 | 既存のスクリプトを勝手に壊さない | 調整の成果はスクリプトの側にしかない |
 | 描画の中身は `draw(ax, data)` に閉じている | notebook から import できる。既定の見た目を試験で留められる |
 | 画像にメタ情報を焼く | 画像が単独で持ち出されても出どころが残る |
+
+### 出力先の使い分け
+
+- **端末**: 標準出力が端末のときだけ、kitty graphics protocol で図をそのまま出す。
+  調整の輪（直す → 走らせる → 見る）はここで閉じる。
+- **画像ファイル**: 毎回書く。書き出しは安く、常に最新でいてくれた方が扱いやすい。
+
+判定は `sys.stdout.isatty()` だけで行い、端末の種類は調べない。パイプやリダイレクトや
+CI ではエスケープ列を出さない、という一点だけが要るからである。対応していない端末や
+sixel を使いたい場合は、スクリプトの `show()` を 10 行ほど書き替えればよい——それが
+「生成されたプログラムである」ことの値打ちである。
 
 ### 例（エンベロープ）
 
@@ -115,6 +152,8 @@ This file is yours. fcenvelope never reads it back; edit anything below.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import sys
 from pathlib import Path
@@ -127,6 +166,11 @@ OUTPUT = Path(__file__).with_name("result_plot.png")
 KIND = "fcenvelope.envelope"
 SCHEMA_VERSION = 2
 # --- end generated header ------------------------------------------------
+
+# 出力先。SHOW は None なら端末のときだけ、True / False で固定できる。
+SAVE = True
+SHOW = None
+SHOW_DPI = 110       # 端末に出すときの解像度。ファイルの DPI とは別
 
 # 図の設定。ここから下はすべて手で変えてよい。
 FIGSIZE = (7.0, 4.2)
@@ -168,6 +212,25 @@ def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> No
     ax.margins(x=0.0)
 
 
+def show(fig) -> None:
+    """kitty graphics protocol で端末に直接出す。別の端末なら、ここを書き替える。"""
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=SHOW_DPI)
+    payload = base64.standard_b64encode(buffer.getvalue())
+
+    out, first = sys.stdout.buffer, True
+    while payload:                       # 制御データは先頭のみ、以降は m= だけ
+        head, payload = payload[:4096], payload[4096:]
+        control = "a=T,f=100,q=2," if first else ""
+        out.write(
+            b"\033_G" + f"{control}m={int(bool(payload))}".encode()
+            + b";" + head + b"\033\\"
+        )
+        first = False
+    out.write(b"\n")
+    out.flush()
+
+
 def main() -> None:
     data = load(sys.argv[1] if len(sys.argv) > 1 else DATA, KIND)
 
@@ -186,17 +249,20 @@ def main() -> None:
     if ax.get_legend_handles_labels()[1]:
         ax.legend()
 
-    fig.savefig(
-        OUTPUT,
-        dpi=DPI,
-        metadata={
-            "Software": f"fcenvelope {data['fcenvelope_version']}",
-            "Source": f"{Path(DATA).name} ({data['created_at']})",
-            "Description": f"T = {data['input']['temperature']:g} K, "
-                           f"sigma = {data['input']['broadening']['sigma']:g} cm^-1",
-        },
-    )
-    print(f"wrote {OUTPUT}")
+    if SAVE:
+        fig.savefig(
+            OUTPUT,
+            dpi=DPI,
+            metadata={
+                "Software": f"fcenvelope {data['fcenvelope_version']}",
+                "Source": f"{Path(DATA).name} ({data['created_at']})",
+                "Description": f"T = {data['input']['temperature']:g} K, "
+                               f"sigma = {data['input']['broadening']['sigma']:g} cm^-1",
+            },
+        )
+        print(f"wrote {OUTPUT}")
+    if SHOW if SHOW is not None else sys.stdout.isatty():
+        show(fig)
 
 
 if __name__ == "__main__":
@@ -215,10 +281,12 @@ if __name__ == "__main__":
   残り続けるので、その版ずれは必ず起きる。
 - **PNG のメタ情報**（`Software` / `Source` / `Description`）を既定で焼く。画像が単独で
   持ち出されがちだという問題への、スクリプト側からの直接の答えになる。
+- `show()` の出すバイト列は、先頭チャンクだけが制御データを持ち、以降は `m=` だけ、
+  最後が `m=0`、base64 は 4096 バイト刻み。`q=2` で端末からの応答を止める。
 
 この例は実際に `fcenvelope run` の結果へ当てて動かしてある。図は `plot_envelope` が
 描くものと同じで、別の種類のファイルを渡すと上の文言で止まり、焼いたメタ情報は
-画像から読み出せる。
+画像から読み出せる。`show()` の出力も、再結合して PNG に戻ることを確かめてある。
 
 ### 重ね描きの雛形
 
@@ -227,7 +295,7 @@ if __name__ == "__main__":
 最大の差になる。
 
 ```python
-MAGNIFY = 1.0        # 棒だけを拡大する。凡例に (x N) として出る（ADR-0028）
+MAGNIFY = 1.0        # 棒だけを拡大する。凡例に (x N) として出す（ADR-0028）
 
 sigma = envelope["input"]["broadening"]["sigma"]          # cm^-1
 peak = 1.0 / (sigma * math.sqrt(2.0 * math.pi))           # ガウス型の L(0)
@@ -236,7 +304,8 @@ heights = [line["weight"] * peak * MAGNIFY for line in lines["lines"]]
 
 ## 上書きの規則
 
-調整の成果はスクリプトの側にしかないので、生成が既存のファイルを黙って潰してはならない。
+生成が既定になったので、この規則が輪の要になる。調整の成果はスクリプトの側にしか
+ないので、生成が既存のファイルを黙って潰してはならない。
 
 | 状況 | 振る舞い |
 |---|---|
@@ -244,13 +313,20 @@ heights = [line["weight"] * peak * MAGNIFY for line in lines["lines"]]
 | 生成先がある | **書かずに残す**。`kept result_plot.py (--force-script to regenerate)` と知らせる |
 | `--force-script` あり | 上書きする |
 
-「ある場合はエラーで止める」ではなく「残して知らせる」にするのは、条件を振りながら
-2 をやり直す運用で `run ... --script` が毎回エラーになると使い物にならないからである。
-この規則なら `run --script && python result_plot.py` が何度でもそのまま通る。
+これなら `fcenvelope run ... && python result_plot.py` が、何度やり直しても同じ図の
+設定で通る。
 
-生成は `--script` を付けたときだけ行う（`--plot` や `--log` と同じ opt-in）。省略時の
 生成先は `-o` のファイル名から作る（`result.json` → `result_plot.py`、その中の
-`OUTPUT` は `result_plot.png`）。
+`OUTPUT` は `result_plot.png`）。`--script FILE` で明示もできる。
+
+**掃引では `--no-script` を付ける。** 温度を 50 点振って `-o T100.json` … と名前を
+変えていくと、既定のままではスクリプトが 50 本できてしまう。掃引で欲しいのは 50 本の
+スクリプトではなく、50 個の結果を読む 1 本のスクリプトなので、生成を止めて比較用の
+スクリプトを 1 本だけ手で育てる（雛形のコメントがその足がかりになる）。
+
+ログを「頼まれたときと失敗したときだけ」書くと決めた ADR-0052 とは扱いが違う。ログは
+痕跡で、要るかどうかが実行のたびに変わる。作図スクリプトは**成果物**で、計算した以上は
+ほぼ必ず要る。既定を逆にする理由はここにある。
 
 ## 入力ファイルの受け取り方をどうするか
 
@@ -271,19 +347,6 @@ heights = [line["weight"] * peak * MAGNIFY for line in lines["lines"]]
 **大きくて自由度の高い設定**を外部ファイル（作図スクリプト）へ追い出す。入力ファイルは
 両側から挟まれて「計算の条件だけ」に痩せていく。これは ADR-0045（入力ファイルの型と
 計算用の値の型を分ける）が引いた線と同じ向きである。
-
-### CLI の上書きはどうなるか
-
-`--temperature` / `--sigma` / `--e-min` / `--e-max` / `--de` / `--min-weight` などは
-そのまま残す。どれも**数を変える**つまみで、境界の内側にある（ADR-0012, 0050）。
-
-いっぽう `--title` / `--magnify` / `--dpi` は**絵を変える**つまみである。既存のものは
-当座そのまま残すが、規則としてこう決める。
-
-> **図のつまみを CLI に新しく足さない。図を調整したくなったら作図スクリプトを生成する。**
-
-こう決めておけば、要望が来るたびにオプションが増えていく道が最初から塞がる。既存の
-3 つを消すかどうかは実装してから決めればよい（後述の未決）。
 
 ### 1 ファイル方針は据え置く
 
@@ -331,31 +394,41 @@ heights = [line["weight"] * peak * MAGNIFY for line in lines["lines"]]
 ### CLI
 
 ```
-fcenvelope run   INPUT.json -o RESULT.json [--script [FILE]] [--force-script]
-fcenvelope lines INPUT.json -o LINES.json  [--script [FILE]] [--force-script]
-fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force]
+fcenvelope run   INPUT.json -o RESULT.json [--script FILE | --no-script] [--force-script]
+                          [--temperature FLOAT] [--sigma FLOAT]
+                          [--e-min FLOAT] [--e-max FLOAT] [--de FLOAT] [--log FILE]
+
+fcenvelope lines INPUT.json -o LINES.json  [--script FILE | --no-script] [--force-script]
+                          [--temperature FLOAT] [--min-weight FLOAT]
+                          [--max-lines INT] [--max-quanta INT] [--top INT] [--log FILE]
+
+fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force] [--log FILE]
+
+fcenvelope --version
 ```
 
-`script` の引数の形は `plot` と同じにする（1 つなら種類で振り分け、2 つなら重ね描き、
-順序は問わない、それ以外は使用法エラー）。生成は節目（ファイルの書き出し）なので
-`logs.stage` を通す（ADR-0052）。
+`script` の引数の形は今の `plot` と同じにする（1 つなら種類で振り分け、2 つなら重ね描き、
+順序は問わない、それ以外は使用法エラー）。単独の結果に対しても使えるので、壊した
+スクリプトを作り直す口にもなる。生成は節目（ファイルの書き出し）なので `logs.stage` を
+通す（ADR-0052）。終了コードは現状のまま（0 / 1 / 2）。
 
-### 既定の見た目が 2 か所に分かれる件
+### `plotting.py` の身の振り方
 
-`plotting.py` の `plot_envelope` 等（ライブラリ API、ADR-0011）と、雛形の `draw` は、
-同じ図を 2 回書くことになる。これは ADR-0036 が消したはずの重複だが、今回は**残して
-試験で留める**。`io` と `inputs` が `schema_version` を別々に持ち、一致をテストで
-確かめているのと同じ扱いにする。
+CLI が描画しなくなるので、`plotting.py` を使うのはライブラリの利用者だけになる。
+公開 API の 4 点（計算・保存・読み込み・描画）は ADR-0011 と README の柱なので、今回は
+**残す**。ただし既定の見た目が `plotting.py` と雛形の 2 か所に書かれることになるので、
+`io` と `inputs` が `schema_version` を別々に持って一致を試験で確かめているのと同じ扱いに
+する。雛形を module として import し、`draw(ax, data)` を呼んだ軸と `plot_envelope(result)`
+の軸を比べる（軸ラベル・線の頂点列・ガイド線）。
 
-雛形を module として import し、`draw(ax, data)` を呼んだ軸と `plot_envelope(result)` の
-軸を比べる（軸ラベル・線の頂点列・ガイド線）。雛形が `draw` を持つ形にしてあるのは、
-この試験と、notebook から使えることの両方のためである。
+重複が煩わしくなったら、`plot_envelope` を**雛形の `draw` の上に実装し直す**道がある
+（結果を `io` の辞書に直して雛形へ渡す）。描画の実装が 1 つになり、drift が原理的に
+なくなる。雛形が `draw(ax, data)` を持つ形にしてあるのは、この道を今から塞がないため
+でもある。ただし `plotting` が `io` に依存することになるので、モジュール依存の表を
+1 行変えることになる。今すぐやる必要はない。
 
-片方に寄せる案は 2 つあるが、どちらも今は採らない。
-
-- **`plotting.py` を消して雛形に寄せる**: ライブラリ API の約束（ADR-0011）を壊す。
-- **雛形が `fcenvelope` を import する**: 図の設定が `plot_envelope` の中に隠れ、
-  「スクリプトを読めば全部分かる」という今回の目的そのものを失う。
+`plotting.py` を消して雛形だけにする案は採らない。ライブラリとしての約束を壊すわりに、
+得るものが「重複がなくなる」だけである。
 
 ### 試験
 
@@ -363,7 +436,9 @@ fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force]
 |---|
 | 生成したスクリプトが subprocess で走り、画像が出る（種類 3 つとも） |
 | 生成したスクリプトが `fcenvelope` を import していない |
-| 生成先が既にあるとき上書きしない。`--force` で上書きする |
+| 標準出力が端末でないときエスケープ列を出さない（パイプで確かめる） |
+| 疑似端末（`pty`）に対しては kitty の制御列を出し、再結合すると PNG に戻る |
+| 生成先が既にあるとき上書きしない。`--force-script` で上書きする |
 | 生成ヘッダの差し替えが、マーカーの外を変えない |
 | 既定の `draw` と `plotting` の描画が一致する |
 | `TEMPLATES` が他の表と同じ種類を網羅している（`test_dispatch.py`） |
@@ -371,23 +446,27 @@ fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force]
 
 ## 検討した選択肢
 
-- **2 にフックして直接図を出す**: 今の `--plot` がこれで、残しはするが調整の道には
-  しない。重い計算をやり直さないと図が変わらないのでは 3 段に分けた意味がない。
+- **2 にフックして直接図を出す**（今の `--plot`）: 重い計算をやり直さないと図が変わらない
+  のでは 3 段に分けた意味がない。廃止する。
 - **CLI のオプションを増やす**: matplotlib の API を写し続けることになり、しかも設定が
   実行後に残らない。今回の目的の半分（残ること）を最初から満たせない。
 - **入力 JSON に `plot` セクション**: 同じ写像を pydantic で行うことになる。加えて結果の
   入力エコーが図の設定で揺れる（ADR-0008, 0010）。
-- **gnuplot の雛形も同時に出す**: 採りたいが、gnuplot は JSON を読めないので**列指向の
-  データ書き出し**が要る。これは「CSV / NPZ 等の追加出力形式は設けない」と決めた
-  ADR-0010 を開き直すことになるので、matplotlib の雛形が固まってから別に判断する。
-  `TEMPLATES` の表と `--script` の生成先の拡張子で振り分ける形にしておけば、後から
-  足せる（`.py` → matplotlib、`.gp` → gnuplot）。
+- **`plot` サブコマンドを「ちょっと見る」用に残す**: 描画の実装が 2 系統のまま残り、
+  「どちらで調整するのか」が二股になる。端末表示を 3 の側に持たせれば要らなくなるので、
+  残さない。
+- **端末表示に外部パッケージを使う**（`term-image` など）: 「`json` + `matplotlib` だけで
+  動く」を壊す。kitty graphics protocol を直に書けば 15 行で済む。
+- **`kitten icat` を呼ぶ**: kitty 本体の付属コマンドが要る。同じ protocol に対応した
+  他の端末（ghostty, WezTerm など）で動かないので、protocol を直に書く方を採る。
+- **matplotlib 以外のツール向けの雛形も出す**（gnuplot など）: 雛形を差し替えれば原理的
+  には可能だが、多くのツールは JSON を読めないので**列指向のデータ書き出し**が要る。
+  これは「CSV / NPZ 等の追加出力形式は設けない」と決めた ADR-0010 を開き直すことになる。
+  必要になってから、`TEMPLATES` の表と生成先の拡張子で振り分ける形で足せばよい。
+  matplotlib の雛形だけで始める。
 - **1 つの入力からエンベロープと線をまとめて計算し、重ね描きの雛形まで一度に出す**:
   重ね描きの生成が 1 手で済むが、線の列挙はモード数に対して組合せ的に重くなりうるので、
   エンベロープだけが欲しい実行に抱き合わせられない。`run` と `lines` は分けたままにする。
-- **`plot` サブコマンドを廃して `script` に置き換える**: 描画の実装が 1 つになるので
-  筋は通る。ただし「とりあえず一目見る」経路は残す価値があるので、今回は両方残して
-  試験で縛る。使われ方を見てから決めればよい。
 
 ## 受理したら起こす ADR
 
@@ -396,23 +475,25 @@ fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force]
 | 0057 | 図の設定は生成した作図スクリプトに置き、入力ファイルにも CLI にも置かない |
 | 0058 | 作図スクリプトは単独で動き、結果ファイルを実行時に読む |
 | 0059 | 雛形は実物の Python ファイルとして持ち、生成ではヘッダだけを差し替える |
-| 0060 | 生成は既存のスクリプトを上書きせず、残して知らせる |
-| 0061 | 描画の横軸の単位は作図スクリプトが持つ（ADR-0053 が残した未決を閉じる） |
+| 0060 | 生成は既定で行い、既存のスクリプトを上書きせず残して知らせる |
+| 0061 | 作図スクリプトは画像ファイルと端末の 2 つに出す（`plot` サブコマンドの廃止） |
+| 0062 | 描画の横軸の単位は作図スクリプトが持つ（ADR-0053 が残した未決を閉じる） |
 
-0057 と 0061 は 1 本にまとめてもよい。
+0057 と 0062 は 1 本にまとめてもよい。状態を更新する既存の ADR: 0012（`plot` を分けた
+くだり）、0028・0030（`plot` 由来の規則が雛形へ移る）。
 
 触る文書: `CONTEXT.md`（「作図スクリプト」「雛形」の項）、`docs/dev/spec/interface.md`
 （公開 API・CLI・モジュール依存・関心ごとの表・将来の拡張）、`README.md`、
-`docs/readme/usage.md`（「図を仕上げる」の節）、`docs/readme/examples/`（生成された
-スクリプトの実例を 1 つ）。
+`docs/readme/usage.md`（「図を仕上げる」の節。`plot` の節は消える）、
+`docs/readme/examples/`（生成されたスクリプトの実例を 1 つ）。
 
 ## 決めていないこと
 
-1. `--script` を既定で on にするか。今は opt-in を提案している（`--plot` / `--log` と
-   揃える）。運用してみて毎回付けるようなら既定にしてよい。
-2. `plot` サブコマンドと `--title` / `--magnify` / `--dpi` を最終的に残すか。
-3. モジュール名を `scripts.py` にするか（`plotscript.py` / `emit.py` も候補）。
+1. `lines --show N` を `--top N` に改名するか。新しい語彙では「見せる」が端末への図の
+   出力を指すので、表を出すつまみとは分けた方がよい。
+2. モジュール名を `scripts.py` にするか（`plotscript.py` / `emit.py` も候補）。
    パッケージデータのディレクトリ名 `templates/` と衝突しない名前であること。
-4. gnuplot をいつ入れるか。入れるなら列指向のデータ書き出しを先に決める（ADR-0010）。
-5. 生成された画像の既定名（`result_plot.png`）。`result.png` の方がよければ、
+3. 生成された画像の既定名（`result_plot.png`）。`result.png` の方がよければ、
    末尾の `_plot` を落とす規則にする。
+4. 端末に出すときの既定の解像度（`SHOW_DPI = 110`）。端末の幅に合わせて `c=` で
+   縮める方がよければ、`show()` に 1 行足す。
