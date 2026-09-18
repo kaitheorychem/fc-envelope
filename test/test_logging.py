@@ -16,6 +16,7 @@ from conftest import compute_quietly, lines_quietly
 from typer.testing import CliRunner
 
 from fcenvelope import Broadening, EnergyGrid, plot_overlay, save_envelope
+from fcenvelope.emit import script_path_for
 from fcenvelope.cli import app
 from fcenvelope.logs import LOGGER_NAME, Trace, stage
 
@@ -140,30 +141,6 @@ def test_an_overlay_mismatch_is_recorded(alerts, single_mode):
     assert any("temperature mismatch" in message for message in alerts())
 
 
-def test_lines_dropped_from_an_overlay_are_recorded(tmp_path, input_file):
-    """CLI だけが出す警告も、利用者への 1 行とログの 1 行の両方になる。"""
-    result_json = tmp_path / "result.json"
-    lines_json = tmp_path / "lines.json"
-    log = tmp_path / "overlay.log"
-    narrow = ["--e-min", "-600", "--e-max", "300"]
-    assert runner.invoke(
-        app, ["run", str(input_file), "-o", str(result_json), *narrow]
-    ).exit_code == 0
-    assert runner.invoke(
-        app, ["lines", str(input_file), "-o", str(lines_json), "--show", "0"]
-    ).exit_code == 0
-
-    invocation = runner.invoke(
-        app,
-        ["plot", str(result_json), str(lines_json), "-o", str(tmp_path / "overlay.png"),
-         "--log", str(log)],
-    )
-
-    assert invocation.exit_code == 0, invocation.output
-    assert "fall outside" in invocation.output
-    assert "fall outside" in log.read_text(encoding="utf-8")
-
-
 # --- どれだけ出さないか ---
 
 
@@ -222,20 +199,18 @@ def test_a_trace_leaves_the_logger_as_it_found_it(tmp_path):
 
 def test_log_option_writes_the_stages(tmp_path, input_file):
     log = tmp_path / "run.log"
+    output = tmp_path / "result.json"
     invocation = runner.invoke(
-        app,
-        [
-            "run", str(input_file), "-o", str(tmp_path / "result.json"),
-            "--plot", str(tmp_path / "spectrum.png"), "--log", str(log),
-        ],
+        app, ["run", str(input_file), "-o", str(output), "--log", str(log)]
     )
 
     assert invocation.exit_code == 0, invocation.output
     written = log.read_text(encoding="utf-8")
-    # 読み込み・計算・保存・作図が、この順に始まって終わっている。
-    assert written.count("begin ") == written.count("end ") == 5
-    for label in ("read", "envelope:", "write", "plot envelope"):
+    # 読み込み・計算・結果の保存・作図スクリプトの書き出しが、この順に始まって終わる。
+    assert written.count("begin ") == written.count("end ") == 4
+    for label in ("read", "envelope:", f"write {output}"):
         assert f"begin {label}" in written
+    assert f"begin write {script_path_for(output)}" in written
 
 
 def test_a_successful_run_writes_no_log_file(tmp_path, input_file):
@@ -311,30 +286,31 @@ def test_a_usage_error_leaves_no_trace(tmp_path, input_file):
     result_json = tmp_path / "result.json"
     assert runner.invoke(app, ["run", str(input_file), "-o", str(result_json)]).exit_code == 0
 
-    output = tmp_path / "figure.png"
+    output = tmp_path / "overlay_plot.py"
     invocation = runner.invoke(
-        app, ["plot", str(result_json), "-o", str(output), "--magnify", "5"]
+        app, ["script", str(result_json), str(result_json), "-o", str(output)]
     )
 
     assert invocation.exit_code == 2
     assert not output.with_suffix(".log").exists()
 
 
-def test_lines_and_plot_take_the_log_option_too(tmp_path, input_file):
+def test_lines_and_script_take_the_log_option_too(tmp_path, input_file):
     lines_json = tmp_path / "lines.json"
     lines_log = tmp_path / "lines.log"
-    plot_log = tmp_path / "plot.log"
+    script_log = tmp_path / "script.log"
 
     assert runner.invoke(
         app,
-        ["lines", str(input_file), "-o", str(lines_json), "--show", "0",
-         "--log", str(lines_log)],
+        ["lines", str(input_file), "-o", str(lines_json), "--top", "0",
+         "--no-script", "--log", str(lines_log)],
     ).exit_code == 0
     assert runner.invoke(
         app,
-        ["plot", str(lines_json), "-o", str(tmp_path / "sticks.png"),
-         "--log", str(plot_log)],
+        ["script", str(lines_json), "-o", str(tmp_path / "sticks_plot.py"),
+         "--log", str(script_log)],
     ).exit_code == 0
 
     assert "begin fc lines:" in lines_log.read_text(encoding="utf-8")
-    assert "begin plot lines" in plot_log.read_text(encoding="utf-8")
+    assert "begin read" in script_log.read_text(encoding="utf-8")
+    assert "begin write" in script_log.read_text(encoding="utf-8")

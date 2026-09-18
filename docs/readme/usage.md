@@ -167,8 +167,13 @@ E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 ## CLI
 
 ```bash
-# 計算して結果 JSON を書き出す（図も同時に出す場合は --plot）
-uv run fcenvelope run input.json -o result.json --plot spectrum.png
+# 計算して結果 JSON を書き出す。作図スクリプトも一緒に出る
+uv run fcenvelope run input.json -o result.json
+#   -> result.json      計算結果
+#   -> result_plot.py   作図スクリプト
+
+# 図を作る。ここを何度でも繰り返す（次の節を参照）
+python result_plot.py
 
 # 条件だけ振る（modes は上書きできない。値は入力ファイルと同じ単位で読む）
 uv run fcenvelope run input.json -o result_0K.json --temperature 0
@@ -176,12 +181,11 @@ uv run fcenvelope run input.json -o result_0K.json --temperature 0
 # 離散 FC 因子の一覧を書き出す
 uv run fcenvelope lines input.json -o lines.json --min-weight 1e-5
 
-# 計算をやり直さずに図だけ作り直す（エンベロープ・棒スペクトルのどちらでも）
-uv run fcenvelope plot result.json -o spectrum.png --title "300 K" --dpi 300
-uv run fcenvelope plot lines.json  -o sticks.png   --title "300 K"
+# 2 つの結果を 1 枚に重ねる作図スクリプトを作る（与える順序は問わない）
+uv run fcenvelope script result.json lines.json -o overlay_plot.py
 
-# 2 つを 1 枚に重ねる（与える順序は問わない）
-uv run fcenvelope plot result.json lines.json -o overlay.png --title "300 K"
+# 名前を変えながら掃引するときは作図スクリプトを作らせない
+uv run fcenvelope run input.json -o T100.json --temperature 100 --no-script
 
 # 版を表示して終了する
 uv run fcenvelope --version
@@ -191,6 +195,69 @@ uv run fcenvelope run input.json -o result.json --log run.log
 ```
 
 終了コードは 正常 `0` / 入力・計算エラー `1` / 使用法エラー `2`。
+
+**図のつまみは CLI にない。** 表題も色も軸の範囲も作図スクリプトの中にあり、調整は
+そのファイルを直して行う。
+
+## 図を仕上げる
+
+`run` と `lines` は結果 JSON の隣に作図スクリプトを置く。図はそれを走らせて作る。
+
+```bash
+uv run fcenvelope run input.json -o result.json   # 重いのはここだけ
+python result_plot.py                             # 端末に図が出る
+vi result_plot.py                                 # 軸・色・注釈を直す
+python result_plot.py                             # すぐ出る
+```
+
+スクリプトは `json` と `matplotlib` だけで動き、`fcenvelope` を import しない。中身を
+読めば何を描いているかが全部分かるし、matplotlib にできることは何でも書ける。
+
+出力先は 2 つある。
+
+- **画像ファイル**（`fcenvelope-result.png`）は毎回書かれる。
+- **端末**には、標準出力が端末のときだけ図がそのまま出る（kitty graphics protocol）。
+  パイプやリダイレクトのときは何も出ない。端末に出す図だけは窓の幅に合わせて描き直す
+  ので、ファイルの `DPI` とは別に決まる。
+
+よく触る設定はファイルの頭にまとまっている。
+
+```python
+FIGSIZE = (7.0, 4.2)
+DPI = 150
+TITLE = None
+XLIM = None          # (-3000.0, 500.0) のように書ける
+X_UNIT = "cm$^{-1}$"
+X_SCALE = 1.0        # eV にするなら "eV", 1.0 / 8065.543937
+```
+
+図の中身は `draw(ax, data)` にある。2 本目を足すのもここを 1 行増やすだけである。
+
+```python
+draw(ax, load("result_100K.json", KIND), label="100 K", color="C3")
+```
+
+別のデータに同じ設定を当てるなら引数で渡す。条件を振った結果を同じ体裁で見るときに使う。
+
+```bash
+python result_plot.py result_0K.json
+```
+
+**計算をやり直しても作図スクリプトは上書きされない。** 調整した設定はそのまま残り、
+新しいデータに当たる。
+
+```bash
+uv run fcenvelope run input.json -o result.json --sigma 80
+#   -> result.json を更新、result_plot.py はそのまま（kept ... と出る）
+python result_plot.py
+```
+
+作り直したいときは `--force-script`、保存済みの結果から作り直すときは `script` を使う。
+
+```bash
+uv run fcenvelope run input.json -o result.json --force-script
+uv run fcenvelope script result.json -o result_plot.py --force
+```
 
 ## 線
 
@@ -203,14 +270,17 @@ uv run fcenvelope run input.json -o result.json --log run.log
 ```bash
 # FC 因子と遷移エネルギーを書き出し、重みの上位 10 本を表示する
 uv run fcenvelope lines input.json -o lines.json
+python lines_plot.py                     # 棒スペクトルはこれで出る
 
-# T = 0 で、より細かい閾値まで拾う。棒スペクトルも出す
+# T = 0 で、より細かい閾値まで拾う
 uv run fcenvelope lines input.json -o lines_0K.json --temperature 0 \
-    --min-weight 1e-6 --plot sticks.png
+    --min-weight 1e-6
 
-# 表示だけ増やす（--show 0 で表を出さない）
-uv run fcenvelope lines input.json -o lines.json --show 30
+# 表示だけ増やす（--top 0 で表を出さない）
+uv run fcenvelope lines input.json -o lines.json --top 30
 ```
+
+`--top` が決めるのは端末に出す**表**の行数だけで、書き出す線の本数ではない。
 
 ```
 wrote lines.json (58 lines, captured=0.997261, <E>=-583.531 cm^-1, lambda=588 cm^-1)
@@ -320,7 +390,8 @@ plot_lines(lines).savefig("sticks.png", dpi=300)
 再配列エネルギー λ は系から決まるので `lines.system.reorganization_energy` から取る。
 理論文書の行列そのものが要る場合は `fc_factor_matrix(S, m_max, n_max)` を使う。
 
-エンベロープと線を 1 枚に重ねるには `plot_overlay` を使う。
+エンベロープと線を 1 枚に重ねるには `plot_overlay` を使う（CLI から作るときは
+`fcenvelope script` が重ね描きの作図スクリプトを書き出す）。
 
 ```python
 from fcenvelope import plot_overlay
@@ -349,9 +420,10 @@ for temperature in (0.0, 77.0, 300.0):
 `run` の曲線と `lines` の棒は同じ物理量の別表現で、E 軸の規約も共通しているので 1 枚に重ねられる。
 
 ```bash
-uv run fcenvelope run   input.json -o result.json
-uv run fcenvelope lines input.json -o lines.json
-uv run fcenvelope plot  result.json lines.json -o overlay.png --title "300 K"
+uv run fcenvelope run    input.json -o result.json
+uv run fcenvelope lines  input.json -o lines.json
+uv run fcenvelope script result.json lines.json -o overlay_plot.py
+python overlay_plot.py
 ```
 
 **縦軸は 1 本しかない。** 線の重み w は無次元だが、規格化した線形状の頂点値
@@ -364,17 +436,17 @@ L(0)（ガウス型なら 1/(σ√(2π))）を掛けて密度と同じ 1/cm⁻¹
 
 線形状は `result` 側の条件から取る（`lines` は線形状を持たない）。
 
-線が密集して棒が潰れる場合は `--magnify` で棒だけを拡大できる。倍率は凡例に `(×N)` と
-出るので、拡大したことが図から失われない。
+線が密集して棒が潰れる場合は、作図スクリプトの `MAGNIFY` で棒だけを拡大できる。倍率は
+凡例に `(×N)` と出るので、拡大したことが図から失われない。
 
-```bash
-uv run fcenvelope plot result.json lines.json -o overlay.png --magnify 5
+```python
+MAGNIFY = 5.0        # overlay_plot.py の頭にある
 ```
 
 注意点が 2 つある。
 
 - 横軸は `result` の E 窓に合わせるので、窓の外に立つ線は描かれない。落ちた本数は
-  警告に出る。すべて見たいなら `run` の `--e-min` / `--e-max` を広げる。
+  スクリプトが警告に出す。すべて見たいなら `run` の `--e-min` / `--e-max` を広げる。
 - 2 つの結果の系か温度が食い違っていると警告が出る。棒と曲線の対応が
   成り立つのは同じ系・同じ温度で計算した場合だけなので、図には出すが鵜呑みにしない。
 

@@ -4,6 +4,8 @@
 語の定義は `CONTEXT.md`、設計の背景・判断理由は `docs/adr/` の各 ADR を参照。
 
 スペクトルには 2 つの表現があり、それぞれに「計算・保存・読み込み・描画」の 4 関数を持つ。
+図は CLI では描かない。計算に添えて**作図スクリプト**を生成し、それを走らせて作る
+（ADR-0057, 0061）。
 
 | 表現 | 関数 | 結果クラス | 出力 `kind` |
 |---|---|---|---|
@@ -38,7 +40,8 @@
 
 変換は入力ファイルの型（`inputs.py`）の中だけで起こる。`to_system()` / `to_broadening()`
 / `to_grid()` が単位と流儀を消費し、計算用の値の型には常に正準形が渡る（ADR-0054）。
-描画の横軸は当面 `cm^-1` 固定で、この 4 つとは別の軸になる。
+描画の横軸はこの 4 つとは別の軸で、**作図スクリプトの `X_UNIT` / `X_SCALE` が持つ**
+（ADR-0062）。`plotting.py` の軸ラベルは `cm^-1` 固定である。
 
 ## 公開 API
 
@@ -71,6 +74,19 @@ plot_overlay(envelope: EnvelopeResult, lines: LinesResult, *, ax=None,
 両系統とも「共通の物理条件（`temperature`）＋自分に固有の数値条件（`grid` / `selection`）」
 という同じ形をしている（ADR-0035）。結果クラスは純粋なデータ容器で、I/O と描画の責務を
 持たない（ADR-0011）。描画関数は `Figure` を返すのみでファイル保存はしない。
+
+作図スクリプトの生成は `fcenvelope.emit`（トップレベルには出さない。種類で振り分ける
+関数なので `io.save_any` / `plotting.plot_any` と同じ扱い）。
+
+```python
+emit.script_path_for(output: Path) -> Path      # result.json -> result_plot.py
+emit.image_path_for(script: Path) -> Path       # result_plot.py -> fcenvelope-result.png
+emit.write_script(result, data: Path, script: Path, *, force=False) -> bool
+emit.write_overlay_script(envelope, envelope_path, lines, lines_path, script, *,
+                          force=False) -> bool
+```
+
+戻り値は「書いたかどうか」で、生成先が既にあれば書かずに `False` を返す（ADR-0060）。
 
 入力ファイルの読み込みは `FCEnvelopeInput` を経由する。
 
@@ -266,21 +282,22 @@ coupling と frequency の単位が揃うことは前提にできないので、
 ## CLI
 
 ```
-fcenvelope run INPUT.json -o RESULT.json [--plot FIG.png] [--dpi INT]
+fcenvelope run INPUT.json -o RESULT.json [--script FILE | --no-script] [--force-script]
                           [--temperature FLOAT] [--sigma FLOAT]
                           [--e-min FLOAT] [--e-max FLOAT] [--de FLOAT]
                           [--log FILE]
 
-fcenvelope lines INPUT.json -o LINES.json [--plot FIG.png] [--dpi INT]
+fcenvelope lines INPUT.json -o LINES.json [--script FILE | --no-script] [--force-script]
                           [--temperature FLOAT] [--min-weight FLOAT]
-                          [--max-lines INT] [--max-quanta INT] [--show INT]
+                          [--max-lines INT] [--max-quanta INT] [--top INT]
                           [--log FILE]
 
-fcenvelope plot RESULT.json [LINES.json] -o FIG.png [--title TEXT] [--dpi INT]
-                          [--magnify FLOAT] [--log FILE]
+fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force] [--log FILE]
 
 fcenvelope --version
 ```
+
+**図のつまみは CLI にない**（ADR-0057）。調整は生成された作図スクリプトを直して行う。
 
 上書きできるのは `temperature` / `broadening` / `grid` / `selection` で、`modes` は上書き
 しない（ADR-0012, 0035）。上書きの値は**入力ファイルと同じ単位・流儀で読み**、入力ファイルの
@@ -288,11 +305,55 @@ fcenvelope --version
 `--e-min` / `--e-max` / `--de` はファイルの `grid.unit` で読む。上書き系オプションの既定値はすべて「上書きしない」
 という意味の `None` で、つまみの既定値は `Selection` の 1 箇所にしかない。
 
-`plot` は `kind` を見てエンベロープと棒スペクトルのどちらかを描く。ファイルを 2 つ
-（エンベロープ 1 つと線リスト 1 つ、順序は任意）渡すと重ね描きになり、`--magnify` が
-効く。種類の組み合わせが違えば使用法エラー。
+`run` と `lines` は結果 JSON に添えて作図スクリプトを**既定で**書き出す（ADR-0060）。
+生成先は `-o` の名前から作り（`result.json` → `result_plot.py`）、既にあれば書かずに
+残して `kept ...` と知らせる。`--force-script` で上書き、`--no-script` で生成しない。
+名前を変えながら掃引する実行では `--no-script` を使う。
+
+`script` は保存済みの結果から作図スクリプトを書き出す。`kind` を見てエンベロープと棒
+スペクトルのどちらかの雛形を選び、ファイルを 2 つ（エンベロープ 1 つと線リスト 1 つ、
+順序は任意）渡すと重ね描きの雛形になる（ADR-0030 の規則をそのまま引き継ぐ）。種類の
+組み合わせが違えば使用法エラー。壊したスクリプトを作り直す口でもある。
+
+`--top N` は図ではなく結果の報告で、強い線を N 本まで端末に表として出す（旧 `--show`）。
 `--version` は副命令を取らず、パッケージ版だけを出して終了する。
 終了コード: `0` 正常 / `1` `FCEnvelopeError` / `2` 使用法エラー。
+
+## 作図スクリプト
+
+生成物は `json` と `matplotlib` だけで動き、`fcenvelope` を import しない（ADR-0058）。
+雛形は `src/fcenvelope/templates/{envelope,lines,overlay}.py` にそのまま走る Python
+ファイルとして置いてあり、生成が差し替えるのは生成ヘッダの区画だけである（ADR-0059）。
+
+```python
+# --- generated header (fcenvelope) ---------------------------------------
+DATA = Path(__file__).parent / 'result.json'
+OUTPUT = Path(__file__).parent / 'fcenvelope-result.png'
+KIND = 'fcenvelope.envelope'
+SCHEMA_VERSION = 2
+# --- end generated header ------------------------------------------------
+```
+
+| 名前 | 何を決めるか |
+|---|---|
+| `SAVE` / `SHOW` | 出力先。`SHOW` が `None` なら端末のときだけ出す |
+| `SHOW_WIDTH` / `SHOW_DPI` | 端末に出す図の大きさ。ファイルの `DPI` とは別（ADR-0061） |
+| `FIGSIZE` / `DPI` / `TITLE` / `XLIM` / `YLIM` / 色 | 図の体裁 |
+| `X_UNIT` / `X_SCALE` | 横軸の単位（ADR-0062） |
+| `MAGNIFY` | 重ね描きの棒の倍率（ADR-0028。凡例に出る） |
+
+構造は 3 つの雛形で共通である。
+
+| 関数 | 役目 |
+|---|---|
+| `load(path, kind)` | 結果 JSON を読む。`kind` と `schema_version` が合わなければ止まる |
+| `draw(ax, data)` | 図の中身。notebook から import して使える |
+| `show(fig)` | kitty graphics protocol で端末に出す |
+| `main()` | 読む → 描く → 画像と端末へ出す |
+
+`load` / `terminal_pixel_width` / `show` は 3 つの雛形で同一で、食い違わないことを
+`test/test_emit.py` が確かめる。画像には見た目に出ない覚え書き（`Software` / `Source` /
+`Description`）が入る。
 
 `--log FILE` は節目のログの書き出し先（下の「ログ」を参照）。省略時は書き出さない。
 
@@ -403,11 +464,13 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 | `lines.py` | 漸化式・線の列挙 | errors, logs, models, physics, result |
 | `io.py` | 保存・読み込み、`kind` の表 | errors, logs, models, result |
 | `plotting.py` | 描画、結果の型の表 | errors, logs, result |
+| `emit.py` | 作図スクリプトの生成、雛形の表。**描かない**（matplotlib に依存しない） | errors, io, logs, result |
 | `cli.py` | typer アプリ | 上記すべて |
 
 `envelope.py` と `lines.py` は互いに依存しない。`io.py` は `inputs.py` に依存しない
-（ADR-0041）。matplotlib は `plotting.py`、typer は `cli.py`、pydantic は `inputs.py` に
-閉じ込める。
+（ADR-0041）。matplotlib は `plotting.py` と雛形、typer は `cli.py`、pydantic は
+`inputs.py` に閉じ込める。`emit.py` が `io.py` に依存するのは、生成ヘッダに書く `kind` と
+`schema_version` がファイル形式の知識だからである（ADR-0049 により直書きしない）。
 
 種類による振り分けは関心ごとの表に置く（ADR-0049）。
 
@@ -415,6 +478,7 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 |---|---|
 | `io.py` | `RESULT_KINDS`: `kind` → 保存・読み込み・単位 |
 | `plotting.py` | `DRAWERS`: 結果の型 → 描画 |
+| `emit.py` | `TEMPLATES`: 結果の型 → 雛形の名前 |
 | `cli.py` | `REPORTERS`: 結果の型 → 報告 |
 
 重ね描きは表に載せず専用の関数のままにする。すべての表が同じ種類を網羅していることは
@@ -430,7 +494,7 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 |---|---|---|
 | ローレンツ型・Voigt 型の線形状 | `Broadening`。線形状の知識はここに閉じており、`envelope.py` と `plotting.py` は種類を知らない | ADR-0034、提案 ADR-0038 / 0039 |
 | 流儀 V | `units.py` の `COUPLING_CONVENTIONS`。相手プログラムが V をどの単位で出すかが判明した時点で、`energy_power` を据え置けるか流儀の単位の表し方そのものを見直すかを決める | ADR-0055、`docs/theory/vcc.md` |
-| 描画の横軸の単位 | `plotting.py`。当面 `cm^-1` 固定。指定場所（CLI オプションか入力ファイルか）も未決 | ADR-0053 |
+| matplotlib 以外のツール向けの雛形 | `emit.py` の `TEMPLATES` と生成先の拡張子。多くのツールは JSON を読めないので、列指向のデータ書き出しを決めるところから始まる（ADR-0010 を開き直す） | ADR-0058 |
 | 入力フォーマットの見直し | `inputs.py`。入力ファイルの型と計算用の値の型が分かれており、計算側に触れずに変えられる | ADR-0045 |
 | 非対角な基底からの入力（対角化） | 別命令 `fcenvelope diagonalize` として足し、出力のモード CSV を `{"path": ...}` で読む。正準化の行き先は `VibrationalSystem` 1 つ | 提案 ADR-0037、ADR-0044 |
 | 結果の種類の追加 | 関心ごとの表（`RESULT_KINDS` / `DRAWERS` / `REPORTERS`）に行を足す | ADR-0049 |
