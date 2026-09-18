@@ -62,7 +62,7 @@ uv run fcenvelope run input.json -o result.json
 #   -> result_plot.py    作図スクリプト
 
 # 3: 描画。ここを何度でも繰り返す
-python result_plot.py            # 端末に図が出て、fcenvelope-envelope-result.png も残る
+python result_plot.py            # 端末に図が出て、fcenvelope-result.png も残る
 vi result_plot.py                # 軸・色・注釈を直す
 python result_plot.py            # すぐ出る
 ```
@@ -125,7 +125,7 @@ python overlay_plot.py
 | **出力先を 2 つ持つ**（画像ファイルと端末） | 「ちょっと見る」も 3 の側で完結する。`plot` サブコマンドが要らなくなる |
 | 既存のスクリプトを勝手に壊さない | 調整の成果はスクリプトの側にしかない |
 | 描画の中身は `draw(ax, data)` に閉じている | notebook から import できる。既定の見た目を試験で留められる |
-| 画像にメタ情報を焼く | 画像が単独で持ち出されても出どころが残る |
+| 画像には何も書き込まない | 生成物をそのまま使える。同一性はハッシュで確かめる |
 
 ### 出力先の使い分け
 
@@ -177,7 +177,7 @@ import matplotlib.pyplot as plt
 
 # --- generated header (fcenvelope) ---------------------------------------
 DATA = Path(__file__).with_name("result.json")
-OUTPUT = Path(__file__).with_name("fcenvelope-envelope-result.png")
+OUTPUT = Path(__file__).with_name("fcenvelope-result.png")
 KIND = "fcenvelope.envelope"
 SCHEMA_VERSION = 2
 # --- end generated header ------------------------------------------------
@@ -282,16 +282,8 @@ def main() -> None:
         ax.legend()
 
     if SAVE:
-        fig.savefig(
-            OUTPUT,
-            dpi=DPI,
-            metadata={
-                "Software": f"fcenvelope {data['fcenvelope_version']}",
-                "Source": f"{Path(DATA).name} ({data['created_at']})",
-                "Description": f"T = {data['input']['temperature']:g} K, "
-                               f"sigma = {data['input']['broadening']['sigma']:g} cm^-1",
-            },
-        )
+        # 画像には何も書き込まない。Software は matplotlib が既定で入れるので消す。
+        fig.savefig(OUTPUT, dpi=DPI, metadata={"Software": None})
         print(f"wrote {OUTPUT}")
     if SHOW if SHOW is not None else sys.stdout.isatty():
         show(fig)
@@ -311,16 +303,35 @@ if __name__ == "__main__":
 - `kind` と `schema_version` の確認が入っているのは、結果ファイルの形式が変わったときに
   `KeyError` ではなく読める文言で止めるため。生成されたスクリプトは利用者の手元に
   残り続けるので、その版ずれは必ず起きる。
-- **PNG のメタ情報**（`Software` / `Source` / `Description`）を既定で焼く。画像が単独で
-  持ち出されがちだという問題への、スクリプト側からの直接の答えになる。
+- **画像には何も書き込まない**（次節）。
 - `show()` の出すバイト列は、先頭チャンクだけが制御データを持ち、以降は `m=` だけ、
   最後が `m=0`、base64 は 4096 バイト刻み。`q=2` で端末からの応答を止める。
 - 端末へ出す図だけ、そのときの窓の幅から dpi を逆算して描き直す。ファイルの `DPI` は
   動かない。
 
 この例は実際に `fcenvelope run` の結果へ当てて動かしてある。図は `plot_envelope` が
-描くものと同じで、別の種類のファイルを渡すと上の文言で止まり、焼いたメタ情報は
-画像から読み出せる。`show()` の出力も、再結合して PNG に戻ることを確かめてある。
+描くものと同じで、別の種類のファイルを渡すと上の文言で止まる。`show()` の出力も、
+再結合して PNG に戻ることを確かめてある。
+
+### 画像には何も書き込まない
+
+画像にメタ情報（作ったプログラム・元データ・計算条件）を焼き込む案は採らない。メタ情報は
+図を作ったフォルダの側に残し、画像そのものはハッシュで同じものかを確かめる、という運用に
+合わせる。生成物に何かを足すと、そのままでは使えない場面が出る。
+
+この運用にはもう 1 つ効く性質がある。**実行のたびに変わるものを画像に入れてはならない**。
+入れるとハッシュが毎回変わって同一性の確認にならない。日時や実行の識別子はもちろん、
+版の文字列も同じ理由で入れない。
+
+matplotlib は既定で `Software: Matplotlib version X.Y.Z, https://matplotlib.org/` という
+tEXt チャンクを書き込む。これも「何も書かない」から外れるので、`metadata={"Software": None}`
+で消す。消すと残るのは `dpi` の指定（`pHYs` チャンク）だけになる。消したうえで、同じ図を
+2 回描くとバイト単位で一致することは確かめてある（matplotlib は PNG に日時を入れないので、
+これで再現する）。
+
+出どころは、画像の名前（`fcenvelope-` で始まる）と、隣に残っている作図スクリプトと
+結果 JSON が持つ。結果 JSON には計算条件と来歴が正準形で入っている（ADR-0008, 0010）ので、
+画像に同じことを書き写す必要はない。
 
 ### 重ね描きの雛形
 
@@ -357,17 +368,15 @@ heights = [line["weight"] * peak * MAGNIFY for line in lines["lines"]]
 
 | 生成物 | 既定の名前 | なぜ |
 |---|---|---|
-| 作図スクリプト | `result_plot.py`（`-o` の名前を継ぐ） | データの隣に残るものなので、どのデータの相棒かが分かればよい |
-| 画像 | `fcenvelope-<種類>-<stem>.png` | **単独で持ち出される**ので、それ自体で何の図か分かる必要がある |
+| 作図スクリプト | `result_plot.py`（`-o` の名前を継ぐ） | データの隣に残るので、どのデータの相棒かが分かればよい |
+| 画像 | `fcenvelope-<stem>.png` | **単独で持ち出される**ので、せめてどのプログラムの図かは名前に残す |
 
-`result.json` から作った図は `fcenvelope-envelope-result.png` になる。`spectrum.png` や
-`result_plot.png` では、スライドや共有フォルダに置かれた時点で情報がほとんど残らない。
-「このプログラムが作った」「どの表現の図か」「どの計算の図か」の 3 つを名前に載せる。
-中身のさらに細かいところ（温度・σ・いつ計算したか）は画像に焼いたメタ情報が持つ。
-
-種類は `envelope` / `lines` / `overlay` の 3 つ。`-o lines.json` のように stem が種類と
-同じだと `fcenvelope-lines-lines.png` になるが、例外規則は設けない。`OUTPUT` は
-スクリプトの中の定数なので、気に入らなければ 1 行直せばよい。
+`result.json` から作った図は `fcenvelope-result.png` になる。`spectrum.png` や
+`result_plot.png` だと、スライドや共有フォルダに置かれた時点で何の図か分からなくなる。
+名前に負わせるのはそこまでで、規則で情報を厳密に持たせようとはしない。図の中身を
+利用者の言葉で名前に出したければ `-o` を選べばよい（`-o naphthalene_300K.json` なら
+`fcenvelope-naphthalene_300K.png`）。`OUTPUT` はスクリプトの中の定数なので、気に
+入らなければ 1 行直せばよい。
 
 **掃引では `--no-script` を付ける。** 温度を 50 点振って `-o T100.json` … と名前を
 変えていくと、既定のままではスクリプトが 50 本できてしまう。掃引で欲しいのは 50 本の
@@ -500,7 +509,7 @@ CLI が描画しなくなるので、`plotting.py` を使うのはライブラ�
 | 生成ヘッダの差し替えが、マーカーの外を変えない |
 | 既定の `draw` と `plotting` の描画が一致する |
 | `TEMPLATES` が他の表と同じ種類を網羅している（`test_dispatch.py`） |
-| 画像に焼いたメタ情報が読み出せる |
+| 画像に余計なチャンクが入らず、同じ入力で 2 回描くとバイト一致する |
 
 ## 検討した選択肢
 
@@ -534,7 +543,7 @@ CLI が描画しなくなるので、`plotting.py` を使うのはライブラ�
 | 0058 | 作図スクリプトは単独で動き、結果ファイルを実行時に読む |
 | 0059 | 雛形は実物の Python ファイルとして持ち、生成ではヘッダだけを差し替える |
 | 0060 | 生成は既定で行い、既存のスクリプトを上書きせず残して知らせる |
-| 0061 | 作図スクリプトは画像ファイルと端末の 2 つに出す（`plot` サブコマンドの廃止）。画像の名前はそれ自体で何の図か分かる形にする |
+| 0061 | 作図スクリプトは画像ファイルと端末の 2 つに出す（`plot` サブコマンドの廃止）。画像には何も書き込まない |
 | 0062 | 描画の横軸の単位は作図スクリプトが持つ（ADR-0053 が残した未決を閉じる） |
 
 0057 と 0062 は 1 本にまとめてもよい。状態を更新する既存の ADR: 0012（`plot` を分けた
@@ -552,4 +561,4 @@ CLI が描画しなくなるので、`plotting.py` を使うのはライブラ�
 1. `plot_envelope` を雛形の `draw` の上に実装し直すか（「`plotting.py` の身の振り方」）。
    既定の見た目の重複がなくなるが、モジュール依存の表が 1 行変わる。
 2. 入力ファイルに `label` を足すか（「保留: 実行に名前を付けるか」）。画像の名前と
-   メタ情報の両方を、利用者の言葉で埋められるようになる。
+   表題を、利用者の言葉で埋められるようになる。
