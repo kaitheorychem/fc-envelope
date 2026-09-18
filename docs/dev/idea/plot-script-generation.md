@@ -62,7 +62,7 @@ uv run fcenvelope run input.json -o result.json
 #   -> result_plot.py    作図スクリプト
 
 # 3: 描画。ここを何度でも繰り返す
-python result_plot.py            # 端末に図が出て、result_plot.png も書かれる
+python result_plot.py            # 端末に図が出て、fcenvelope-envelope-result.png も残る
 vi result_plot.py                # 軸・色・注釈を直す
 python result_plot.py            # すぐ出る
 ```
@@ -103,9 +103,9 @@ python overlay_plot.py
 | `run --plot` / `lines --plot` | 生成が既定になるので不要。2 は図を作らない |
 | `run --dpi` / `lines --dpi` / `plot --dpi` | スクリプトの `DPI` |
 
-`lines --show N`（強い線を N 本だけ端末に表に出す）は残す。これは図のつまみではなく
-結果の報告で、`run` の要約 1 行と同じ側にある。ただし新しい語彙では「見せる」が端末への
-図の出力を指すようになるので、名前は `--top N` に替えるのがよい（後述の未決）。
+強い線を N 本だけ表に出すつまみは残す。これは図のつまみではなく結果の報告で、`run` の
+要約 1 行と同じ側にある。ただし新しい語彙では「見せる」が端末への図の出力を指すように
+なるので、名前は `--show N` から **`--top N`** に替える。
 
 `--temperature` / `--sigma` / `--e-min` / `--e-max` / `--de` / `--min-weight` などの
 上書きはそのまま残す。どれも**数を変える**つまみで、境界の内側にある（ADR-0012, 0050）。
@@ -135,8 +135,23 @@ python overlay_plot.py
 
 判定は `sys.stdout.isatty()` だけで行い、端末の種類は調べない。パイプやリダイレクトや
 CI ではエスケープ列を出さない、という一点だけが要るからである。対応していない端末や
-sixel を使いたい場合は、スクリプトの `show()` を 10 行ほど書き替えればよい——それが
-「生成されたプログラムである」ことの値打ちである。
+sixel を使いたい場合は、スクリプトの `show()` を書き替えればよい——それが「生成された
+プログラムである」ことの値打ちである。
+
+**解像度は 2 つの出力先で別々に決める。** 画像ファイルは `DPI`（既定 150）で、端末へは
+**そのときの端末の幅に合わせて描き直す**。`TIOCGWINSZ` は行数・桁数だけでなく窓の画素数も
+返し、kitty graphics protocol に対応した端末はこれを埋めてくる。端末の画素幅から dpi を
+逆算して図をその大きさで描けば、端末側で縮小されないぶん文字がぼやけない。画素数を
+返さない端末では `SHOW_DPI` に落ちる。
+
+| 端末の窓 | 端末に出る図 |
+|---|---|
+| 幅 1200 px | 1080 x 648 px（`SHOW_WIDTH = 0.9`） |
+| 幅 2400 px | 2160 x 1296 px |
+| 画素数を返さない | 770 x 462 px（`SHOW_DPI = 110`） |
+
+kitty の `c=` / `r=` で端末側に縮小させる手もあるが、こちらは端末の実装に縮小品質を
+預けることになるので採らない。
 
 ### 例（エンベロープ）
 
@@ -162,7 +177,7 @@ import matplotlib.pyplot as plt
 
 # --- generated header (fcenvelope) ---------------------------------------
 DATA = Path(__file__).with_name("result.json")
-OUTPUT = Path(__file__).with_name("result_plot.png")
+OUTPUT = Path(__file__).with_name("fcenvelope-envelope-result.png")
 KIND = "fcenvelope.envelope"
 SCHEMA_VERSION = 2
 # --- end generated header ------------------------------------------------
@@ -170,7 +185,8 @@ SCHEMA_VERSION = 2
 # 出力先。SHOW は None なら端末のときだけ、True / False で固定できる。
 SAVE = True
 SHOW = None
-SHOW_DPI = 110       # 端末に出すときの解像度。ファイルの DPI とは別
+SHOW_WIDTH = 0.9     # 端末の幅に対する図の幅の割合
+SHOW_DPI = 110       # 端末が画素数を返さないときの解像度。ファイルの DPI とは別
 
 # 図の設定。ここから下はすべて手で変えてよい。
 FIGSIZE = (7.0, 4.2)
@@ -212,10 +228,26 @@ def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> No
     ax.margins(x=0.0)
 
 
+def terminal_pixel_width() -> int | None:
+    """端末の窓の画素幅。返さない端末もあるので、その場合は None。"""
+    import fcntl
+    import struct
+    import termios
+
+    try:
+        packed = fcntl.ioctl(sys.stdout, termios.TIOCGWINSZ, b"\0" * 8)
+    except OSError:
+        return None
+    return struct.unpack("HHHH", packed)[2] or None      # rows, cols, xpixel, ypixel
+
+
 def show(fig) -> None:
     """kitty graphics protocol で端末に直接出す。別の端末なら、ここを書き替える。"""
+    pixels = terminal_pixel_width()
+    dpi = pixels * SHOW_WIDTH / FIGSIZE[0] if pixels else SHOW_DPI
+
     buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=SHOW_DPI)
+    fig.savefig(buffer, format="png", dpi=dpi)
     payload = base64.standard_b64encode(buffer.getvalue())
 
     out, first = sys.stdout.buffer, True
@@ -283,6 +315,8 @@ if __name__ == "__main__":
   持ち出されがちだという問題への、スクリプト側からの直接の答えになる。
 - `show()` の出すバイト列は、先頭チャンクだけが制御データを持ち、以降は `m=` だけ、
   最後が `m=0`、base64 は 4096 バイト刻み。`q=2` で端末からの応答を止める。
+- 端末へ出す図だけ、そのときの窓の幅から dpi を逆算して描き直す。ファイルの `DPI` は
+  動かない。
 
 この例は実際に `fcenvelope run` の結果へ当てて動かしてある。図は `plot_envelope` が
 描くものと同じで、別の種類のファイルを渡すと上の文言で止まり、焼いたメタ情報は
@@ -316,8 +350,24 @@ heights = [line["weight"] * peak * MAGNIFY for line in lines["lines"]]
 これなら `fcenvelope run ... && python result_plot.py` が、何度やり直しても同じ図の
 設定で通る。
 
-生成先は `-o` のファイル名から作る（`result.json` → `result_plot.py`、その中の
-`OUTPUT` は `result_plot.png`）。`--script FILE` で明示もできる。
+生成先は `-o` のファイル名から作る（`result.json` → `result_plot.py`）。`--script FILE`
+で明示もできる。
+
+**スクリプトと画像では名前の付け方を変える。**
+
+| 生成物 | 既定の名前 | なぜ |
+|---|---|---|
+| 作図スクリプト | `result_plot.py`（`-o` の名前を継ぐ） | データの隣に残るものなので、どのデータの相棒かが分かればよい |
+| 画像 | `fcenvelope-<種類>-<stem>.png` | **単独で持ち出される**ので、それ自体で何の図か分かる必要がある |
+
+`result.json` から作った図は `fcenvelope-envelope-result.png` になる。`spectrum.png` や
+`result_plot.png` では、スライドや共有フォルダに置かれた時点で情報がほとんど残らない。
+「このプログラムが作った」「どの表現の図か」「どの計算の図か」の 3 つを名前に載せる。
+中身のさらに細かいところ（温度・σ・いつ計算したか）は画像に焼いたメタ情報が持つ。
+
+種類は `envelope` / `lines` / `overlay` の 3 つ。`-o lines.json` のように stem が種類と
+同じだと `fcenvelope-lines-lines.png` になるが、例外規則は設けない。`OUTPUT` は
+スクリプトの中の定数なので、気に入らなければ 1 行直せばよい。
 
 **掃引では `--no-script` を付ける。** 温度を 50 点振って `-o T100.json` … と名前を
 変えていくと、既定のままではスクリプトが 50 本できてしまう。掃引で欲しいのは 50 本の
@@ -379,13 +429,16 @@ heights = [line["weight"] * peak * MAGNIFY for line in lines["lines"]]
 
 | モジュール | 責務 | 依存先 |
 |---|---|---|
-| `scripts.py` | 雛形の選択と生成ヘッダの差し替え。**matplotlib に依存しない**（テキストを書くだけ） | errors, logs, result |
+| `emit.py` | 雛形の選択と生成ヘッダの差し替え。**matplotlib に依存しない**（テキストを書くだけ） | errors, logs, result |
+
+名前を `emit.py` にするのは、このモジュールが**描かない**ことを名前で言うためである。
+雛形を置くディレクトリ `templates/` とも衝突しない。
 
 種類による振り分けは関心ごとの表に置く（ADR-0049）。
 
 | モジュール | 表 |
 |---|---|
-| `scripts.py` | `TEMPLATES`: 結果の型 → 雛形の名前 |
+| `emit.py` | `TEMPLATES`: 結果の型 → 雛形の名前 |
 
 重ね描きは表に載せず専用の関数のままにする（`plotting.plot_overlay` と同じ扱い）。
 `test/test_dispatch.py` に行を 1 つ足し、`RESULT_KINDS` / `DRAWERS` / `REPORTERS` と
@@ -406,6 +459,9 @@ fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force] [--log FILE]
 
 fcenvelope --version
 ```
+
+`--top N`（旧 `--show N`）だけが図ではなく結果の報告のつまみで、強い線を N 本まで端末に
+表として出す。
 
 `script` の引数の形は今の `plot` と同じにする（1 つなら種類で振り分け、2 つなら重ね描き、
 順序は問わない、それ以外は使用法エラー）。単独の結果に対しても使えるので、壊した
@@ -438,6 +494,8 @@ CLI が描画しなくなるので、`plotting.py` を使うのはライブラ�
 | 生成したスクリプトが `fcenvelope` を import していない |
 | 標準出力が端末でないときエスケープ列を出さない（パイプで確かめる） |
 | 疑似端末（`pty`）に対しては kitty の制御列を出し、再結合すると PNG に戻る |
+| 端末に出す図の大きさが窓の画素幅から決まる（`pty` の winsize を変えて確かめる） |
+| 画像の既定名が `fcenvelope-<種類>-<stem>.png` になる |
 | 生成先が既にあるとき上書きしない。`--force-script` で上書きする |
 | 生成ヘッダの差し替えが、マーカーの外を変えない |
 | 既定の `draw` と `plotting` の描画が一致する |
@@ -476,7 +534,7 @@ CLI が描画しなくなるので、`plotting.py` を使うのはライブラ�
 | 0058 | 作図スクリプトは単独で動き、結果ファイルを実行時に読む |
 | 0059 | 雛形は実物の Python ファイルとして持ち、生成ではヘッダだけを差し替える |
 | 0060 | 生成は既定で行い、既存のスクリプトを上書きせず残して知らせる |
-| 0061 | 作図スクリプトは画像ファイルと端末の 2 つに出す（`plot` サブコマンドの廃止） |
+| 0061 | 作図スクリプトは画像ファイルと端末の 2 つに出す（`plot` サブコマンドの廃止）。画像の名前はそれ自体で何の図か分かる形にする |
 | 0062 | 描画の横軸の単位は作図スクリプトが持つ（ADR-0053 が残した未決を閉じる） |
 
 0057 と 0062 は 1 本にまとめてもよい。状態を更新する既存の ADR: 0012（`plot` を分けた
@@ -489,11 +547,9 @@ CLI が描画しなくなるので、`plotting.py` を使うのはライブラ�
 
 ## 決めていないこと
 
-1. `lines --show N` を `--top N` に改名するか。新しい語彙では「見せる」が端末への図の
-   出力を指すので、表を出すつまみとは分けた方がよい。
-2. モジュール名を `scripts.py` にするか（`plotscript.py` / `emit.py` も候補）。
-   パッケージデータのディレクトリ名 `templates/` と衝突しない名前であること。
-3. 生成された画像の既定名（`result_plot.png`）。`result.png` の方がよければ、
-   末尾の `_plot` を落とす規則にする。
-4. 端末に出すときの既定の解像度（`SHOW_DPI = 110`）。端末の幅に合わせて `c=` で
-   縮める方がよければ、`show()` に 1 行足す。
+設計として決まっていないものはない。実装してから見直す余地として、次の 2 つを残す。
+
+1. `plot_envelope` を雛形の `draw` の上に実装し直すか（「`plotting.py` の身の振り方」）。
+   既定の見た目の重複がなくなるが、モジュール依存の表が 1 行変わる。
+2. 入力ファイルに `label` を足すか（「保留: 実行に名前を付けるか」）。画像の名前と
+   メタ情報の両方を、利用者の言葉で埋められるようになる。
