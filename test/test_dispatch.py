@@ -6,11 +6,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from conftest import compute_quietly, lines_quietly
 
 from fcenvelope import Broadening, EnergyGrid, EnvelopeResult, LinesResult
 from fcenvelope.cli import OVERLAY_TYPES, REPORTERS
+from fcenvelope.emit import TEMPLATES, write_script
 from fcenvelope.errors import InvalidInputError
 from fcenvelope.io import RESULT_KINDS, kind_for, kind_of, load_any, save_any
 from fcenvelope.plotting import DRAWERS, plot_any
@@ -19,6 +22,7 @@ TABLES = {
     "io.RESULT_KINDS": lambda: {spec.result_type for spec in RESULT_KINDS.values()},
     "plotting.DRAWERS": lambda: set(DRAWERS),
     "cli.REPORTERS": lambda: set(REPORTERS),
+    "emit.TEMPLATES": lambda: set(TEMPLATES),
 }
 
 
@@ -41,6 +45,8 @@ def test_an_unknown_result_type_is_reported_by_every_table():
         kind_for(str)
     with pytest.raises(InvalidInputError):
         plot_any("not a result")
+    with pytest.raises(InvalidInputError):
+        write_script("not a result", Path("data.json"), Path("script.py"))
 
 
 def test_overlay_is_not_in_the_tables_but_names_its_kinds_from_them():
@@ -87,7 +93,7 @@ def test_report_any_handles_every_kind(results, tmp_path, capsys):
     from fcenvelope.cli import _report_any
 
     for result in results:
-        _report_any(result, tmp_path / "out.json", show=2)
+        _report_any(result, tmp_path / "out.json", top=2)
     assert capsys.readouterr().out.count("wrote") == len(results)
 
 
