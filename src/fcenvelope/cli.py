@@ -2,6 +2,9 @@
 
 終了コード: 0 正常 / 1 `FCEnvelopeError` / 2 typer の使用法エラー。
 
+図は描かない。計算に添えて**作図スクリプト**を書き出し、図はそれを走らせて作る
+（ADR-0057, 0061）。図のつまみは CLI に置かない——調整はスクリプトを直して行う。
+
 節目のログは `--log` で指定したファイルに書く。指定がなければメモリに溜めるだけで、
 異常終了したときにだけ出力先の隣へ書き出す（ADR-0052）。
 """
@@ -12,20 +15,16 @@ import logging
 from pathlib import Path
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Annotated, Optional, TypeVar
+from typing import Annotated, Optional, TypeVar
 
 import typer
 
-if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
-    import matplotlib.figure
-
-from . import logs
+from . import emit, logs
 from .envelope import compute_envelope
 from .errors import FCEnvelopeError
 from .inputs import FCEnvelopeInput
 from .io import kind_for, load_any, save_any
 from .lines import compute_fc_lines
-from .logs import stage
 from .result import EnvelopeResult, FCLine, LinesResult, Result
 from .version import __version__
 
@@ -52,6 +51,63 @@ LogFile = Annotated[
         ),
     ),
 ]
+
+
+#: 作図スクリプトのつまみ。`run` と `lines` で同じものを使う（ADR-0036）。
+ScriptFile = Annotated[
+    Optional[Path],
+    typer.Option(
+        "--script",
+        help=(
+            "Write the plot script here. "
+            "Without it, the script goes next to the output (RESULT_plot.py)."
+        ),
+    ),
+]
+
+NoScript = Annotated[
+    bool,
+    typer.Option(
+        "--no-script",
+        help="Do not write a plot script. Use this when sweeping conditions.",
+    ),
+]
+
+ForceScript = Annotated[
+    bool,
+    typer.Option(
+        "--force-script",
+        help="Overwrite the plot script instead of keeping the existing one.",
+    ),
+]
+
+
+def _emit_script(
+    result: Result,
+    data: Path,
+    *,
+    script: Path | None,
+    no_script: bool,
+    force: bool,
+) -> None:
+    """計算に添えて作図スクリプトを書き出す（ADR-0060）。
+
+    生成は既定で行い、既にあるものは上書きせずに残す。調整の成果はスクリプトの側に
+    しかないので、条件を振って計算をやり直しても図の設定は生き残る。
+    """
+    if no_script:
+        if script is not None:
+            raise typer.BadParameter(
+                "--script and --no-script cannot be used together",
+                param_hint="--no-script",
+            )
+        return
+
+    target = script if script is not None else emit.script_path_for(data)
+    if emit.write_script(result, data, target, force=force):
+        typer.echo(f"wrote {target}")
+    else:
+        typer.echo(f"kept {target} (--force-script to regenerate)")
 
 
 def _trace_path(output: Path) -> Path:
@@ -124,8 +180,8 @@ def _override(
     return FCEnvelopeInput.from_obj(data)
 
 
-def _report_envelope(result: EnvelopeResult, output: Path, *, show: int = 0) -> None:
-    del show  # エンベロープには行ごとの表示がない。
+def _report_envelope(result: EnvelopeResult, output: Path, *, top: int = 0) -> None:
+    del top  # エンベロープには行ごとの表示がない。
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
@@ -151,10 +207,6 @@ def run(
         Path,
         typer.Option("-o", "--output", help="Destination for the result JSON."),
     ],
-    plot: Annotated[
-        Optional[Path],
-        typer.Option("--plot", help="Also render the envelope to this image file."),
-    ] = None,
     temperature: Annotated[
         Optional[float],
         typer.Option("--temperature", help="Override temperature [K]."),
@@ -175,10 +227,15 @@ def run(
         Optional[float],
         typer.Option("--de", help="Override grid.de, in the input file's grid unit."),
     ] = None,
-    dpi: Annotated[int, typer.Option("--dpi", help="Resolution of --plot.")] = 150,
+    script: ScriptFile = None,
+    no_script: NoScript = False,
+    force_script: ForceScript = False,
     log: LogFile = None,
 ) -> None:
-    """Compute the Franck-Condon envelope and write it to a result JSON."""
+    """Compute the Franck-Condon envelope and write it to a result JSON.
+
+    A plot script is written next to the result; run it to draw the figure.
+    """
     with _traced(log, output):
         parsed = _override(
             FCEnvelopeInput.from_path(input_path),
@@ -195,9 +252,9 @@ def run(
         save_any(result, output)
 
         _report_any(result, output)
-
-        if plot is not None:
-            _save_figure(result, plot, title=None, dpi=dpi)
+        _emit_script(
+            result, output, script=script, no_script=no_script, force=force_script
+        )
 
 
 @app.command()
@@ -213,10 +270,6 @@ def lines(
         Path,
         typer.Option("-o", "--output", help="Destination for the FC line JSON."),
     ],
-    plot: Annotated[
-        Optional[Path],
-        typer.Option("--plot", help="Also render the stick spectrum to this image file."),
-    ] = None,
     temperature: Annotated[
         Optional[float],
         typer.Option("--temperature", help="Override temperature [K]."),
@@ -233,13 +286,18 @@ def lines(
         Optional[int],
         typer.Option("--max-quanta", help="Override selection.max_quanta."),
     ] = None,
-    show: Annotated[
-        int, typer.Option("--show", help="Print this many of the strongest lines (0 disables).")
+    top: Annotated[
+        int, typer.Option("--top", help="Print this many of the strongest lines (0 disables).")
     ] = 10,
-    dpi: Annotated[int, typer.Option("--dpi", help="Resolution of --plot.")] = 150,
+    script: ScriptFile = None,
+    no_script: NoScript = False,
+    force_script: ForceScript = False,
     log: LogFile = None,
 ) -> None:
-    """List the discrete Franck-Condon factors with their transition energies."""
+    """List the discrete Franck-Condon factors with their transition energies.
+
+    A plot script is written next to the result; run it to draw the figure.
+    """
     with _traced(log, output):
         parsed = _override(
             FCEnvelopeInput.from_path(input_path),
@@ -257,14 +315,14 @@ def lines(
         )
         save_any(result, output)
 
-        _report_any(result, output, show=show)
-
-        if plot is not None:
-            _save_figure(result, plot, title=None, dpi=dpi)
+        _report_any(result, output, top=top)
+        _emit_script(
+            result, output, script=script, no_script=no_script, force=force_script
+        )
 
 
 @app.command()
-def plot(
+def script(
     result_paths: Annotated[
         list[Path],
         typer.Argument(
@@ -277,43 +335,42 @@ def plot(
     ],
     output: Annotated[
         Path,
-        typer.Option("-o", "--output", help="Destination image file."),
+        typer.Option("-o", "--output", help="Destination for the plot script (.py)."),
     ],
-    title: Annotated[
-        Optional[str], typer.Option("--title", help="Title drawn above the axes.")
-    ] = None,
-    magnify: Annotated[
-        float,
-        typer.Option(
-            "--magnify",
-            help="Blow up the sticks by this factor when overlaying (shown in the legend).",
-        ),
-    ] = 1.0,
-    dpi: Annotated[int, typer.Option("--dpi", help="Resolution of the output image.")] = 150,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite an existing script."),
+    ] = False,
     log: LogFile = None,
 ) -> None:
-    """Render stored results without recomputing them.
+    """Write a plot script for stored results, then run it to draw the figure.
 
     One file draws either an envelope or a stick spectrum; the `kind` field decides.
-    Two files -- one envelope result and one FC line list, in either order -- are
-    drawn on one axes, with the lines scaled into the unit of F(E).
+    Two files -- one envelope result and one FC line list, in either order -- give a
+    script that draws both on one axes (ADR-0030).
+
+    Everything about how the figure looks lives in the script, so this is also the
+    way to get a fresh one back after editing yours beyond repair.
     """
     with _traced(log, output):
         results = [load_any(result_path) for result_path in result_paths]
 
         if len(results) == 1:
-            if magnify != 1.0:
-                raise typer.BadParameter(
-                    "--magnify only applies when overlaying two results",
-                    param_hint="--magnify",
-                )
-            _save_figure(results[0], output, title=title, dpi=dpi)
-            return
+            written = emit.write_script(
+                results[0], result_paths[0], output, force=force
+            )
+        else:
+            envelope, envelope_path, line_list, lines_path = _pair_for_overlay(
+                results, result_paths
+            )
+            written = emit.write_overlay_script(
+                envelope, envelope_path, line_list, lines_path, output, force=force
+            )
 
-        envelope, line_list = _pair_for_overlay(results, result_paths)
-        _save_overlay(
-            envelope, line_list, output, title=title, magnify=magnify, dpi=dpi
-        )
+        if written:
+            typer.echo(f"wrote {output}")
+        else:
+            typer.echo(f"kept {output} (--force to regenerate)")
 
 
 def _transition_label(line: FCLine) -> str:
@@ -326,7 +383,7 @@ def _transition_label(line: FCLine) -> str:
     )
 
 
-def _report_lines(result: LinesResult, output: Path, *, show: int = 0) -> None:
+def _report_lines(result: LinesResult, output: Path, *, top: int = 0) -> None:
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
@@ -335,32 +392,33 @@ def _report_lines(result: LinesResult, output: Path, *, show: int = 0) -> None:
         f"<E>={diagnostics.mean_energy:.6g} cm^-1, "
         f"lambda={result.system.reorganization_energy:.6g} cm^-1)"
     )
-    if show > 0 and result.lines:
+    if top > 0 and result.lines:
         typer.echo(f"  {'E / cm^-1':>12}  {'FC':>12}  {'weight':>12}  transition")
-    for line in result.lines[: max(show, 0)]:
+    for line in result.lines[: max(top, 0)]:
         typer.echo(
             f"  {line.energy:12.4g}  {line.fc_factor:12.6g}  "
             f"{line.weight:12.6g}  {_transition_label(line)}"
         )
-    if show > 0 and diagnostics.n_lines > show:
-        typer.echo(f"  ... {diagnostics.n_lines - show} more (see {output})")
+    if top > 0 and diagnostics.n_lines > top:
+        typer.echo(f"  ... {diagnostics.n_lines - top} more (see {output})")
     _echo_warnings(diagnostics.messages)
 
 
-#: 報告関数に共通の署名。`--show` を使うのは線だけだが、表に載せるために揃えてある。
+#: 報告関数に共通の署名。`--top` を使うのは線だけだが、表に載せるために揃えてある。
 Reporter = Callable[..., None]
 
 #: 結果の型 -> 報告。種類を足すときはここに 1 行足す（ADR-0049）。
-#: 保存・読み込みの表は `io.RESULT_KINDS`、描画の表は `plotting.DRAWERS` にある。
+#: 保存・読み込みの表は `io.RESULT_KINDS`、描画の表は `plotting.DRAWERS`、作図
+#: スクリプトの雛形の表は `emit.TEMPLATES` にある。
 REPORTERS: dict[type, Reporter] = {
     EnvelopeResult: _report_envelope,
     LinesResult: _report_lines,
 }
 
 
-def _report_any(result: Result, output: Path, *, show: int = 0) -> None:
+def _report_any(result: Result, output: Path, *, top: int = 0) -> None:
     """結果の種類を見て報告する。"""
-    REPORTERS[type(result)](result, output, show=show)
+    REPORTERS[type(result)](result, output, top=top)
 
 
 #: 重ね描きが取る組み合わせ。表には載せず専用の関数のままにする（ADR-0049）。
@@ -369,20 +427,27 @@ OVERLAY_TYPES = (EnvelopeResult, LinesResult)
 _R = TypeVar("_R", bound=Result)
 
 
-def _of_type(results: Sequence[Result], result_type: type[_R]) -> list[_R]:
-    """与えられた結果のうち、その型のものだけを取り出す。"""
-    return [item for item in results if isinstance(item, result_type)]
+def _of_type(
+    results: Sequence[Result], result_type: type[_R], paths: Sequence[Path]
+) -> list[tuple[_R, Path]]:
+    """与えられた結果のうち、その型のものだけを読み込み元と組にして取り出す。"""
+    return [
+        (item, path)
+        for item, path in zip(results, paths)
+        if isinstance(item, result_type)
+    ]
 
 
 def _pair_for_overlay(
     results: list[Result], paths: list[Path]
-) -> tuple[EnvelopeResult, LinesResult]:
+) -> tuple[EnvelopeResult, Path, LinesResult, Path]:
     """重ね描き用に、エンベロープと線リストを 1 つずつ取り出す。与える順序は問わない。
 
+    作図スクリプトは 2 つのファイルの位置を書き込むので、結果と一緒にその位置も返す。
     使用法エラーの種類名は `io` の表から引く。`kind` 文字列を直接書かない（ADR-0049）。
     """
-    envelopes = _of_type(results, EnvelopeResult)
-    line_lists = _of_type(results, LinesResult)
+    envelopes = _of_type(results, EnvelopeResult, paths)
+    line_lists = _of_type(results, LinesResult, paths)
 
     if len(results) != 2 or len(envelopes) != 1 or len(line_lists) != 1:
         found = ", ".join(
@@ -393,55 +458,7 @@ def _pair_for_overlay(
             f"overlaying takes exactly one {expected}, in either order (got {found})",
             param_hint="RESULT.json...",
         )
-    return envelopes[0], line_lists[0]
-
-
-def _write_figure(
-    figure: "matplotlib.figure.Figure", output: Path, *, dpi: int
-) -> None:
-    """`Figure` を画像として書き出し、後始末まで済ませる。"""
-    import matplotlib.pyplot as plt
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with stage(logger, f"write {output}"):
-        figure.savefig(output, dpi=dpi)
-    plt.close(figure)
-    typer.echo(f"wrote {output}")
-
-
-def _save_figure(
-    result: Result, output: Path, *, title: str | None, dpi: int
-) -> None:
-    from .plotting import plot_any
-
-    _write_figure(plot_any(result, title=title), output, dpi=dpi)
-
-
-def _save_overlay(
-    envelope: EnvelopeResult,
-    lines: LinesResult,
-    output: Path,
-    *,
-    title: str | None,
-    magnify: float,
-    dpi: int,
-) -> None:
-    from .plotting import plot_overlay
-
-    figure = plot_overlay(envelope, lines, magnify=magnify, title=title)
-    _write_figure(figure, output, dpi=dpi)
-
-    low = float(envelope.energy[0])
-    high = float(envelope.energy[-1])
-    dropped = sum(1 for line in lines.lines if not low <= line.energy <= high)
-    if dropped:
-        # 利用者への警告と、記録としてのログの両方に出す（ADR-0052）。
-        message = (
-            f"{dropped} of {len(lines.lines)} lines fall outside the "
-            f"E window [{low:g}, {high:g}] cm^-1 and are not drawn"
-        )
-        typer.secho(f"warning: {message}", fg=typer.colors.YELLOW, err=True)
-        logger.warning("%s", message)
+    return (*envelopes[0], *line_lists[0])
 
 
 @app.callback(invoke_without_command=True)

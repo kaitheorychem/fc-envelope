@@ -8,9 +8,13 @@ cm⁻¹・eV・hartree・THz・kJ/mol・kcal/mol から選べる。どちらも�
 併せて、主要な離散FC因子とその遷移エネルギーの一覧も出力できる。
 両者は同じ縦軸で1枚に重ねてグラフ化できる。
 
+グラフは計算に添えて生成される**作図スクリプト**で作る。図の設定はすべてそのスクリプトの
+中にあるので、計算をやり直さずに何度でも調整でき、実行後も読み返せる。
+
 ## 技術構成
 python + uv で実装。Python 3.11 以上。
-CLI（typer）から入力 JSON の読み込み・結果 JSON の書き出し・グラフ出力ができる。
+CLI（typer）から入力 JSON の読み込みと結果 JSON の書き出しができる。図は CLI では
+描かず、結果の隣に置かれる作図スクリプト（matplotlib）を走らせて作る。
 ライブラリとしては `pip install` でインストールし、スペクトルの表現ごとに
 「計算・保存・読み込み・描画」の自由関数 4 つを 1 組として公開する。
 
@@ -21,6 +25,7 @@ CLI（typer）から入力 JSON の読み込み・結果 JSON の書き出し・
 
 加えて、両者を 1 枚に重ねる `plot_overlay` と、理論式の行列そのものを返す
 `fc_factor_matrix` を公開する。結果クラスは純粋なデータ容器で、I/O と描画の責務は持たない。
+作図スクリプトの生成は `fcenvelope.emit`、その雛形は `src/fcenvelope/templates/` にある。
 
 ## ディレクトリ
 - CONTEXT.md: 用語集。語の定義と避けるべき言い換えのみ。
@@ -50,12 +55,20 @@ uv run fcenvelope --version
 ## 使い方
 
 ```bash
-uv run fcenvelope run input.json -o result.json --plot spectrum.png
-uv run fcenvelope lines input.json -o lines.json --plot sticks.png
-uv run fcenvelope plot result.json -o spectrum.png --title "300 K"
-uv run fcenvelope plot result.json lines.json -o overlay.png   # 2つを重ねる
+uv run fcenvelope run input.json -o result.json    # -> result.json, result_plot.py
+python result_plot.py                              # 図を作る。端末にも出る
+uv run fcenvelope lines input.json -o lines.json   # -> lines.json, lines_plot.py
+
+# 2つを1枚に重ねる作図スクリプトを作る
+uv run fcenvelope script result.json lines.json -o overlay_plot.py
+python overlay_plot.py
+
 uv run fcenvelope run input.json -o result.json --log run.log  # 節目のログを残す
 ```
+
+作図スクリプトは `json` と `matplotlib` だけで動き、`fcenvelope` を import しない。
+表題・色・軸の範囲・横軸の単位はすべてその中の定数で、直して走らせ直せば図が変わる。
+計算をやり直しても上書きされないので、調整した設定は新しいデータにそのまま当たる。
 
 ```python
 from fcenvelope import (
