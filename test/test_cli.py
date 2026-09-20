@@ -52,7 +52,8 @@ def test_run_keeps_an_edited_plot_script(tmp_path, input_file):
     script.write_text("# 手で直した\n", encoding="utf-8")
 
     invocation = runner.invoke(
-        app, ["run", str(input_file), "-o", str(output), "--sigma", "80"]
+        app,
+        ["run", str(input_file), "-o", str(output), "--override", "broadening.sigma=80"],
     )
 
     assert invocation.exit_code == 0, invocation.output
@@ -109,24 +110,17 @@ def test_script_and_no_script_together_is_a_usage_error(tmp_path, input_file):
 
 
 def test_run_overrides_the_conditions(tmp_path, input_file):
+    """つまみは `--override` 1 つで、キーは入力ファイル中の位置である（ADR-0064）。"""
     output = tmp_path / "result.json"
     invocation = runner.invoke(
         app,
         [
-            "run",
-            str(input_file),
-            "-o",
-            str(output),
-            "--temperature",
-            "0",
-            "--sigma",
-            "80",
-            "--e-min",
-            "-6000",
-            "--e-max",
-            "2000",
-            "--de",
-            "4",
+            "run", str(input_file), "-o", str(output),
+            "--override", "temperature=0",
+            "--override", "broadening.sigma=80",
+            "--override", "grid.e_min=-6000",
+            "--override", "grid.e_max=2000",
+            "--override", "grid.de=4",
         ],
     )
 
@@ -142,7 +136,7 @@ def test_run_overrides_the_conditions(tmp_path, input_file):
 def test_run_leaves_unspecified_fields_untouched(tmp_path, input_file):
     output = tmp_path / "result.json"
     invocation = runner.invoke(
-        app, ["run", str(input_file), "-o", str(output), "--temperature", "77"]
+        app, ["run", str(input_file), "-o", str(output), "--override", "temperature=77"]
     )
 
     assert invocation.exit_code == 0, invocation.output
@@ -165,8 +159,9 @@ def test_overrides_are_read_in_the_units_of_the_input_file(tmp_path, input_file)
         app,
         [
             "run", str(input_file), "-o", str(restated),
-            "--temperature", "300", "--sigma", "150",
-            "--e-min", "-4000", "--e-max", "1000", "--de", "5",
+            "--override", "temperature=300", "--override", "broadening.sigma=150",
+            "--override", "grid.e_min=-4000", "--override", "grid.e_max=1000",
+            "--override", "grid.de=5",
         ],
     )
 
@@ -179,7 +174,7 @@ def test_overrides_are_read_in_the_units_of_the_input_file(tmp_path, input_file)
 
 
 def test_sigma_is_overridden_in_the_broadening_unit(tmp_path, input_payload):
-    """sigma を eV で書いたファイルでは --sigma も eV で読む（ADR-0050, 0053）。
+    """sigma を eV で書いたファイルでは上書きの値も eV で読む（ADR-0050, 0053）。
 
     上書きは入力ファイルの型に当ててから正準化されるので、ファイルの broadening
     ブロックの単位がそのまま CLI の値の単位になる。cm^-1 と解釈されていれば、
@@ -193,7 +188,10 @@ def test_sigma_is_overridden_in_the_broadening_unit(tmp_path, input_payload):
     output = tmp_path / "result.json"
     invocation = runner.invoke(
         app,
-        ["run", str(path), "-o", str(output), "--sigma", str(2.0 * in_ev)],
+        [
+            "run", str(path), "-o", str(output),
+            "--override", f"broadening.sigma={2.0 * in_ev}",
+        ],
     )
 
     assert invocation.exit_code == 0, invocation.output
@@ -274,10 +272,257 @@ def test_invalid_input_exits_with_one(tmp_path, input_payload):
 
 def test_bad_override_exits_with_one(tmp_path, input_file):
     invocation = runner.invoke(
-        app, ["run", str(input_file), "-o", str(tmp_path / "out.json"), "--e-min", "5000"]
+        app,
+        [
+            "run", str(input_file), "-o", str(tmp_path / "out.json"),
+            "--override", "grid.e_min=5000",
+        ],
     )
     assert invocation.exit_code == 1
     assert "error:" in invocation.output
+
+
+def test_a_misspelled_override_key_exits_with_one(tmp_path, input_file):
+    """誤字は黙って無視されず、未知のフィールドとして弾かれる（ADR-0064, 0065）。"""
+    invocation = runner.invoke(
+        app,
+        [
+            "run", str(input_file), "-o", str(tmp_path / "out.json"),
+            "--override", "grid.dee=4",
+        ],
+    )
+    assert invocation.exit_code == 1
+    assert "dee" in invocation.output
+
+
+def test_modes_cannot_be_overridden(tmp_path, input_file):
+    """モードは分子固有のデータなので上書き対象にしない（ADR-0012）。"""
+    invocation = runner.invoke(
+        app,
+        [
+            "run", str(input_file), "-o", str(tmp_path / "out.json"),
+            "--override", "modes=[]",
+        ],
+    )
+    assert invocation.exit_code == 2
+    assert "modes" in invocation.output
+
+
+@pytest.mark.parametrize("item", ["oops", "=4", "grid..de=4", "temperature.x=1"])
+def test_a_malformed_override_is_a_usage_error(tmp_path, input_file, item):
+    """書式そのものの誤りだけが使用法エラーで、値の正しさは入力の検証に任せる。"""
+    invocation = runner.invoke(
+        app,
+        ["run", str(input_file), "-o", str(tmp_path / "out.json"), "--override", item],
+    )
+    assert invocation.exit_code == 2
+
+
+def test_an_override_value_is_read_as_json(tmp_path, input_file):
+    """`null` も数も文字列も同じ規則で通る（ADR-0064）。"""
+    output = tmp_path / "lines.json"
+    invocation = runner.invoke(
+        app,
+        [
+            "lines", str(input_file), "-o", str(output), "--top", "0",
+            "--override", "selection.max_quanta=null",
+            "--override", "selection.max_lines=500",
+            "--override", "frequency_unit=cm^-1",
+        ],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    restored = load_lines(output)
+    assert restored.selection.max_quanta is None
+    assert restored.selection.max_lines == 500
+
+
+# --- 既定の出力名（ADR-0063） ---
+
+
+def test_run_names_its_output_after_the_input(tmp_path, input_file):
+    invocation = runner.invoke(app, ["run", str(input_file)])
+
+    assert invocation.exit_code == 0, invocation.output
+    output = tmp_path / "input_envelope.json"
+    assert load_envelope(output).energy.size > 0
+    assert script_path_for(output).is_file()
+
+
+def test_lines_names_its_output_after_the_input(tmp_path, input_file):
+    invocation = runner.invoke(app, ["lines", str(input_file), "--top", "0"])
+
+    assert invocation.exit_code == 0, invocation.output
+    assert load_lines(tmp_path / "input_lines.json").diagnostics.n_lines > 0
+
+
+def test_the_default_output_never_touches_the_input(tmp_path, input_file):
+    """種類の接尾辞は、入力を踏み潰す道と run/lines の衝突を同時に塞ぐ（ADR-0063）。"""
+    before = input_file.read_text(encoding="utf-8")
+    assert runner.invoke(app, ["run", str(input_file)]).exit_code == 0
+    assert runner.invoke(app, ["lines", str(input_file), "--top", "0"]).exit_code == 0
+
+    assert input_file.read_text(encoding="utf-8") == before
+    assert (tmp_path / "input_envelope.json").is_file()
+    assert (tmp_path / "input_lines.json").is_file()
+
+
+def test_the_default_output_goes_next_to_the_input(tmp_path, input_payload, monkeypatch):
+    """カレントディレクトリではなく入力ファイルの隣に置く（ADR-0063）。"""
+    elsewhere = tmp_path / "inputs"
+    elsewhere.mkdir()
+    path = elsewhere / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+    here = tmp_path / "cwd"
+    here.mkdir()
+    monkeypatch.chdir(here)
+
+    invocation = runner.invoke(app, ["run", str(path)])
+
+    assert invocation.exit_code == 0, invocation.output
+    assert (elsewhere / "input_envelope.json").is_file()
+    assert list(here.iterdir()) == []
+
+
+# --- 実効設定の書き出し（ADR-0065） ---
+
+
+def test_run_writes_the_effective_settings(tmp_path, input_file):
+    output = tmp_path / "result.json"
+    invocation = runner.invoke(
+        app,
+        ["run", str(input_file), "-o", str(output), "--override", "temperature=77"],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    config = tmp_path / "result_config.json"
+    assert str(config) in invocation.output
+    written = json.loads(config.read_text(encoding="utf-8"))
+    # 上書き後の値、既定値で埋まった項目、書いたとおりの単位・流儀。
+    assert written["temperature"] == 77.0
+    assert written["selection"]["min_weight"] == 0.0001
+    assert written["coupling_convention"] == "g"
+    assert written["broadening"] == {"sigma": 150.0, "unit": "cm^-1"}
+
+
+def test_the_effective_settings_reproduce_the_run(tmp_path, input_file):
+    """書き出した設定をそのまま与えれば同じ計算になる（ADR-0065）。"""
+    first = tmp_path / "first.json"
+    assert (
+        runner.invoke(
+            app,
+            [
+                "run", str(input_file), "-o", str(first), "--no-script",
+                "--override", "temperature=77", "--override", "grid.de=4",
+            ],
+        ).exit_code
+        == 0
+    )
+
+    second = tmp_path / "second.json"
+    invocation = runner.invoke(
+        app,
+        ["run", str(tmp_path / "first_config.json"), "-o", str(second), "--no-script"],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    before, after = load_envelope(first), load_envelope(second)
+    assert (before.temperature, before.grid, before.broadening) == (
+        after.temperature, after.grid, after.broadening,
+    )
+    assert before.system.modes == after.system.modes
+    np.testing.assert_array_equal(before.density, after.density)
+
+
+def test_the_effective_settings_are_written_before_the_computation(tmp_path, input_file):
+    """値の誤りで止まった実行でも、何が使われるはずだったかは残る（ADR-0065）。"""
+    output = tmp_path / "result.json"
+    invocation = runner.invoke(
+        app,
+        [
+            "run", str(input_file), "-o", str(output),
+            "--override", "grid.e_min=5000",
+        ],
+    )
+
+    assert invocation.exit_code == 1
+    assert not output.exists()
+    written = json.loads((tmp_path / "result_config.json").read_text(encoding="utf-8"))
+    assert written["grid"]["e_min"] == 5000.0
+
+
+def test_the_effective_settings_are_always_refreshed(tmp_path, input_file):
+    """作図スクリプトと違って残さない。古いものを残すと名目が嘘になる（ADR-0065）。"""
+    output = tmp_path / "result.json"
+    config = tmp_path / "result_config.json"
+    config.write_text("# 古い設定\n", encoding="utf-8")
+
+    invocation = runner.invoke(app, ["run", str(input_file), "-o", str(output)])
+
+    assert invocation.exit_code == 0, invocation.output
+    assert json.loads(config.read_text(encoding="utf-8"))["temperature"] == 300.0
+
+
+def test_the_effective_settings_can_be_sent_somewhere_else(tmp_path, input_file):
+    output = tmp_path / "result.json"
+    elsewhere = tmp_path / "settings" / "mine.json"
+    invocation = runner.invoke(
+        app, ["run", str(input_file), "-o", str(output), "--config", str(elsewhere)]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert elsewhere.is_file()
+    assert not (tmp_path / "result_config.json").exists()
+
+
+def test_no_config_writes_nothing_but_the_result(tmp_path, input_file):
+    output = tmp_path / "result.json"
+    invocation = runner.invoke(
+        app, ["run", str(input_file), "-o", str(output), "--no-config"]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert not (tmp_path / "result_config.json").exists()
+
+
+def test_config_and_no_config_together_is_a_usage_error(tmp_path, input_file):
+    invocation = runner.invoke(
+        app,
+        [
+            "run", str(input_file), "-o", str(tmp_path / "result.json"),
+            "--config", str(tmp_path / "mine.json"), "--no-config",
+        ],
+    )
+    assert invocation.exit_code == 2
+
+
+def test_lines_writes_the_effective_settings_too(tmp_path, input_file):
+    output = tmp_path / "lines.json"
+    invocation = runner.invoke(
+        app, ["lines", str(input_file), "-o", str(output), "--top", "0"]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    written = json.loads((tmp_path / "lines_config.json").read_text(encoding="utf-8"))
+    assert written["selection"]["max_lines"] == 10000
+
+
+def test_the_effective_settings_inline_modes_read_from_csv(tmp_path, input_payload):
+    """CSV が後で変わっても、書き出した設定だけで再現できる（ADR-0065）。"""
+    (tmp_path / "modes.csv").write_text(
+        "frequency,coupling\n1200.0,0.5\n", encoding="utf-8"
+    )
+    input_payload["modes"] = {"path": "modes.csv"}
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    invocation = runner.invoke(app, ["run", str(path), "--no-script"])
+
+    assert invocation.exit_code == 0, invocation.output
+    written = json.loads(
+        (tmp_path / "input_envelope_config.json").read_text(encoding="utf-8")
+    )
+    assert written["modes"] == [{"frequency": 1200.0, "coupling": 0.5}]
 
 
 def test_missing_input_file_exits_with_one(tmp_path):
@@ -287,9 +532,9 @@ def test_missing_input_file_exits_with_one(tmp_path):
     assert invocation.exit_code == 1
 
 
-def test_usage_error_exits_with_two(tmp_path, input_file):
-    invocation = runner.invoke(app, ["run", str(input_file)])
-    assert invocation.exit_code == 2
+def test_usage_error_exits_with_two():
+    """入力ファイルは省略できない。`-o` は省略できる（ADR-0063）。"""
+    assert runner.invoke(app, ["run"]).exit_code == 2
 
 
 def test_unknown_command_exits_with_two():
@@ -345,7 +590,8 @@ def test_lines_overrides_the_temperature(tmp_path, input_file):
         app,
         [
             "lines", str(input_file), "-o", str(output),
-            "--temperature", "0", "--min-weight", "1e-6", "--max-lines", "500",
+            "--override", "temperature=0", "--override", "selection.min_weight=1e-6",
+            "--override", "selection.max_lines=500",
         ],
     )
 
@@ -370,7 +616,10 @@ def test_lines_writes_a_plot_script_by_default(tmp_path, input_file):
 def test_lines_bad_threshold_exits_with_one(tmp_path, input_file):
     invocation = runner.invoke(
         app,
-        ["lines", str(input_file), "-o", str(tmp_path / "out.json"), "--min-weight", "0"],
+        [
+            "lines", str(input_file), "-o", str(tmp_path / "out.json"),
+            "--override", "selection.min_weight=0",
+        ],
     )
     assert invocation.exit_code == 1
     assert "error:" in invocation.output

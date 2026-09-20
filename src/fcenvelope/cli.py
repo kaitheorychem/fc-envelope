@@ -5,12 +5,19 @@
 図は描かない。計算に添えて**作図スクリプト**を書き出し、図はそれを走らせて作る
 （ADR-0057, 0061）。図のつまみは CLI に置かない——調整はスクリプトを直して行う。
 
+入力ファイルの項目を差し替えるつまみは `--override key=value` 1 つに畳んである
+（ADR-0064）。キーは入力ファイル中の項目の位置そのもので、CLI 側にその写しを持たない。
+実際に使われた設定は、計算を始める前に `RESULT_config.json` へ書き出す（ADR-0065）。
+
+`-o` は省略できる。省略時の出力は入力ファイルの名前を継いで、その隣に置く（ADR-0063）。
+
 節目のログは `--log` で指定したファイルに書く。指定がなければメモリに溜めるだけで、
 異常終了したときにだけ出力先の隣へ書き出す（ADR-0052）。
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from collections.abc import Callable, Iterator, Sequence
@@ -23,7 +30,7 @@ from . import emit, logs
 from .envelope import compute_envelope
 from .errors import FCEnvelopeError
 from .inputs import FCEnvelopeInput
-from .io import kind_for, load_any, save_any
+from .io import JsonObject, JsonValue, kind_for, load_any, save_any
 from .lines import compute_fc_lines
 from .result import EnvelopeResult, FCLine, LinesResult, Result
 from .version import __version__
@@ -80,6 +87,90 @@ ForceScript = Annotated[
         help="Overwrite the plot script instead of keeping the existing one.",
     ),
 ]
+
+
+#: 上書きの口。`run` と `lines` で同じものを使う（ADR-0036, 0064）。
+Overrides = Annotated[
+    Optional[list[str]],
+    typer.Option(
+        "--override",
+        metavar="KEY=VALUE",
+        help=(
+            "Override one field of the input file, e.g. --override temperature=0 "
+            "or --override grid.de=2.5. Nested fields are dotted, values are read "
+            "as JSON (null, numbers, strings) and in the input file's own units "
+            "and convention. Repeatable. modes cannot be overridden."
+        ),
+    ),
+]
+
+
+#: 実効設定の書き出し。`run` と `lines` で同じものを使う（ADR-0036, 0065）。
+ConfigFile = Annotated[
+    Optional[Path],
+    typer.Option(
+        "--config",
+        help=(
+            "Write the settings this run actually uses here. "
+            "Without it, they go next to the output (RESULT_config.json)."
+        ),
+    ),
+]
+
+NoConfig = Annotated[
+    bool,
+    typer.Option("--no-config", help="Do not write the effective settings."),
+]
+
+
+#: `-o` を省いたときの出力名に入れる種類の接尾辞（ADR-0063）。これがないと既定の
+#: 出力名が入力ファイルと一致して入力を踏み潰し、`run` と `lines` の出力も衝突する。
+ENVELOPE_SUFFIX = "_envelope"
+LINES_SUFFIX = "_lines"
+
+#: 実効設定の書き出し先に付ける接尾辞（ADR-0065）。
+CONFIG_SUFFIX = "_config"
+
+
+def _output_path(output: Path | None, input_path: Path, suffix: str) -> Path:
+    """結果の置き場。`-o` がなければ入力ファイルの隣に、その名前を継いで置く。
+
+    `modes` の相対パスと同じく入力ファイルの位置を基準にするので、どこから呼んでも
+    結果の置き場が変わらない（ADR-0063）。
+    """
+    if output is not None:
+        return output
+    return input_path.with_name(f"{input_path.stem}{suffix}.json")
+
+
+def _config_path(output: Path) -> Path:
+    """`--config` がないときの実効設定の置き場。結果の隣に置く。"""
+    return output.with_name(f"{output.stem}{CONFIG_SUFFIX}.json")
+
+
+def _emit_config(
+    parsed: FCEnvelopeInput,
+    output: Path,
+    *,
+    config: Path | None,
+    no_config: bool,
+) -> None:
+    """その実行で実際に使われる設定を、計算を始める前に書き出す（ADR-0065）。
+
+    作図スクリプトと違って既にあるものは常に上書きする。古いものを残すと「この実行の
+    設定」という名目が嘘になるし、手で直して使うものでもない。
+    """
+    if no_config:
+        if config is not None:
+            raise typer.BadParameter(
+                "--config and --no-config cannot be used together",
+                param_hint="--no-config",
+            )
+        return
+
+    target = config if config is not None else _config_path(output)
+    parsed.save(target)
+    typer.echo(f"wrote {target}")
 
 
 def _emit_script(
@@ -153,30 +244,73 @@ def _traced(log: Path | None, output: Path) -> Iterator[None]:
         trace.close()
 
 
-#: CLI が上書きできる値。入力ファイルと同じ単位・流儀で読む生の値で、正準化の前に
-#: 差し替える（ADR-0050）。`None` は「上書きしない」を意味する。
-Override = float | int | None
+#: 上書きできない位置（ADR-0012, 0064）。`modes` は分子固有のデータで、コマンド
+#: ラインで差し替えるとどの分子を計算したかが履歴に残らない。`schema_version` は
+#: ファイルの版そのもので、実行のたびに変えるものではない。
+UNOVERRIDABLE = ("modes", "schema_version")
 
 
-def _override(
-    parsed: FCEnvelopeInput,
-    *,
-    temperature: float | None = None,
-    **blocks: dict[str, Override],
+def _parse_override(item: str) -> tuple[list[str], JsonValue]:
+    """`KEY=VALUE` を、入力ファイル中の位置と値に分ける（ADR-0064）。
+
+    値は JSON として読み、読めなければ文字列として扱う。`null` も `2.5` も `eV` も
+    同じ規則で通る。ここで見るのは**書式そのもの**だけで、キーの存在と値の妥当性は
+    入力ファイルの型が見る。使用法エラーで止まるのもここまでである。
+    """
+    key, separator, raw = item.partition("=")
+    if not separator or not key:
+        raise typer.BadParameter(
+            f"expected KEY=VALUE, got {item!r}", param_hint="--override"
+        )
+    path = key.split(".")
+    if "" in path:
+        raise typer.BadParameter(
+            f"empty field name in {key!r}", param_hint="--override"
+        )
+    if path[0] in UNOVERRIDABLE:
+        raise typer.BadParameter(
+            f"{path[0]} cannot be overridden", param_hint="--override"
+        )
+    try:
+        value: JsonValue = json.loads(raw)
+    except json.JSONDecodeError:
+        value = raw
+    return path, value
+
+
+def _apply_override(data: JsonObject, item: str) -> None:
+    """入力ファイルの形をした辞書に、上書きを 1 つ当てる。
+
+    知らない名前のブロックはそのまま作る。入力ファイルの型が `extra="forbid"` なので、
+    誤字は検証で未知のフィールドとして報告される（ADR-0064）。
+    """
+    path, value = _parse_override(item)
+    block = data
+    for depth, name in enumerate(path[:-1], start=1):
+        nested = block.setdefault(name, {})
+        if not isinstance(nested, dict):
+            raise typer.BadParameter(
+                f"{'.'.join(path[:depth])} is not a block",
+                param_hint="--override",
+            )
+        block = nested
+    block[path[-1]] = value
+
+
+def _with_overrides(
+    parsed: FCEnvelopeInput, overrides: Sequence[str]
 ) -> FCEnvelopeInput:
     """CLI の上書きを入力ファイルの型に適用し、同じ経路で検証し直す。
 
     上書きの値は入力ファイルと同じ単位・流儀で読む。正準化の前に差し替えるので、
     ファイルに書いてある値をそのまま CLI に移しても結果は変わらない（ADR-0050）。
-    指定のないオプションは `None`、すなわち「上書きしない」を意味する。
+    キーが入力ファイル中の位置そのものなので、どの単位で読まれるかはキーから分かる。
     """
+    if not overrides:
+        return parsed
     data = parsed.model_dump(mode="json")
-    if temperature is not None:
-        data["temperature"] = temperature
-    for name, values in blocks.items():
-        given = {key: value for key, value in values.items() if value is not None}
-        if given:
-            data[name] = {**data[name], **given}
+    for item in overrides:
+        _apply_override(data, item)
     return FCEnvelopeInput.from_obj(data)
 
 
@@ -204,56 +338,46 @@ def run(
         typer.Argument(metavar="INPUT.json", help="Input JSON with modes (inline or a CSV reference) and the computation conditions."),
     ],
     output: Annotated[
-        Path,
-        typer.Option("-o", "--output", help="Destination for the result JSON."),
-    ],
-    temperature: Annotated[
-        Optional[float],
-        typer.Option("--temperature", help="Override temperature [K]."),
+        Optional[Path],
+        typer.Option(
+            "-o",
+            "--output",
+            help=(
+                "Destination for the result JSON. Without it, INPUT_envelope.json "
+                "next to the input file."
+            ),
+        ),
     ] = None,
-    sigma: Annotated[
-        Optional[float],
-        typer.Option("--sigma", help="Override broadening.sigma, in the input file's broadening unit."),
-    ] = None,
-    e_min: Annotated[
-        Optional[float],
-        typer.Option("--e-min", help="Override grid.e_min, in the input file's grid unit."),
-    ] = None,
-    e_max: Annotated[
-        Optional[float],
-        typer.Option("--e-max", help="Override grid.e_max, in the input file's grid unit."),
-    ] = None,
-    de: Annotated[
-        Optional[float],
-        typer.Option("--de", help="Override grid.de, in the input file's grid unit."),
-    ] = None,
+    override: Overrides = None,
     script: ScriptFile = None,
     no_script: NoScript = False,
     force_script: ForceScript = False,
+    config: ConfigFile = None,
+    no_config: NoConfig = False,
     log: LogFile = None,
 ) -> None:
     """Compute the Franck-Condon envelope and write it to a result JSON.
 
-    A plot script is written next to the result; run it to draw the figure.
+    The settings this run actually uses are written before the computation starts,
+    and a plot script is written next to the result; run it to draw the figure.
     """
-    with _traced(log, output):
-        parsed = _override(
-            FCEnvelopeInput.from_path(input_path),
-            temperature=temperature,
-            broadening={"sigma": sigma},
-            grid={"e_min": e_min, "e_max": e_max, "de": de},
+    destination = _output_path(output, input_path, ENVELOPE_SUFFIX)
+    with _traced(log, destination):
+        parsed = _with_overrides(
+            FCEnvelopeInput.from_path(input_path), override or ()
         )
+        _emit_config(parsed, destination, config=config, no_config=no_config)
         result = compute_envelope(
             parsed.to_system(),
             temperature=parsed.to_temperature(),
             broadening=parsed.to_broadening(),
             grid=parsed.to_grid(),
         )
-        save_any(result, output)
+        save_any(result, destination)
 
-        _report_any(result, output)
+        _report_any(result, destination)
         _emit_script(
-            result, output, script=script, no_script=no_script, force=force_script
+            result, destination, script=script, no_script=no_script, force=force_script
         )
 
 
@@ -267,57 +391,48 @@ def lines(
         ),
     ],
     output: Annotated[
-        Path,
-        typer.Option("-o", "--output", help="Destination for the FC line JSON."),
-    ],
-    temperature: Annotated[
-        Optional[float],
-        typer.Option("--temperature", help="Override temperature [K]."),
+        Optional[Path],
+        typer.Option(
+            "-o",
+            "--output",
+            help=(
+                "Destination for the FC line JSON. Without it, INPUT_lines.json "
+                "next to the input file."
+            ),
+        ),
     ] = None,
-    min_weight: Annotated[
-        Optional[float],
-        typer.Option("--min-weight", help="Override selection.min_weight."),
-    ] = None,
-    max_lines: Annotated[
-        Optional[int],
-        typer.Option("--max-lines", help="Override selection.max_lines."),
-    ] = None,
-    max_quanta: Annotated[
-        Optional[int],
-        typer.Option("--max-quanta", help="Override selection.max_quanta."),
-    ] = None,
+    override: Overrides = None,
     top: Annotated[
         int, typer.Option("--top", help="Print this many of the strongest lines (0 disables).")
     ] = 10,
     script: ScriptFile = None,
     no_script: NoScript = False,
     force_script: ForceScript = False,
+    config: ConfigFile = None,
+    no_config: NoConfig = False,
     log: LogFile = None,
 ) -> None:
     """List the discrete Franck-Condon factors with their transition energies.
 
-    A plot script is written next to the result; run it to draw the figure.
+    The settings this run actually uses are written before the computation starts,
+    and a plot script is written next to the result; run it to draw the figure.
     """
-    with _traced(log, output):
-        parsed = _override(
-            FCEnvelopeInput.from_path(input_path),
-            temperature=temperature,
-            selection={
-                "min_weight": min_weight,
-                "max_lines": max_lines,
-                "max_quanta": max_quanta,
-            },
+    destination = _output_path(output, input_path, LINES_SUFFIX)
+    with _traced(log, destination):
+        parsed = _with_overrides(
+            FCEnvelopeInput.from_path(input_path), override or ()
         )
+        _emit_config(parsed, destination, config=config, no_config=no_config)
         result = compute_fc_lines(
             parsed.to_system(),
             temperature=parsed.to_temperature(),
             selection=parsed.to_selection(),
         )
-        save_any(result, output)
+        save_any(result, destination)
 
-        _report_any(result, output, top=top)
+        _report_any(result, destination, top=top)
         _emit_script(
-            result, output, script=script, no_script=no_script, force=force_script
+            result, destination, script=script, no_script=no_script, force=force_script
         )
 
 
