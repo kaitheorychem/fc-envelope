@@ -121,5 +121,5 @@ pytest は dev 依存なので `uv sync` で入る。
 uv run pytest
 ```
 
-同じコマンドが GitHub Actions でも走る（`.github/workflows/test.yml`）。main への push と
+同じコマンドが GitHub Actions でも走る（`.github/workflows/test.yaml`）。main への push と
 pull request のたびに、Python 3.11 と 3.13 の 2 つで実行される。
