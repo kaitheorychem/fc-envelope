@@ -28,7 +28,7 @@ def result():
         SYSTEM,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-8000.0, e_max=4000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-8000.0, e_max=4000.0, de=5.0),
     )
 
 
@@ -119,7 +119,7 @@ def test_fc_lines_title_is_applied(lines_result):
 
 
 OVERLAY_BROADENING = Broadening(sigma=80.0)
-OVERLAY_GRID = EnergyGrid(e_min=-6000.0, e_max=2000.0, de=2.0)
+OVERLAY_GRID = EnergyGrid.from_spacing(e_min=-6000.0, e_max=2000.0, de=2.0)
 
 
 @pytest.fixture

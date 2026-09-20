@@ -39,6 +39,7 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 
 from .errors import InvalidInputError, SchemaVersionError
@@ -72,14 +73,16 @@ __all__ = [
     "BroadeningSpec",
     "EnergyGridSpec",
     "FCEnvelopeInput",
+    "GridPointsSpec",
     "ModeSpec",
     "SelectionSpec",
     "read_mode_specs_csv",
 ]
 
 #: 入力ファイルの版（`docs/adr/0040-schema-version-2-without-a-compatibility-layer.md`）。
-#: 1 は互換層を置かずに拒否する。
-SCHEMA_VERSION: Final = 2
+#: 古い版は互換層を置かずに拒否する。3 で `grid.de` が `grid.points` へ移った
+#: （ADR-0070）。
+SCHEMA_VERSION: Final = 3
 
 
 def _at(location: str, exc: InvalidInputError) -> InvalidInputError:
@@ -133,12 +136,44 @@ class BroadeningSpec(_EnergySpec):
     sigma: float
 
 
+class GridPointsSpec(_Spec):
+    """全域グリッドの取り方のブロック（`grid.points`）。
+
+    FFT の基数は 2 の冪なので、グリッド数 `n` を直接書くのが素直な指定である。
+    丸い dE が欲しいときのために、その下位の書き方として `de` を置く（ADR-0070）。
+    `n` と `de` はどちらか一方だけを書く。`shift` は `de` と一緒のときだけ意味を持つ。
+
+    `de` の単位は親の `grid.unit` に従う。`n` と `shift` は無次元である。
+    """
+
+    n: int | None = None
+    """全域グリッドの点数。2 の冪のみ。dE = 全域幅 / n は端数になりうる。"""
+
+    de: float | None = None
+    """出力グリッド間隔。これを満たす最小の 2 の冪が n になる。"""
+
+    shift: int = 0
+    """`de` 指定のときだけ使う、冪のずらし幅。
+
+    全域幅は変えずに n を 2^shift 倍する。刻みは 2^shift 分の 1 に細かくなる。
+    """
+
+    @model_validator(mode="after")
+    def _exactly_one_way(self) -> "GridPointsSpec":
+        """指定の仕方が 1 つに決まっていることを確かめる（構造だけ、値は見ない）。"""
+        if (self.n is None) == (self.de is None):
+            raise ValueError("write exactly one of n or de")
+        if self.n is not None and self.shift:
+            raise ValueError("shift applies to de only; n is already the grid count")
+        return self
+
+
 class EnergyGridSpec(_EnergySpec):
-    """エネルギーグリッドのブロック。"""
+    """エネルギーグリッドのブロック。`e_min` / `e_max` は出力窓である。"""
 
     e_min: float
     e_max: float
-    de: float
+    points: GridPointsSpec
 
 
 class SelectionSpec(_Spec):
@@ -268,7 +303,7 @@ class FCEnvelopeInput(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     frequency_unit: str = CANONICAL_ENERGY_UNIT
     coupling_convention: str = DEFAULT_COUPLING_CONVENTION.name
     """流儀の**名前**。流儀そのものは `convention` から引く。
@@ -296,7 +331,7 @@ class FCEnvelopeInput(BaseModel):
 
     @field_validator("schema_version", mode="before")
     @classmethod
-    def _check_schema_version(cls, value: object) -> Literal[2]:
+    def _check_schema_version(cls, value: object) -> Literal[3]:
         if value != SCHEMA_VERSION:
             raise SchemaVersionError(
                 f"unsupported schema_version {value!r} (this build supports {SCHEMA_VERSION})"
@@ -382,13 +417,25 @@ class FCEnvelopeInput(BaseModel):
             raise _at("broadening", exc) from exc
 
     def to_grid(self) -> EnergyGrid:
-        """単位を消費してエネルギーグリッドを計算用の値にする。"""
+        """単位を消費してエネルギーグリッドを計算用の値にする。
+
+        全域グリッドの解決（2 の冪への丸め、`shift` の適用）は `EnergyGrid` の
+        コンストラクタが持つ。ここが決めるのは**どちらの書き方か**だけである
+        （ADR-0070）。
+        """
         to_canonical = self.grid.to_canonical
+        e_min = self.grid.e_min * to_canonical
+        e_max = self.grid.e_max * to_canonical
+        points = self.grid.points
         try:
-            return EnergyGrid(
-                e_min=self.grid.e_min * to_canonical,
-                e_max=self.grid.e_max * to_canonical,
-                de=self.grid.de * to_canonical,
+            if points.n is not None:
+                return EnergyGrid.from_points(e_min=e_min, e_max=e_max, n=points.n)
+            assert points.de is not None  # `_exactly_one_way` が保証する
+            return EnergyGrid.from_spacing(
+                e_min=e_min,
+                e_max=e_max,
+                de=points.de * to_canonical,
+                shift=points.shift,
             )
         except InvalidInputError as exc:
             raise _at("grid", exc) from exc

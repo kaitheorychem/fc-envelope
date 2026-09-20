@@ -79,7 +79,7 @@ def multi_mode() -> VibrationalSystem:
 def input_payload() -> dict:
     """`docs/dev/spec/interface.md`「ファイル形式 / 入力」のスキーマ。"""
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "frequency_unit": "cm^-1",
         "coupling_convention": "g",
         "modes": [
@@ -88,5 +88,5 @@ def input_payload() -> dict:
         ],
         "temperature": 300.0,
         "broadening": {"sigma": 150.0},
-        "grid": {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0},
+        "grid": {"e_min": -4000.0, "e_max": 1000.0, "points": {"de": 5.0}},
     }

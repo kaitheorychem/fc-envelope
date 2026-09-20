@@ -32,7 +32,7 @@ def result(multi_mode):
         multi_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-6000.0, e_max=2000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-6000.0, e_max=2000.0, de=5.0),
     )
 
 
@@ -69,12 +69,12 @@ def test_written_input_echo_is_canonical(tmp_path):
     """入力エコーは常に huang_rhys 流儀で書き出される。"""
     parsed = FCEnvelopeInput.from_obj(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "coupling_convention": "g",
             "modes": [{"frequency": 1200.0, "coupling": 0.5}],
             "temperature": 300.0,
             "broadening": {"sigma": 150.0},
-            "grid": {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0},
+            "grid": {"e_min": -4000.0, "e_max": 1000.0, "points": {"de": 5.0}},
         }
     )
     path = tmp_path / "result.json"
@@ -95,7 +95,12 @@ def test_written_input_echo_is_canonical(tmp_path):
     assert payload["input"]["modes"] == [{"frequency": 1200.0, "coupling": 0.25}]
     assert payload["input"]["temperature"] == 300.0
     assert payload["input"]["broadening"] == {"sigma": 150.0}
-    assert payload["input"]["grid"] == {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0}
+    assert payload["input"]["grid"] == {
+        "e_min": -4000.0,
+        "e_max": 1000.0,
+        "de": 5.0,
+        "n_fft": 2048,
+    }
     assert payload["energy_unit"] == "cm^-1"
     assert payload["density_unit"] == "1/cm^-1"
     assert payload["derived"]["reorganization_energy"] == 300.0
@@ -225,7 +230,7 @@ def test_fc_lines_payload_shape(lines_result, tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["kind"] == "fcenvelope.fc_lines"
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["energy_unit"] == "cm^-1"
     assert payload["input"]["coupling_convention"] == "huang_rhys"
     assert payload["input"]["temperature"] == 300.0

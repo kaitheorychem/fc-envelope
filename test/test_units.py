@@ -136,7 +136,7 @@ def test_sigma_and_grid_in_another_unit(input_payload):
     payload["grid"] = {
         "e_min": _in_unit(-4000.0, "eV"),
         "e_max": _in_unit(1000.0, "eV"),
-        "de": _in_unit(5.0, "eV"),
+        "points": {"de": _in_unit(5.0, "eV")},
         "unit": "eV",
     }
     converted = FCEnvelopeInput.from_obj(payload)

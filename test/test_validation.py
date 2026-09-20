@@ -29,7 +29,7 @@ def test_valid_payload_parses(input_payload):
         ]
     )
     assert parsed.to_broadening() == Broadening(sigma=150.0)
-    assert parsed.to_grid() == EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0)
+    assert parsed.to_grid() == EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0)
     assert parsed.to_temperature() == 300.0
 
 
@@ -87,8 +87,8 @@ def test_negative_g_is_accepted_because_its_sign_is_meaningless(input_payload):
         (None, "temperature", -1.0, "to_temperature"),
         ("broadening", "sigma", 0.0, "to_broadening"),
         ("broadening", "sigma", -150.0, "to_broadening"),
-        ("grid", "de", 0.0, "to_grid"),
-        ("grid", "de", -5.0, "to_grid"),
+        ("grid.points", "de", 0.0, "to_grid"),
+        ("grid.points", "de", -5.0, "to_grid"),
         ("selection", "min_weight", 0.0, "to_selection"),
         ("selection", "max_lines", 0, "to_selection"),
         ("selection", "max_quanta", -1, "to_selection"),
@@ -101,8 +101,11 @@ def test_invalid_condition_values(input_payload, block, field, value, reader):
         payload[field] = value
         location = field
     else:
-        payload.setdefault(block, {})[field] = value
-        location = block
+        target = payload
+        for name in block.split("."):
+            target = target.setdefault(name, {})
+        target[field] = value
+        location = block.split(".")[0]
     parsed = FCEnvelopeInput.from_obj(payload)
     with pytest.raises(InvalidInputError, match=location):
         getattr(parsed, reader)()
@@ -133,7 +136,7 @@ def test_window_must_be_ordered(input_payload, e_min, e_max):
 def test_value_types_reject_bad_values_when_built_directly():
     """ライブラリから直接作った場合も同じように止まる（ADR-0051）。"""
     with pytest.raises(InvalidInputError, match="e_min"):
-        EnergyGrid(e_min=10.0, e_max=-10.0, de=1.0)
+        EnergyGrid.from_spacing(e_min=10.0, e_max=-10.0, de=1.0)
     with pytest.raises(InvalidInputError, match="sigma"):
         Broadening(sigma=-1.0)
     with pytest.raises(InvalidInputError, match="frequency"):

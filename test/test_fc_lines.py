@@ -90,7 +90,7 @@ def test_broadened_lines_reproduce_the_envelope(multi_mode, temperature):
         multi_mode,
         temperature=temperature,
         broadening=Broadening(sigma=sigma),
-        grid=EnergyGrid(e_min=-12000.0, e_max=12000.0, de=4.0),
+        grid=EnergyGrid.from_spacing(e_min=-12000.0, e_max=12000.0, de=4.0),
     )
     result = lines_quietly(
         multi_mode, temperature=temperature, min_weight=1e-7, max_lines=200000

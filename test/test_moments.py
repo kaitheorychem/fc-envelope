@@ -15,7 +15,7 @@ from fcenvelope import Broadening, EnergyGrid, VibrationalSystem
 TEMPERATURES = [0.0, 77.0, 300.0]
 
 BROADENING = Broadening(sigma=150.0)
-GRID = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0)
+GRID = EnergyGrid.from_spacing(e_min=-12000.0, e_max=12000.0, de=2.0)
 
 
 def expected_variance(

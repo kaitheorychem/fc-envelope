@@ -100,7 +100,7 @@ Overrides = Annotated[
         metavar="KEY=VALUE",
         help=(
             "Override one field of the input file, e.g. --override temperature=0 "
-            "or --override grid.de=2.5. Nested fields are dotted, values are read "
+            "or --override grid.points.de=2.5. Nested fields are dotted, values are read "
             "as JSON (null, numbers, strings) whatever the input file's format, and "
             "in the input file's own units and convention. Repeatable. modes cannot "
             "be overridden."

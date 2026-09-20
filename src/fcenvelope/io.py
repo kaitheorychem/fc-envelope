@@ -73,7 +73,7 @@ LINES_KIND = "fcenvelope.fc_lines"
 #: 結果ファイルの版。入力ファイルの版（`inputs.SCHEMA_VERSION`）と同じ番号を共有
 #: するが、`io` は `inputs` に依存しないので（ADR-0041）ここに別に持つ。両者が
 #: 一致していることはテストで確かめる。
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 #: 結果ファイルの形式の知識。計算側は常に cm^-1 しか扱わないので、単位は結果クラス
 #: ではなく io が持つ（ADR-0047）。入力エコーは常に正準形なので流儀も固定である。
@@ -176,6 +176,7 @@ def envelope_to_dict(result: EnvelopeResult) -> JsonObject:
                 "e_min": result.grid.e_min,
                 "e_max": result.grid.e_max,
                 "de": result.grid.de,
+                "n_fft": result.grid.n_fft,
             },
         },
         "derived": _derived_to_dict(result.system),
@@ -375,6 +376,7 @@ def envelope_from_dict(data: JsonValue) -> EnvelopeResult:
         e_min=_require_float(grid_echo, "e_min", "input.grid.e_min"),
         e_max=_require_float(grid_echo, "e_max", "input.grid.e_max"),
         de=_require_float(grid_echo, "de", "input.grid.de"),
+        n_fft=_require_int(grid_echo, "n_fft", "input.grid.n_fft"),
     )
 
     diagnostics = _diagnostics_from_dict(

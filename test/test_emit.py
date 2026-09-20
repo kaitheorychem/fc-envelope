@@ -20,6 +20,7 @@ import pytest
 from conftest import compute_quietly, lines_quietly
 
 from fcenvelope import Broadening, EnergyGrid, save_envelope, save_lines
+from fcenvelope.io import SCHEMA_VERSION
 from fcenvelope.emit import (
     TEMPLATES,
     image_path_for,
@@ -93,7 +94,7 @@ def envelope(multi_mode):
         multi_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-6000.0, e_max=2000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-6000.0, e_max=2000.0, de=5.0),
     )
 
 
@@ -196,7 +197,7 @@ def colder(tmp_path, multi_mode):
             multi_mode,
             temperature=0.0,
             broadening=Broadening(sigma=150.0),
-            grid=EnergyGrid(e_min=-6000.0, e_max=2000.0, de=5.0),
+            grid=EnergyGrid.from_spacing(e_min=-6000.0, e_max=2000.0, de=5.0),
         ),
         data,
     )
@@ -312,7 +313,7 @@ def test_the_script_stops_on_a_result_of_another_schema(tmp_path, envelope_scrip
     finished = run_script(envelope_script)
 
     assert finished.returncode != 0
-    assert "schema 2" in finished.stderr.decode()
+    assert f"schema {SCHEMA_VERSION}" in finished.stderr.decode()
 
 
 def test_the_overlay_script_reports_lines_outside_the_energy_window(
@@ -322,7 +323,7 @@ def test_the_overlay_script_reports_lines_outside_the_energy_window(
         multi_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-300.0, e_max=300.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-300.0, e_max=300.0, de=5.0),
     )
     envelope_data, lines_data = tmp_path / "narrow.json", tmp_path / "lines.json"
     save_envelope(narrow, envelope_data)
