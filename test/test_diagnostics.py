@@ -78,7 +78,8 @@ def test_coarse_de_warns_about_truncation():
         )
 
     assert result.diagnostics.sigma_tau_max < 6.0
-    assert _matching(result, "sigma*tau_max")
+    # 助言は ΔE の話なので、いま使っている de を添える（ADR-0071）。
+    assert "de = 20" in _matching(result, "sigma*tau_max")[0]
 
 
 def test_narrow_window_raises_the_edge_intensity_ratio():
@@ -94,6 +95,37 @@ def test_narrow_window_raises_the_edge_intensity_ratio():
 
     assert narrow_result.diagnostics.edge_intensity_ratio > 1e-4
     assert narrow_result.diagnostics.edge_intensity_ratio > wide_result.diagnostics.edge_intensity_ratio
+
+
+def test_the_edge_warning_names_the_full_grid_and_the_window():
+    """助言が名指しするのは窓ではなく全域グリッドであること（ADR-0071）。
+
+    窓を広げても切り上げ先の冪が変わらなければこの値は動かないので、"Widen
+    e_min/e_max" だけでは直せない。全域幅と窓の両方を数値で出す。
+    """
+    # 窓 |E| <= 1500、全域グリッドは 1024 点 x 5.0 = 5120 と、余白のある組。
+    grid = EnergyGrid.from_spacing(e_min=-1500.0, e_max=1500.0, de=5.0)
+    result = compute_quietly(SYSTEM, temperature=300.0, broadening=SIGMA, grid=grid)
+
+    message = _matching(result, "edge_intensity_ratio")[0]
+    assert "n_fft * de = 5120" in message
+    assert "the window, which reaches |E| = 1500" in message
+    assert "full grid at |E| = 2560" in message
+    assert "shift only refines" in message
+
+
+def test_the_window_warning_names_the_window():
+    """取りこぼしのほうは窓そのものなので、窓を名指しする（ADR-0071）。"""
+    result = compute_quietly(
+        STRONG,
+        temperature=300.0,
+        broadening=SIGMA,
+        grid=EnergyGrid.from_spacing(e_min=-200.0, e_max=200.0, de=5.0),
+    )
+
+    message = _matching(result, "window_captured_fraction")[0]
+    assert "[-200, 200]" in message
+    assert "Widen e_min/e_max" in message
 
 
 def test_narrow_window_warns_about_captured_fraction():

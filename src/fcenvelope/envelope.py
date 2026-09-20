@@ -124,7 +124,7 @@ def compute_envelope(
         measured.total_area,
         measured.window_captured_fraction,
     )
-    messages = report_quality(_quality_messages(broadening, measured))
+    messages = report_quality(_quality_messages(broadening, grid, measured))
 
     return EnvelopeResult(
         system=system,
@@ -198,11 +198,17 @@ def _transform(
     return energy, density, measured
 
 
-def _quality_messages(broadening: Broadening, measured: Diagnostics) -> tuple[str, ...]:
+def _quality_messages(
+    broadening: Broadening, grid: EnergyGrid, measured: Diagnostics
+) -> tuple[str, ...]:
     """診断値の判定。閾値を超えた項目について警告文言を組み立てる。
 
     文言は「何が起きたか」に加えて「どう直すか」を持つので、雛形に押し込めず手書きで
     残す（ADR-0036）。発報そのものは `errors.report_quality` が行う。
+
+    `grid` を受け取るのは、端の折り返しの助言が窓ではなく全域グリッドを名指しする
+    ためである（ADR-0071）。閾値の持ち主である `broadening` と同じく、助言が名指しする
+    値の出どころを引数で受ける形になっている。
     """
     sigma_tau_max = measured.sigma_tau_max
     edge_intensity_ratio = measured.edge_intensity_ratio
@@ -216,14 +222,19 @@ def _quality_messages(broadening: Broadening, measured: Diagnostics) -> tuple[st
         messages.append(
             f"sigma*tau_max = {sigma_tau_max:.3g} < "
             f"{broadening.MIN_TRUNCATION_INDICATOR:g}: "
-            "the tau window is truncated before the damping completes; "
-            "ringing is likely. Use de smaller than sigma/2."
+            f"the tau window (tau_max = pi/de, de = {grid.de:.6g}) is truncated "
+            "before the damping completes; ringing is likely. Use de smaller than "
+            "sigma/2; a larger n or shift at the same window does the same."
         )
     if edge_intensity_ratio > MAX_EDGE_INTENSITY_RATIO:
         messages.append(
             f"edge_intensity_ratio = {edge_intensity_ratio:.3g} > "
             f"{MAX_EDGE_INTENSITY_RATIO:g}: spectral weight reaches the edge of the "
-            "full grid and is aliased back. Widen e_min/e_max."
+            f"full grid at |E| = {0.5 * grid.full_span:.6g} and is aliased back. "
+            f"That edge is set by the full grid n_fft * de = {grid.full_span:.6g}, "
+            f"not by the window, which reaches |E| = {grid.e_half:.6g}: widen it with a "
+            "wider e_min/e_max, or a smaller de, which rounds the point count up to "
+            "the next power of two. A larger n or shift only refines the grid."
         )
     if abs(1.0 - total_area) > MAX_AREA_DEVIATION:
         messages.append(
@@ -233,8 +244,9 @@ def _quality_messages(broadening: Broadening, measured: Diagnostics) -> tuple[st
     if window_captured_fraction < MIN_WINDOW_CAPTURED_FRACTION:
         messages.append(
             f"window_captured_fraction = {window_captured_fraction:.4g} < "
-            f"{MIN_WINDOW_CAPTURED_FRACTION:g}: the output window misses part of the "
-            "envelope. Widen e_min/e_max."
+            f"{MIN_WINDOW_CAPTURED_FRACTION:g}: the output window "
+            f"[{grid.e_min:.6g}, {grid.e_max:.6g}] misses part of the envelope; here "
+            "it is the window itself that is too narrow. Widen e_min/e_max."
         )
     if max_imaginary_ratio > MAX_IMAGINARY_RATIO:
         messages.append(
