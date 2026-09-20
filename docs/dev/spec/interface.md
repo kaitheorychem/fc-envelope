@@ -199,12 +199,12 @@ sigma = 150.0
 unit = "cm^-1"
 
 [grid]
-e_min = -4000.0
+e_min = -4500.0
 e_max = 1000.0
 unit = "cm^-1"
 
 [grid.points]
-de = 5.0
+de = 4.0
 
 [selection]
 min_weight = 0.0001
@@ -226,8 +226,8 @@ max_lines = 10000
   "temperature": 300.0,
   "broadening": { "sigma": 150.0, "unit": "cm^-1" },
   "grid": {
-    "e_min": -4000.0, "e_max": 1000.0, "unit": "cm^-1",
-    "points": { "de": 5.0 }
+    "e_min": -4500.0, "e_max": 1000.0, "unit": "cm^-1",
+    "points": { "de": 4.0 }
   },
   "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
 }
@@ -290,20 +290,20 @@ max_lines = 10000
     "modes": [{ "frequency": 1200.0, "coupling": 0.25 }],
     "temperature": 300.0,
     "broadening": { "sigma": 150.0 },
-    "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0, "n_fft": 2048 }
+    "grid": { "e_min": -4500.0, "e_max": 1000.0, "de": 4.0, "n_fft": 4096 }
   },
   "derived": { "reorganization_energy": 300.0 },
   "diagnostics": {
-    "n_fft": 2048, "d_tau": 6.13e-4, "tau_max": 0.628,
-    "sigma_tau_max": 94.2, "total_area": 0.9999999998,
+    "n_fft": 4096, "d_tau": 3.83e-4, "tau_max": 0.785,
+    "sigma_tau_max": 117.8, "total_area": 0.9999999998,
     "window_captured_fraction": 0.9993,
-    "edge_intensity_ratio": 3.1e-12,
+    "edge_intensity_ratio": 4.9e-9,
     "max_imaginary_ratio": 8.4e-17,
     "messages": []
   },
   "spectrum": {
-    "energy": [-4000.0, -3995.0, "..."],
-    "density": [1.2e-9, 1.4e-9, "..."]
+    "energy": [-4500.0, -4496.0, "..."],
+    "density": [4.6e-8, 4.4e-8, "..."]
   }
 }
 ```

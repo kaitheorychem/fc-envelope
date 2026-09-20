@@ -38,11 +38,11 @@ coupling = 0.8
 sigma = 150.0
 
 [grid]
-e_min = -4000.0
+e_min = -4500.0
 e_max = 1000.0
 
 [grid.points]
-de = 5.0
+de = 4.0
 """
 
 

@@ -46,11 +46,11 @@ coupling = 0.8
 sigma = 150.0
 
 [grid]
-e_min = -4000.0
+e_min = -4500.0
 e_max = 1000.0
 
 [grid.points]
-de = 5.0
+de = 4.0
 
 [selection]
 min_weight = 0.0001
@@ -197,12 +197,12 @@ sigma = 0.0186
 unit = "eV"
 
 [grid]
-e_min = -4000.0
+e_min = -4500.0
 e_max = 1000.0
 unit = "cm^-1"
 
 [grid.points]
-de = 5.0
+de = 4.0
 ```
 
 この例では振動数を cm⁻¹、λ と σ を eV、グリッドを cm⁻¹ で書いている。結果は単位の
@@ -234,11 +234,11 @@ modes = { path = "modes.csv" }
 sigma = 150.0
 
 [grid]
-e_min = -4000.0
+e_min = -4500.0
 e_max = 1000.0
 
 [grid.points]
-de = 5.0
+de = 4.0
 ```
 
 `modes = { path = ... }` は `[[modes]]` の並びの代わりに書く。TOML では表の順序に決まりが
@@ -264,6 +264,13 @@ frequency,coupling
 
 E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 ここで λ = Σ S_α ε_α、Var = Σ S_α ε_α²(2n_α+1) + σ²。
+
+これは**窓**の目安である。端の折り返し（`edge_intensity_ratio`）が見ているのは窓では
+なく**全域グリッドの端**で、全域幅は 2 の冪に切り上げた点数 × ΔE だから、窓を少し
+広げても切り上げ先の冪が変わらないあいだは 1 も動かない。窓が目安を満たしているのに
+警告が出るときは、窓を広げるより `de` を変えるほうが効くことがある。上の例（λ = 588）
+では、窓 −4500〜1000 に対して `de = 5.0` だと全域幅が 10240 で
+`edge_intensity_ratio` = 1.9e-4（警告が出る）、`de = 4.0` だと 16384 になって 9.4e-8 に落ちる。
 
 ## CLI
 
@@ -517,7 +524,7 @@ result = compute_envelope(
     system,
     temperature=300.0,
     broadening=Broadening(sigma=150.0),
-    grid=EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0),
+    grid=EnergyGrid.from_spacing(e_min=-4500.0, e_max=1000.0, de=4.0),
 )
 
 # 入力ファイルから（流儀と単位はここで消費される。modes の CSV 参照もここで解決）
@@ -584,7 +591,7 @@ plot_overlay(result, lines, title="300 K").savefig("overlay.png", dpi=300)
 import matplotlib.pyplot as plt
 
 broadening = Broadening(sigma=150.0)
-grid = EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0)
+grid = EnergyGrid.from_spacing(e_min=-4500.0, e_max=1000.0, de=4.0)
 
 fig, ax = plt.subplots()
 for temperature in (0.0, 77.0, 300.0):
@@ -656,7 +663,7 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 | 診断値 | 意味するもの | 対処 |
 |---|---|---|
 | `sigma_tau_max` | 小さい（< 6）と τ 窓の打ち切りによるリンギング | `de` を σ/2 より小さく |
-| `edge_intensity_ratio` | 大きい（> 1e-4）とエイリアシング | `e_min` / `e_max` を広く |
+| `edge_intensity_ratio` | 大きい（> 1e-4）とエイリアシング | `e_min` / `e_max` を広く、または `de` を変えて全域幅の冪を上げる |
 | `window_captured_fraction` | 小さい（< 0.99）と窓がエンベロープを取りこぼしている | `e_min` / `e_max` を広く |
 | `total_area` | 1 から外れるのは実装の誤り | — |
 | `max_imaginary_ratio` | 大きいのは ρ の対称性の破れ（実装の誤り） | — |
@@ -682,13 +689,13 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 ```
 2026-09-17 12:34:56,102 INFO fcenvelope.inputs: begin read input.toml
 2026-09-17 12:34:56,104 INFO fcenvelope.inputs: end read input.toml (0.002 s)
-2026-09-17 12:34:56,104 INFO fcenvelope.envelope: begin envelope: 2 modes, T=300 K, de=5
-2026-09-17 12:34:56,131 INFO fcenvelope.envelope: end envelope: 2 modes, T=300 K, de=5 (0.027 s)
-2026-09-17 12:34:56,131 INFO fcenvelope.envelope: envelope: 1001 points, N_fft=2048, area=1, captured=0.998306
+2026-09-17 12:34:56,104 INFO fcenvelope.envelope: begin envelope: 2 modes, T=300 K, de=4
+2026-09-17 12:34:56,131 INFO fcenvelope.envelope: end envelope: 2 modes, T=300 K, de=4 (0.027 s)
+2026-09-17 12:34:56,131 INFO fcenvelope.envelope: envelope: 1376 points, N_fft=4096, area=1, captured=0.999013
 2026-09-17 12:34:56,133 INFO fcenvelope.io: begin write result.json
 2026-09-17 12:34:56,158 INFO fcenvelope.io: end write result.json (0.025 s)
-2026-09-17 12:34:56,158 INFO fcenvelope.plotting: begin plot envelope (1001 points)
-2026-09-17 12:34:56,377 INFO fcenvelope.plotting: end plot envelope (1001 points) (0.219 s)
+2026-09-17 12:34:56,158 INFO fcenvelope.plotting: begin plot envelope (1376 points)
+2026-09-17 12:34:56,377 INFO fcenvelope.plotting: end plot envelope (1376 points) (0.219 s)
 2026-09-17 12:34:56,377 INFO fcenvelope.cli: begin write spectrum.png
 2026-09-17 12:34:56,538 INFO fcenvelope.cli: end write spectrum.png (0.161 s)
 ```

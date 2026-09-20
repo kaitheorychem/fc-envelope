@@ -29,7 +29,7 @@ def test_valid_payload_parses(input_payload):
         ]
     )
     assert parsed.to_broadening() == Broadening(sigma=150.0)
-    assert parsed.to_grid() == EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0)
+    assert parsed.to_grid() == EnergyGrid.from_spacing(e_min=-4500.0, e_max=1000.0, de=4.0)
     assert parsed.to_temperature() == 300.0
 
 

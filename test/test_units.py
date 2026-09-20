@@ -134,18 +134,18 @@ def test_sigma_and_grid_in_another_unit(input_payload):
     payload = copy.deepcopy(input_payload)
     payload["broadening"] = {"sigma": _in_unit(150.0, "eV"), "unit": "eV"}
     payload["grid"] = {
-        "e_min": _in_unit(-4000.0, "eV"),
+        "e_min": _in_unit(-4500.0, "eV"),
         "e_max": _in_unit(1000.0, "eV"),
-        "points": {"de": _in_unit(5.0, "eV")},
+        "points": {"de": _in_unit(4.0, "eV")},
         "unit": "eV",
     }
     converted = FCEnvelopeInput.from_obj(payload)
 
     assert converted.to_broadening().sigma == pytest.approx(150.0, rel=1e-14)
     grid = converted.to_grid()
-    assert grid.e_min == pytest.approx(-4000.0, rel=1e-14)
+    assert grid.e_min == pytest.approx(-4500.0, rel=1e-14)
     assert grid.e_max == pytest.approx(1000.0, rel=1e-14)
-    assert grid.de == pytest.approx(5.0, rel=1e-14)
+    assert grid.de == pytest.approx(4.0, rel=1e-14)
     _assert_same_spectrum(converted, canonical)
 
 
@@ -167,7 +167,7 @@ def test_the_block_units_default_to_the_canonical_one(input_payload):
     assert parsed.broadening.unit == units.CANONICAL_ENERGY_UNIT
     assert parsed.grid.unit == units.CANONICAL_ENERGY_UNIT
     assert parsed.to_broadening().sigma == 150.0
-    assert parsed.to_grid().de == 5.0
+    assert parsed.to_grid().de == 4.0
 
 
 @pytest.mark.parametrize("block", ["broadening", "grid"])

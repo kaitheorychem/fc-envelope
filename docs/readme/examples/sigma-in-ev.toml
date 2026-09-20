@@ -20,9 +20,9 @@ sigma = 0.0186              # 150 cm^-1 を eV で書いたもの
 unit = "eV"
 
 [grid]
-e_min = -4000.0
+e_min = -4500.0
 e_max = 1000.0
 
 # グリッド数の指定。n を直接書くか、de から決めるかのどちらか（ADR-0070）。
 [grid.points]
-de = 5.0
+de = 4.0

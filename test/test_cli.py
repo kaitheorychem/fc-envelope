@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import warnings
 
@@ -21,6 +22,22 @@ runner = CliRunner()
 def input_file(tmp_path, input_payload):
     path = tmp_path / "input.json"
     path.write_text(json.dumps(input_payload), encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def warning_input_file(tmp_path, input_payload):
+    """品質の警告がちょうど 1 つ出る入力。
+
+    全域グリッドは `de` を 2 の冪へ切り上げて作られるので、窓が同じでも `de` で
+    覆う幅が変わる（ADR-0070）。この窓では `de = 5.0` だと全域幅が 10240 に留まり、
+    端の折り返しが閾値を超える。警告の**見せ方**を見るためのものなので、警告が出る
+    条件をここに持たせる。文書に載る例の側は警告の出ない値にしてある。
+    """
+    payload = copy.deepcopy(input_payload)
+    payload["grid"] = {"e_min": -4000.0, "e_max": 1000.0, "points": {"de": 5.0}}
+    path = tmp_path / "warns.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
@@ -145,7 +162,7 @@ def test_run_leaves_unspecified_fields_untouched(tmp_path, input_file):
     restored = load_envelope(output)
     assert restored.temperature == 77.0
     assert restored.broadening.sigma == 150.0
-    assert restored.grid.de == 5.0
+    assert restored.grid.de == 4.0
 
 
 def test_overrides_are_read_in_the_units_of_the_input_file(tmp_path, input_file):
@@ -162,8 +179,8 @@ def test_overrides_are_read_in_the_units_of_the_input_file(tmp_path, input_file)
         [
             "run", str(input_file), "-o", str(restated),
             "--override", "temperature=300", "--override", "broadening.sigma=150",
-            "--override", "grid.e_min=-4000", "--override", "grid.e_max=1000",
-            "--override", "grid.points.de=5",
+            "--override", "grid.e_min=-4500", "--override", "grid.e_max=1000",
+            "--override", "grid.points.de=4",
         ],
     )
 
@@ -343,7 +360,9 @@ def test_an_override_value_is_read_as_json(tmp_path, input_file):
 
 
 @pytest.mark.parametrize("command", ["run", "lines"])
-def test_a_quality_warning_is_shown_once_in_the_cli_s_own_form(tmp_path, input_file, command):
+def test_a_quality_warning_is_shown_once_in_the_cli_s_own_form(
+    tmp_path, warning_input_file, command
+):
     """同じ文言が 2 度、片方は実装のファイル名と行番号つきで出ることのないように。
 
     `report_quality` は `warnings.warn` でも発報するが、CLI は結果の診断値から
@@ -355,7 +374,9 @@ def test_a_quality_warning_is_shown_once_in_the_cli_s_own_form(tmp_path, input_f
 
     with warnings.catch_warnings(record=True) as raised:
         warnings.simplefilter("always")
-        invocation = runner.invoke(app, [command, str(input_file), "-o", str(output)])
+        invocation = runner.invoke(
+            app, [command, str(warning_input_file), "-o", str(output)]
+        )
 
     assert invocation.exit_code == 0, invocation.output
     assert not [w for w in raised if issubclass(w.category, NumericalQualityWarning)]
@@ -363,12 +384,12 @@ def test_a_quality_warning_is_shown_once_in_the_cli_s_own_form(tmp_path, input_f
     assert invocation.output.count("cli.py:") == 0
 
 
-def test_a_quality_warning_still_reaches_the_log(tmp_path, input_file):
+def test_a_quality_warning_still_reaches_the_log(tmp_path, warning_input_file):
     """表示を 1 つに絞っても、ログと診断値の経路は塞がない。"""
     output, log = tmp_path / "result.json", tmp_path / "run.log"
 
     invocation = runner.invoke(
-        app, ["run", str(input_file), "-o", str(output), "--log", str(log)]
+        app, ["run", str(warning_input_file), "-o", str(output), "--log", str(log)]
     )
 
     assert invocation.exit_code == 0, invocation.output
