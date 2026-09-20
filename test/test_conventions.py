@@ -20,14 +20,14 @@ from fcenvelope.errors import InvalidInputError, UnsupportedUnitError
 
 def _payload(convention: str, coupling: float, **extra: object) -> dict:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "frequency_unit": "cm^-1",
         "coupling_convention": convention,
         **extra,
         "modes": [{"frequency": 1200.0, "coupling": coupling}],
         "temperature": 300.0,
         "broadening": {"sigma": 150.0},
-        "grid": {"e_min": -4000.0, "e_max": 1000.0, "de": 5.0},
+        "grid": {"e_min": -4000.0, "e_max": 1000.0, "points": {"de": 5.0}},
     }
 
 

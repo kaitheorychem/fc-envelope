@@ -68,7 +68,7 @@ def test_each_stage_leaves_a_begin_and_an_end(stages, single_mode, tmp_path):
         single_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0),
     )
     result_path = tmp_path / "result.json"
     save_envelope(
@@ -76,7 +76,7 @@ def test_each_stage_leaves_a_begin_and_an_end(stages, single_mode, tmp_path):
             single_mode,
             temperature=0.0,
             broadening=Broadening(sigma=150.0),
-            grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
+            grid=EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0),
         ),
         result_path,
     )
@@ -93,7 +93,7 @@ def test_the_end_line_carries_the_elapsed_time(stages, single_mode):
         single_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0),
     )
     ends = [message for message in stages() if message.startswith("end ")]
     assert ends and all(message.endswith(" s)") for message in ends)
@@ -118,7 +118,7 @@ def test_quality_warnings_are_recorded(alerts, single_mode):
         single_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-500.0, e_max=500.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-500.0, e_max=500.0, de=5.0),
     )
     assert result.diagnostics.messages  # 閾値に引っかかる条件を選んでいる
     assert alerts() == list(result.diagnostics.messages)
@@ -131,7 +131,7 @@ def test_an_overlay_mismatch_is_recorded(alerts, single_mode):
         single_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0),
     )
     lines = lines_quietly(single_mode, temperature=0.0)
     with warnings.catch_warnings():
@@ -149,7 +149,7 @@ def test_the_number_of_stages_does_not_grow_with_the_system(stages, caplog, mult
     conditions = {
         "temperature": 300.0,
         "broadening": Broadening(sigma=150.0),
-        "grid": EnergyGrid(e_min=-6000.0, e_max=2000.0, de=5.0),
+        "grid": EnergyGrid.from_spacing(e_min=-6000.0, e_max=2000.0, de=5.0),
     }
     compute_quietly(single_mode, **conditions)
     one_mode = len(stages())
@@ -176,7 +176,7 @@ def test_the_library_is_silent_until_a_handler_is_attached(capsys, single_mode):
         single_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0),
     )
     assert capsys.readouterr() == ("", "")
 

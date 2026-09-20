@@ -165,9 +165,22 @@ class Broadening:
         return self.sigma * tau_max
 
 
+def _next_pow2(value: int) -> int:
+    """value 以上の最小の 2 のべき（最小 2）。"""
+    if value <= 2:
+        return 2
+    return 1 << (value - 1).bit_length()
+
+
 @dataclass(frozen=True, slots=True)
 class EnergyGrid:
-    """エンベロープを標本する E 軸上の点列。省略値も自動推定もない。"""
+    """エンベロープを標本する E 軸上の点列。省略値も自動推定もない。
+
+    持つのは**解決済み**の全域グリッド、すなわち点数 `n_fft`（2 の冪）と間隔 `de`
+    である。入力ファイルはこの 2 つを直接は書かず、`from_points` か `from_spacing`
+    のどちらかで決める（ADR-0070）。窓 `e_min` / `e_max` は切り出しの範囲でしかなく、
+    全域グリッドの広さ `n_fft * de` はそれ以上になりうる。
+    """
 
     e_min: float
     """出力窓の下端 [cm^-1]。"""
@@ -176,7 +189,10 @@ class EnergyGrid:
     """出力窓の上端 [cm^-1]。"""
 
     de: float
-    """出力グリッド間隔 [cm^-1]。"""
+    """出力グリッド間隔 [cm^-1]。全域幅を `n_fft` で割ったもの。"""
+
+    n_fft: int
+    """全域グリッドの点数 N。2 の冪（FFT の基数）。"""
 
     def __post_init__(self) -> None:
         if not self.de > 0.0:
@@ -185,6 +201,69 @@ class EnergyGrid:
             raise InvalidInputError(
                 f"e_min must be smaller than e_max (got {self.e_min} >= {self.e_max})"
             )
+        if self.n_fft < 2 or self.n_fft & (self.n_fft - 1):
+            raise InvalidInputError(
+                f"n_fft must be a power of two and at least 2 (got {self.n_fft})"
+            )
+        # 全域グリッドは窓を覆っていなければならない。等号ちょうどを弾かないよう、
+        # 割り算の丸めのぶんだけ緩める。
+        if self.full_span < 2.0 * self.e_half * (1.0 - 1e-12):
+            raise InvalidInputError(
+                f"the full grid must cover the window: n_fft * de = {self.full_span} "
+                f"is narrower than 2 * max(|e_min|, |e_max|) = {2.0 * self.e_half}"
+            )
+
+    @property
+    def e_half(self) -> float:
+        """窓を覆う 0 対称な範囲の半幅 [cm^-1]。"""
+        return max(abs(self.e_min), abs(self.e_max))
+
+    @property
+    def full_span(self) -> float:
+        """全域グリッドの広さ `n_fft * de` [cm^-1]。窓より広いことがある。"""
+        return self.n_fft * self.de
+
+    @classmethod
+    def from_points(cls, *, e_min: float, e_max: float, n: int) -> "EnergyGrid":
+        """グリッド数を直接指定して作る。全域幅は窓ちょうど 2 * e_half になる。
+
+        dE = 2 * e_half / n は端数になりうる。丸い dE が欲しいときは
+        `from_spacing` を使う（ADR-0070）。
+        """
+        if n < 2 or n & (n - 1):
+            raise InvalidInputError(
+                f"n must be a power of two and at least 2 (got {n}); "
+                f"write de instead if you want to choose the spacing"
+            )
+        e_half = max(abs(e_min), abs(e_max))
+        return cls(e_min=e_min, e_max=e_max, de=2.0 * e_half / n, n_fft=n)
+
+    @classmethod
+    def from_spacing(
+        cls, *, e_min: float, e_max: float, de: float, shift: int = 0
+    ) -> "EnergyGrid":
+        """間隔 dE を指定して作る。グリッド数は窓を覆う最小の 2 の冪になる。
+
+        `shift` は**全域幅を保ったまま**その冪を上へずらす。n は 2^shift 倍、
+        dE は 2^shift 分の 1 になり、覆う範囲は変わらないまま刻みだけ細かくなる
+        （ADR-0070）。`shift = 0` なら dE は書いた `de` ちょうどである。
+        """
+        if not de > 0.0:
+            raise InvalidInputError(f"de must be positive (got {de})")
+        if shift < 0:
+            raise InvalidInputError(
+                f"shift must be non-negative (got {shift}); "
+                f"write a larger de to make the grid coarser"
+            )
+        e_half = max(abs(e_min), abs(e_max))
+        n_base = _next_pow2(math.ceil(2.0 * e_half / de))
+        # 2 の冪での乗除なので、ここは浮動小数点でも丸め誤差が出ない。
+        return cls(
+            e_min=e_min,
+            e_max=e_max,
+            de=de / (1 << shift),
+            n_fft=n_base << shift,
+        )
 
 
 @dataclass(frozen=True, slots=True)

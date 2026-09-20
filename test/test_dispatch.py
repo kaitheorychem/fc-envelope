@@ -64,7 +64,7 @@ def results(multi_mode):
         multi_mode,
         temperature=300.0,
         broadening=Broadening(sigma=150.0),
-        grid=EnergyGrid(e_min=-6000.0, e_max=2000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-6000.0, e_max=2000.0, de=5.0),
     )
     return [envelope, lines_quietly(multi_mode, temperature=300.0, min_weight=1e-3)]
 

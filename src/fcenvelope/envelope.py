@@ -45,22 +45,17 @@ MIN_WINDOW_CAPTURED_FRACTION = 0.99
 MAX_IMAGINARY_RATIO = 1e-8
 
 
-def _next_pow2(value: int) -> int:
-    """value 以上の最小の 2 のべき（最小 2）。"""
-    if value <= 2:
-        return 2
-    return 1 << (value - 1).bit_length()
-
-
 def build_grids(grid: EnergyGrid) -> tuple[np.ndarray, np.ndarray, int, float]:
     """FFT 標準順序の (energy, tau) グリッドと (N, d_tau) を構成する。
 
     0 対称な全域 E グリッド上で計算し、最後に窓へ切り出す。この取り方により
-    出力の dE は指定した `de` ちょうどになり、E = 0 が必ずグリッド点に乗る。
+    出力の dE は `grid.de` ちょうどになり、E = 0 が必ずグリッド点に乗る。
+
+    全域グリッドの (N, dE) は `EnergyGrid` が解決済みで持っている（ADR-0070）。
+    ここでは 2 の冪への丸めも窓からの推定もしない。
     """
     de = grid.de
-    e_half = max(abs(grid.e_min), abs(grid.e_max))
-    n_fft = _next_pow2(math.ceil(2.0 * e_half / de))
+    n_fft = grid.n_fft
     d_tau = 2.0 * math.pi / (n_fft * de)
 
     index = np.arange(n_fft)
@@ -115,13 +110,17 @@ def compute_envelope(
     # 節目はこの 1 組だけにする。モードや tau 点ごとの記録は取らない（ADR-0052）。
     with stage(
         logger,
-        f"envelope: {len(system.modes)} modes, T={temperature:g} K, de={grid.de:g}",
+        f"envelope: {len(system.modes)} modes, T={temperature:g} K, "
+        f"de={grid.de:g}, N={grid.n_fft}",
     ):
         energy, density, measured = _transform(system, temperature, broadening, grid)
     logger.info(
-        "envelope: %d points, N_fft=%d, area=%.9g, captured=%.6g",
+        "envelope: %d points, N_fft=%d, dE=%.9g, full span=%.9g, "
+        "area=%.9g, captured=%.6g",
         energy.size,
         measured.n_fft,
+        grid.de,
+        grid.full_span,
         measured.total_area,
         measured.window_captured_fraction,
     )

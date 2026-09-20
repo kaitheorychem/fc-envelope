@@ -122,7 +122,7 @@ def test_run_overrides_the_conditions(tmp_path, input_file):
             "--override", "broadening.sigma=80",
             "--override", "grid.e_min=-6000",
             "--override", "grid.e_max=2000",
-            "--override", "grid.de=4",
+            "--override", "grid.points.de=4",
         ],
     )
 
@@ -163,7 +163,7 @@ def test_overrides_are_read_in_the_units_of_the_input_file(tmp_path, input_file)
             "run", str(input_file), "-o", str(restated),
             "--override", "temperature=300", "--override", "broadening.sigma=150",
             "--override", "grid.e_min=-4000", "--override", "grid.e_max=1000",
-            "--override", "grid.de=5",
+            "--override", "grid.points.de=5",
         ],
     )
 
@@ -290,7 +290,7 @@ def test_a_misspelled_override_key_exits_with_one(tmp_path, input_file):
         app,
         [
             "run", str(input_file), "-o", str(tmp_path / "out.json"),
-            "--override", "grid.dee=4",
+            "--override", "grid.points.dee=4",
         ],
     )
     assert invocation.exit_code == 1
@@ -452,7 +452,7 @@ def test_the_effective_settings_reproduce_the_run(tmp_path, input_file):
             app,
             [
                 "run", str(input_file), "-o", str(first), "--no-script",
-                "--override", "temperature=77", "--override", "grid.de=4",
+                "--override", "temperature=77", "--override", "grid.points.de=4",
             ],
         ).exit_code
         == 0

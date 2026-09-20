@@ -1,7 +1,7 @@
 # usage.md「入力ファイル」の例。そのまま動く。
 #   uv run fcenvelope run docs/readme/examples/basic.toml -o result.json
 
-schema_version = 2
+schema_version = 3
 frequency_unit = "cm^-1"
 coupling_convention = "g"   # coupling は無次元化 VCC の g。S = g^2
 temperature = 300.0         # K
@@ -21,6 +21,9 @@ sigma = 150.0               # unit を省いたので cm^-1
 [grid]
 e_min = -4000.0
 e_max = 1000.0
+
+# グリッド数の指定。n を直接書くか、de から決めるかのどちらか（ADR-0070）。
+[grid.points]
 de = 5.0
 
 [selection]

@@ -36,7 +36,7 @@
 | `frequency_unit` | `modes[].frequency` | `cm^-1` |
 | `coupling_unit` | `modes[].coupling`。無次元の流儀では指定してはならない | 流儀による |
 | `broadening.unit` | σ | `cm^-1` |
-| `grid.unit` | `e_min` / `e_max` / `de` | `cm^-1` |
+| `grid.unit` | `e_min` / `e_max` / `points.de` | `cm^-1` |
 
 変換は入力ファイルの型（`inputs.py`）の中だけで起こる。`to_system()` / `to_broadening()`
 / `to_grid()` が単位と流儀を消費し、計算用の値の型には常に正準形が渡る（ADR-0054）。
@@ -117,7 +117,9 @@ INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキスト�
   `.occupations(temperature)` を持つ（ADR-0044）
 - `Broadening(sigma)` — 線形状。`.log_damping(tau)` / `.peak_height()` /
   `.truncation_indicator(tau_max)` / `MIN_TRUNCATION_INDICATOR` を持つ（ADR-0034）
-- `EnergyGrid(e_min, e_max, de)` — エネルギーグリッド
+- `EnergyGrid(e_min, e_max, de, n_fft)` — エネルギーグリッド。持つのは**解決済み**の
+  全域グリッドで、`from_points(e_min, e_max, n)` / `from_spacing(e_min, e_max, de, shift=0)`
+  のどちらかで作る（ADR-0070）。`e_half` / `full_span` を導出として持つ
 - `Selection(min_weight=1e-4, max_lines=10000, max_quanta=None)` — 選択条件。**つまみの
   既定値はここにしかない**（ADR-0050）
 
@@ -127,7 +129,8 @@ INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキスト�
 ### 入力ファイルの型（`inputs.py`、pydantic）
 
 - `FCEnvelopeInput` — 入力ファイル全体。構造・単位・流儀だけを検査する
-- `ModeSpec(frequency, coupling)` / `BroadeningSpec` / `EnergyGridSpec` / `SelectionSpec`
+- `ModeSpec(frequency, coupling)` / `BroadeningSpec` / `EnergyGridSpec` / `GridPointsSpec`
+  / `SelectionSpec`。`EnergyGridSpec.points` が `GridPointsSpec`（`n` / `de` / `shift`）
 - `BroadeningSpec` と `EnergyGridSpec` は `_EnergySpec` を継承し、自分の `unit` と
   `.to_canonical`（cm⁻¹ への換算係数）を持つ
 
@@ -178,7 +181,7 @@ coupling と frequency の単位が揃うことは前提にできないので、
 扱いは以下どちらの書式でも同じである。利用者が書くのは TOML、実効設定の読み返しが JSON。
 
 ```toml
-schema_version = 2
+schema_version = 3
 frequency_unit = "cm^-1"
 coupling_convention = "g"
 temperature = 300.0
@@ -198,8 +201,10 @@ unit = "cm^-1"
 [grid]
 e_min = -4000.0
 e_max = 1000.0
-de = 5.0
 unit = "cm^-1"
+
+[grid.points]
+de = 5.0
 
 [selection]
 min_weight = 0.0001
@@ -211,7 +216,7 @@ max_lines = 10000
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "frequency_unit": "cm^-1",
   "coupling_convention": "g",
   "modes": [
@@ -220,14 +225,17 @@ max_lines = 10000
   ],
   "temperature": 300.0,
   "broadening": { "sigma": 150.0, "unit": "cm^-1" },
-  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0, "unit": "cm^-1" },
+  "grid": {
+    "e_min": -4000.0, "e_max": 1000.0, "unit": "cm^-1",
+    "points": { "de": 5.0 }
+  },
   "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
 }
 ```
 
 | フィールド | 型 | 制約 | 意味 |
 |---|---|---|---|
-| `schema_version` | int | `2` 固定 | 不一致は `SchemaVersionError`。1 の互換層は置かない（ADR-0040） |
+| `schema_version` | int | `3` 固定 | 不一致は `SchemaVersionError`。古い版の互換層は置かない（ADR-0040, 0070） |
 | `frequency_unit` | str | `ENERGY_UNITS` のいずれか | `modes[].frequency` の単位。既定 `"cm^-1"` |
 | `coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` | 既定 `"g"` |
 | `coupling_unit` | str \| null | `ENERGY_UNITS` のいずれか | `modes[].coupling` の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
@@ -237,13 +245,16 @@ max_lines = 10000
 | `broadening.sigma` | float | > 0 | σ。単位は `broadening.unit` |
 | `broadening.unit` | str | `ENERGY_UNITS` のいずれか | 既定 `"cm^-1"` |
 | `grid.e_min` / `e_max` | float | `e_min` < `e_max` | 出力窓。単位は `grid.unit` |
-| `grid.de` | float | > 0 | 出力グリッド間隔。単位は `grid.unit` |
 | `grid.unit` | str | `ENERGY_UNITS` のいずれか | 既定 `"cm^-1"` |
+| `grid.points` | object | `n` と `de` のどちらか一方だけ | 全域グリッドの取り方（ADR-0070） |
+| `grid.points.n` | int \| null | 2 の冪、≥ 2 | 全域グリッドの点数。ΔE = 2·e_half / n |
+| `grid.points.de` | float \| null | > 0 | 出力グリッド間隔。単位は `grid.unit` |
+| `grid.points.shift` | int | ≥ 0、既定 0 | `de` のときだけ書ける。全域幅を保ったまま点数を 2^shift 倍 |
 | `selection` | object | 省略可 | 省略時は `Selection` の既定値 |
 
 単位フィールドは 4 つとも省略でき、省略時はすべて `cm^-1` である。単位を書いていない
-入力ファイルは従来どおりの意味で読まれるので、`schema_version` は 2 に据え置く
-（ADR-0053）。単位の実例は `docs/readme/examples/` にある（ADR-0056）。
+入力ファイルは従来どおりの意味で読まれるので、単位の導入では `schema_version` を
+上げていない（ADR-0053）。単位の実例は `docs/readme/examples/` にある（ADR-0056）。
 
 `modes` は最低 1 要素（TOML では `[[modes]]` の並び）。配列の代わりに
 `{"path": "<file>.csv"}`（TOML では `modes = { path = "<file>.csv" }`）を置くと外部 CSV を
@@ -267,7 +278,7 @@ max_lines = 10000
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "kind": "fcenvelope.envelope",
   "fcenvelope_version": "0.1.0",
   "created_at": "2026-09-17T03:21:44Z",
@@ -279,7 +290,7 @@ max_lines = 10000
     "modes": [{ "frequency": 1200.0, "coupling": 0.25 }],
     "temperature": 300.0,
     "broadening": { "sigma": 150.0 },
-    "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 }
+    "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0, "n_fft": 2048 }
   },
   "derived": { "reorganization_energy": 300.0 },
   "diagnostics": {
@@ -301,7 +312,7 @@ max_lines = 10000
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "kind": "fcenvelope.fc_lines",
   "fcenvelope_version": "0.1.0",
   "created_at": "2026-09-17T01:23:45Z",
@@ -369,7 +380,7 @@ fcenvelope --version
 
 | 決め | 内容 |
 |---|---|
-| キー | 入力ファイル中の項目の位置。入れ子はドットで繋ぐ（`grid.de`、`broadening.sigma`） |
+| キー | 入力ファイル中の項目の位置。入れ子はドットで繋ぐ（`grid.points.de`、`broadening.sigma`） |
 | 値 | JSON として読み、読めなければ文字列（`null` / `2.5` / `eV`） |
 | 単位・流儀 | 入力ファイルのもの。`broadening.sigma` はファイルの `broadening.unit` で読む |
 | 拒否する位置 | `modes` 以下（ADR-0012, 0035）と `schema_version` |

@@ -11,7 +11,7 @@
     ...     system,
     ...     temperature=300.0,
     ...     broadening=Broadening(sigma=150.0),
-    ...     grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
+    ...     grid=EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0),
     ... )
     >>> round(float(result.diagnostics.total_area), 9)
     1.0

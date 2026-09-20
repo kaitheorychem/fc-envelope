@@ -21,7 +21,7 @@ runner = CliRunner()
 
 #: `conftest.input_payload` と同じ内容を TOML で書いたもの。
 TOML_INPUT = """\
-schema_version = 2
+schema_version = 3
 frequency_unit = "cm^-1"
 coupling_convention = "g"
 temperature = 300.0
@@ -40,6 +40,8 @@ sigma = 150.0
 [grid]
 e_min = -4000.0
 e_max = 1000.0
+
+[grid.points]
 de = 5.0
 """
 
@@ -131,7 +133,7 @@ def test_an_unknown_extension_stops_before_reading(tmp_path):
 def test_a_toml_file_still_carries_the_schema_version(tmp_path):
     """版の検査は書式の手前ではなく入力ファイルの型にある。"""
     path = tmp_path / "input.toml"
-    path.write_text(TOML_INPUT.replace("schema_version = 2", "schema_version = 1"), encoding="utf-8")
+    path.write_text(TOML_INPUT.replace("schema_version = 3", "schema_version = 1"), encoding="utf-8")
 
     with pytest.raises(SchemaVersionError):
         FCEnvelopeInput.from_path(path)

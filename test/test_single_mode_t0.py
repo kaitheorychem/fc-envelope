@@ -41,7 +41,7 @@ def test_matches_poisson_series_at_zero_temperature(huang_rhys):
         system,
         temperature=0.0,
         broadening=Broadening(sigma=sigma),
-        grid=EnergyGrid(e_min=-20000.0, e_max=6000.0, de=4.0),
+        grid=EnergyGrid.from_spacing(e_min=-20000.0, e_max=6000.0, de=4.0),
     )
     expected = poisson_series(result.energy, huang_rhys, frequency, sigma)
 
@@ -51,7 +51,7 @@ def test_matches_poisson_series_at_zero_temperature(huang_rhys):
 def test_sidebands_sit_on_the_negative_side():
     """振動量子 k 個生成のサイドバンドは E = -k eps に立つ（符号規約 §3）。"""
     frequency = 1000.0
-    grid = EnergyGrid(e_min=-8000.0, e_max=4000.0, de=2.0)
+    grid = EnergyGrid.from_spacing(e_min=-8000.0, e_max=4000.0, de=2.0)
     system = VibrationalSystem([VibrationalMode(frequency=frequency, huang_rhys=1.0)])
     result = compute_quietly(
         system, temperature=0.0, broadening=Broadening(sigma=60.0), grid=grid
@@ -79,7 +79,7 @@ def test_zero_coupling_gives_a_pure_gaussian():
         VibrationalSystem([VibrationalMode(frequency=800.0, huang_rhys=0.0)]),
         temperature=300.0,
         broadening=Broadening(sigma=sigma),
-        grid=EnergyGrid(e_min=-2000.0, e_max=2000.0, de=1.0),
+        grid=EnergyGrid.from_spacing(e_min=-2000.0, e_max=2000.0, de=1.0),
     )
 
     expected = np.exp(-0.5 * (result.energy / sigma) ** 2) / (sigma * math.sqrt(2.0 * math.pi))
@@ -92,7 +92,7 @@ def test_hot_band_appears_on_the_positive_side():
     frequency = 300.0
     shared = {
         "broadening": Broadening(sigma=40.0),
-        "grid": EnergyGrid(e_min=-4000.0, e_max=2000.0, de=2.0),
+        "grid": EnergyGrid.from_spacing(e_min=-4000.0, e_max=2000.0, de=2.0),
     }
     system = VibrationalSystem([VibrationalMode(frequency=frequency, huang_rhys=0.5)])
 

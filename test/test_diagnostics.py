@@ -29,7 +29,7 @@ def _matching(result, needle: str) -> list[str]:
 
 
 def test_grid_is_power_of_two_and_contains_the_zpl():
-    grid = EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0)
+    grid = EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0)
     energy, tau, n_fft, d_tau = build_grids(grid)
 
     assert n_fft & (n_fft - 1) == 0
@@ -44,7 +44,7 @@ def test_grid_is_power_of_two_and_contains_the_zpl():
 
 
 def test_output_grid_spacing_is_exactly_de():
-    grid = EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0)
+    grid = EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0)
     result = compute_quietly(SYSTEM, temperature=300.0, broadening=SIGMA, grid=grid)
     spacing = np.diff(result.energy)
     assert np.allclose(spacing, grid.de, rtol=0.0, atol=1e-9)
@@ -54,7 +54,7 @@ def test_output_grid_spacing_is_exactly_de():
 
 
 def test_diagnostics_of_a_healthy_calculation():
-    grid = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0)
+    grid = EnergyGrid.from_spacing(e_min=-12000.0, e_max=12000.0, de=2.0)
     result = compute_quietly(SYSTEM, temperature=300.0, broadening=SIGMA, grid=grid)
     diagnostics = result.diagnostics
 
@@ -74,7 +74,7 @@ def test_coarse_de_warns_about_truncation():
             SYSTEM,
             temperature=300.0,
             broadening=Broadening(sigma=10.0),
-            grid=EnergyGrid(e_min=-2000.0, e_max=2000.0, de=20.0),
+            grid=EnergyGrid.from_spacing(e_min=-2000.0, e_max=2000.0, de=20.0),
         )
 
     assert result.diagnostics.sigma_tau_max < 6.0
@@ -83,8 +83,8 @@ def test_coarse_de_warns_about_truncation():
 
 def test_narrow_window_raises_the_edge_intensity_ratio():
     """E 範囲が狭いとスペクトル重みが端に届き、エイリアシングの指標が上がる。"""
-    wide = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=5.0)
-    narrow = EnergyGrid(e_min=-1500.0, e_max=1500.0, de=5.0)
+    wide = EnergyGrid.from_spacing(e_min=-12000.0, e_max=12000.0, de=5.0)
+    narrow = EnergyGrid.from_spacing(e_min=-1500.0, e_max=1500.0, de=5.0)
 
     wide_result = compute_quietly(SYSTEM, temperature=300.0, broadening=SIGMA, grid=wide)
     with pytest.warns(NumericalQualityWarning, match="edge_intensity_ratio"):
@@ -102,7 +102,7 @@ def test_narrow_window_warns_about_captured_fraction():
             STRONG,
             temperature=300.0,
             broadening=SIGMA,
-            grid=EnergyGrid(e_min=-200.0, e_max=200.0, de=5.0),
+            grid=EnergyGrid.from_spacing(e_min=-200.0, e_max=200.0, de=5.0),
         )
 
     assert result.diagnostics.window_captured_fraction < 0.99
@@ -114,7 +114,7 @@ def test_aliasing_does_not_disturb_the_total_area():
         STRONG,
         temperature=300.0,
         broadening=SIGMA,
-        grid=EnergyGrid(e_min=-1000.0, e_max=1000.0, de=5.0),
+        grid=EnergyGrid.from_spacing(e_min=-1000.0, e_max=1000.0, de=5.0),
     )
     assert result.diagnostics.total_area == pytest.approx(1.0, abs=1e-12)
     assert result.diagnostics.edge_intensity_ratio > 1e-4
@@ -127,7 +127,7 @@ def test_no_warning_is_emitted_for_a_healthy_calculation():
             SYSTEM,
             temperature=300.0,
             broadening=SIGMA,
-            grid=EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0),
+            grid=EnergyGrid.from_spacing(e_min=-12000.0, e_max=12000.0, de=2.0),
         )
 
 
@@ -163,7 +163,7 @@ def test_density_is_real_and_finite():
         SYSTEM,
         temperature=300.0,
         broadening=SIGMA,
-        grid=EnergyGrid(e_min=-8000.0, e_max=4000.0, de=4.0),
+        grid=EnergyGrid.from_spacing(e_min=-8000.0, e_max=4000.0, de=4.0),
     )
     assert result.density.dtype == np.float64
     assert np.all(np.isfinite(result.density))
@@ -198,7 +198,7 @@ def test_broadening_knows_the_truncation_indicator():
 def test_the_diagnostic_comes_from_the_broadening():
     """`sigma_tau_max` は線形状が計算し、エンベロープはそれを記録するだけ。"""
     broadening = Broadening(sigma=150.0)
-    grid = EnergyGrid(e_min=-12000.0, e_max=12000.0, de=2.0)
+    grid = EnergyGrid.from_spacing(e_min=-12000.0, e_max=12000.0, de=2.0)
     diagnostics = compute_quietly(
         SYSTEM, temperature=300.0, broadening=broadening, grid=grid
     ).diagnostics

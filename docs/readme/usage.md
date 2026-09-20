@@ -28,7 +28,7 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 出番は主に実効設定の読み返しである（下の「JSON で書く」）。
 
 ```toml
-schema_version = 2
+schema_version = 3
 frequency_unit = "cm^-1"
 coupling_convention = "g"
 temperature = 300.0
@@ -48,6 +48,8 @@ sigma = 150.0
 [grid]
 e_min = -4000.0
 e_max = 1000.0
+
+[grid.points]
 de = 5.0
 
 [selection]
@@ -60,7 +62,7 @@ max_lines = 10000
 
 | フィールド | 意味 | 制約 |
 |---|---|---|
-| `schema_version` | 入力ファイルの版 | `2` 固定 |
+| `schema_version` | 入力ファイルの版 | `3` 固定 |
 | `frequency_unit` | `modes[].frequency` の単位 | 下の単位表のいずれか、既定 `"cm^-1"` |
 | `coupling_convention` | `coupling` の流儀（下の流儀表） | 既定は `"g"` |
 | `coupling_unit` | `modes[].coupling` の単位 | 有次元の流儀では必須、無次元の流儀では書けない |
@@ -70,14 +72,49 @@ max_lines = 10000
 | `broadening.sigma` | 線形状の幅 σ | > 0 |
 | `broadening.unit` | σ の単位 | 既定 `"cm^-1"` |
 | `grid.e_min` / `e_max` | 出力窓 | `e_min` < `e_max` |
-| `grid.de` | 出力グリッド間隔 | > 0 |
-| `grid.unit` | グリッドの単位 | 既定 `"cm^-1"` |
+| `grid.unit` | `e_min` / `e_max` / `points.de` の単位 | 既定 `"cm^-1"` |
+| `grid.points.n` | 全域グリッドの点数 | 2 の冪。`de` とは排他 |
+| `grid.points.de` | 出力グリッド間隔 | > 0。`n` とは排他 |
+| `grid.points.shift` | 冪のずらし幅 | ≥ 0、既定 0。`de` と一緒のときだけ書ける |
 | `selection.min_weight` | 保持する重みの下限 | 0 < x ≤ 1、既定 1e-4 |
 | `selection.max_lines` | 保持・列挙する線数の上限 | ≥ 1、既定 10000 |
 | `selection.max_quanta` | 1 モードあたりの振動量子数の上限 | ≥ 0、省略すると自動（既定）|
 
 `run` が読むのは `temperature` / `broadening` / `grid`、`lines` が読むのは
 `temperature` / `selection` で、どちらも同じファイルを使える。`selection` は省略できる。
+
+### グリッドの取り方
+
+`e_min` / `e_max` は**出力窓**、つまりどこからどこまでを結果ファイルに書き出すかである。
+実際に FFT を掛ける全域グリッドは別で、その取り方を `[grid.points]` に書く。FFT の基数は
+2 の冪なので、点数はいつでも 2 の冪になる（ADR-0070）。
+
+書き方は 2 つあり、どちらか一方だけを書く。
+
+```toml
+[grid.points]
+n = 4096        # 点数を直接。2 の冪でなければエラー
+```
+
+点数を固定したいときはこちら。全域幅は窓ちょうど（`2 * max(|e_min|, |e_max|)`）になり、
+ΔE = 全域幅 / n はたいてい端数になる。`de` の側は 2 の冪へ切り上げるぶん全域幅が窓より
+広くなるので、同じ窓でも `n` の側のほうが端の折り返しは出やすい。気になるなら窓自体を
+広げる。
+
+```toml
+[grid.points]
+de = 5.0        # 刻みから。ΔE はちょうど 5.0 になる
+shift = 1       # 任意。冪を 1 段上げ、ΔE = 2.5、点数は倍
+```
+
+横軸の刻みを丸くしたい、条件を振った複数の計算で刻みを揃えたいときはこちら。点数は
+`2 * max(|e_min|, |e_max|) / de` 以上で最小の 2 の冪になるので、全域幅は窓より広くなる。
+
+`shift` は**全域幅を保ったまま**点数を増やす。覆う範囲は変えずに刻みだけを細かくする
+つまみなので、`edge_intensity_ratio`（端の折り返し）の警告には効かない。
+
+実際に使われた点数と ΔE は、`run` の終了行（`N=...`）と結果ファイルの
+`input.grid` / `diagnostics` に残る。
 
 TOML で書くときの決まりごとは 2 つだけである。
 
@@ -145,7 +182,7 @@ JSON だけだからである。
 できないためである。
 
 ```toml
-schema_version = 2
+schema_version = 3
 frequency_unit = "cm^-1"
 coupling_convention = "lambda"
 coupling_unit = "eV"
@@ -162,8 +199,10 @@ unit = "eV"
 [grid]
 e_min = -4000.0
 e_max = 1000.0
-de = 5.0
 unit = "cm^-1"
+
+[grid.points]
+de = 5.0
 ```
 
 この例では振動数を cm⁻¹、λ と σ を eV、グリッドを cm⁻¹ で書いている。結果は単位の
@@ -184,7 +223,7 @@ uv run fcenvelope run docs/readme/examples/sigma-in-ev.toml -o result.json
 モード数が多い場合や外部プログラムの出力を使う場合は、`modes` に CSV への参照を書ける。
 
 ```toml
-schema_version = 2
+schema_version = 3
 frequency_unit = "cm^-1"
 coupling_convention = "g"
 temperature = 300.0
@@ -197,6 +236,8 @@ sigma = 150.0
 [grid]
 e_min = -4000.0
 e_max = 1000.0
+
+[grid.points]
 de = 5.0
 ```
 
@@ -280,7 +321,7 @@ uv run fcenvelope run input.toml --log run.log
 キーは**入力ファイル中の項目の位置**そのもので、入れ子はドットで繋ぐ。
 
 ```bash
-uv run fcenvelope run input.toml --override temperature=0 --override grid.de=2.5
+uv run fcenvelope run input.toml --override temperature=0 --override grid.points.de=2.5
 uv run fcenvelope lines input.toml --override selection.max_quanta=null
 ```
 
@@ -290,7 +331,7 @@ uv run fcenvelope lines input.toml --override selection.max_quanta=null
 - 値は**入力ファイルと同じ単位・流儀**で読む。σ を eV で書いたファイルなら
   `--override broadening.sigma=0.02` も eV である。
 - `modes` は上書きできない。どの分子を計算したかが履歴に残らなくなるため。
-- 知らないキーはエラーになる。`grid.dee=4` は黙って無視されず、その場で止まる。
+- 知らないキーはエラーになる。`grid.points.dee=4` は黙って無視されず、その場で止まる。
 
 ### 実際に使われた設定を見る
 
@@ -476,7 +517,7 @@ result = compute_envelope(
     system,
     temperature=300.0,
     broadening=Broadening(sigma=150.0),
-    grid=EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0),
+    grid=EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0),
 )
 
 # 入力ファイルから（流儀と単位はここで消費される。modes の CSV 参照もここで解決）
@@ -543,7 +584,7 @@ plot_overlay(result, lines, title="300 K").savefig("overlay.png", dpi=300)
 import matplotlib.pyplot as plt
 
 broadening = Broadening(sigma=150.0)
-grid = EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0)
+grid = EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0)
 
 fig, ax = plt.subplots()
 for temperature in (0.0, 77.0, 300.0):
