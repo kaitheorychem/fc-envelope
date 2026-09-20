@@ -35,6 +35,7 @@ SAVE = True
 SHOW = None
 SHOW_WIDTH = 0.9     # 端末の幅に対する図の幅の割合
 SHOW_DPI = 110       # 端末が画素数を返さないときの解像度。ファイルの DPI とは別
+IMAGE_PREFIX = "fcenvelope-"   # 引数でほかの結果を指したときの画像名の頭
 
 # 図の設定。ここから下はすべて手で変えてよい。
 FIGSIZE = (7.0, 4.2)
@@ -57,9 +58,22 @@ X_UNIT = "cm$^{-1}$"
 X_SCALE = 1.0
 
 
+def beside(path: Path | str) -> Path:
+    """スクリプトの中に書いたファイル名を、このスクリプトの隣として読む。
+
+    生成ヘッダの位置がこのファイルからの相対で解決される（ADR-0059）のに合わせる。
+    2 本目を足すときに書くファイル名も同じ基準になるので、どこから起動しても同じ図が
+    出る。コマンドラインの引数はシェルの都合でカレントディレクトリ基準なので、`main`
+    が先に絶対パスへ直してから渡す（ADR-0067）。
+    """
+    path = Path(path)
+    return path if path.is_absolute() else Path(__file__).parent / path
+
+
 def load(path: Path | str, kind: str) -> dict:
     """結果 JSON を読む。種類と版が合わなければ読める文言で止まる。"""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    path = beside(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("kind") != kind or data.get("schema_version") != SCHEMA_VERSION:
         raise SystemExit(
             f"{path}: expected {kind} (schema {SCHEMA_VERSION}), got "
@@ -101,6 +115,19 @@ def show(fig) -> None:
         first = False
     out.write(b"\n")
     out.flush()
+
+
+def image_for(source: Path) -> Path:
+    """図の書き出し先。引数でほかの結果を指したときは、その名前に追従する。
+
+    既定の組み合わせなら OUTPUT で、手で書き替えたものがそのまま効く。別の
+    エンベロープを指したなら、その隣に `fcenvelope-<結果の名前>-overlay.png` を置く。
+    重ねた図だと名前に残すのは、同じ結果を単独で描いた図と混ざらないためである
+    （ADR-0067）。
+    """
+    if source.resolve() == ENVELOPE.resolve():
+        return OUTPUT
+    return source.with_name(f"{IMAGE_PREFIX}{source.stem}-overlay.png")
 
 
 def stick_heights(envelope: dict, lines: dict) -> list[float]:
@@ -160,10 +187,16 @@ def draw(ax, envelope: dict, lines: dict) -> None:
 
 
 def main() -> None:
-    paths = sys.argv[1:3] if len(sys.argv) > 2 else (ENVELOPE, LINES)
-    envelope = load(paths[0], ENVELOPE_KIND)
-    lines = load(paths[1], LINES_KIND)
+    # 引数はシェルの都合でカレントディレクトリ基準。ここで絶対パスに直しておくと、
+    # 以降はスクリプトの隣を指す ENVELOPE / LINES と同じに扱える（ADR-0067）。
+    if len(sys.argv) > 2:
+        envelope_path, lines_path = (Path(a).absolute() for a in sys.argv[1:3])
+    else:
+        envelope_path, lines_path = ENVELOPE, LINES
+    envelope = load(envelope_path, ENVELOPE_KIND)
+    lines = load(lines_path, LINES_KIND)
     check(envelope, lines)
+    output = image_for(envelope_path)
 
     fig, ax = plt.subplots(figsize=FIGSIZE, layout="constrained")
     draw(ax, envelope, lines)
@@ -179,15 +212,15 @@ def main() -> None:
 
     if SAVE:
         # 見た目には出ない覚え書きを PNG のテキストチャンクに入れておく。
-        fig.savefig(OUTPUT, dpi=DPI, metadata={
+        fig.savefig(output, dpi=DPI, metadata={
             "Software": f"fcenvelope {envelope['fcenvelope_version']}",
-            "Source": f"{Path(ENVELOPE).name} + {Path(LINES).name} "
+            "Source": f"{envelope_path.name} + {lines_path.name} "
                       f"({envelope['created_at']})",
             "Description": f"T = {envelope['input']['temperature']:g} K, "
                            f"sigma = {envelope['input']['broadening']['sigma']:g} cm^-1, "
                            f"{len(lines['lines'])} lines",
         })
-        print(f"wrote {OUTPUT}")
+        print(f"wrote {output}")
     if SHOW if SHOW is not None else sys.stdout.isatty():
         show(fig)
 

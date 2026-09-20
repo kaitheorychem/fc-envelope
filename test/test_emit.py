@@ -187,9 +187,10 @@ def test_the_script_does_not_depend_on_fcenvelope(name, request):
     assert imported <= ALLOWED_IMPORTS, imported - ALLOWED_IMPORTS
 
 
-def test_the_script_can_be_pointed_at_another_data_file(tmp_path, envelope_script, multi_mode):
-    """条件を振った結果に同じ設定を当てられる。"""
-    other = tmp_path / "colder.json"
+@pytest.fixture
+def colder(tmp_path, multi_mode):
+    """同じ系を温度だけ変えて計算した、2 つめの結果ファイル。"""
+    data = tmp_path / "colder.json"
     save_envelope(
         compute_quietly(
             multi_mode,
@@ -197,13 +198,99 @@ def test_the_script_can_be_pointed_at_another_data_file(tmp_path, envelope_scrip
             broadening=Broadening(sigma=150.0),
             grid=EnergyGrid(e_min=-6000.0, e_max=2000.0, de=5.0),
         ),
-        other,
+        data,
+    )
+    return data
+
+
+def test_the_script_can_be_pointed_at_another_data_file(envelope_script, colder):
+    """条件を振った結果に同じ設定を当てられる。"""
+    finished = run_script(envelope_script, str(colder))
+
+    assert finished.returncode == 0, finished.stderr.decode()
+    assert image_path_for(script_path_for(colder)).is_file()
+
+
+def test_the_image_follows_the_data_the_script_was_pointed_at(envelope_script, colder):
+    """引数でほかの結果を描いたときに、既定のデータの図を潰さない（ADR-0067）。"""
+    run_script(envelope_script)
+    default_image = image_path_for(envelope_script)
+    stamp = default_image.stat().st_mtime_ns
+
+    finished = run_script(envelope_script, str(colder))
+
+    assert finished.returncode == 0, finished.stderr.decode()
+    assert (colder.parent / "fcenvelope-colder.png").is_file()
+    assert default_image.stat().st_mtime_ns == stamp
+
+
+def test_the_image_of_an_argument_carries_that_data_in_its_metadata(envelope_script, colder):
+    """覚え書きの出どころも、生成時のデータではなく実際に読んだデータである。"""
+    from PIL import PngImagePlugin
+
+    run_script(envelope_script, str(colder))
+
+    with PngImagePlugin.PngImageFile(colder.parent / "fcenvelope-colder.png") as image:
+        info = image.info
+    assert "colder.json" in info["Source"]
+    assert "T = 0 K" in info["Description"]
+
+
+def test_a_relative_argument_is_read_from_the_current_directory(tmp_path, envelope_script, colder):
+    """コマンドラインの引数はシェルの規則どおりカレントディレクトリ基準（ADR-0067）。"""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    finished = subprocess.run(
+        [sys.executable, str(envelope_script), "../colder.json"],
+        capture_output=True,
+        cwd=elsewhere,
+        env={**os.environ, "MPLBACKEND": "Agg"},
+        check=False,
     )
 
-    finished = run_script(envelope_script, str(other))
+    assert finished.returncode == 0, finished.stderr.decode()
+    assert (colder.parent / "fcenvelope-colder.png").is_file()
+
+
+def test_a_name_written_in_the_script_is_read_from_beside_the_script(
+    tmp_path, envelope_script, colder
+):
+    """スクリプトの中に書いた名前はスクリプトの隣が基準（ADR-0067）。
+
+    2 本目を重ねる書き方が、どのディレクトリから起動しても動くことを見る。
+    """
+    text = envelope_script.read_text(encoding="utf-8")
+    envelope_script.write_text(
+        text.replace(
+            '    # draw(ax, load("result_100K.json", KIND), label="100 K", color="C3")',
+            '    draw(ax, load("colder.json", KIND), label="0 K", color="C3")',
+        ),
+        encoding="utf-8",
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    finished = subprocess.run(
+        [sys.executable, str(envelope_script)],
+        capture_output=True,
+        cwd=elsewhere,
+        env={**os.environ, "MPLBACKEND": "Agg"},
+        check=False,
+    )
 
     assert finished.returncode == 0, finished.stderr.decode()
     assert image_path_for(envelope_script).is_file()
+
+
+def test_the_overlay_image_follows_the_envelope_it_was_pointed_at(
+    overlay_script, colder, tmp_path
+):
+    """重ねた図だと名前に残し、同じ結果を単独で描いた図と分ける（ADR-0067）。"""
+    finished = run_script(overlay_script, str(colder), str(tmp_path / "lines.json"))
+
+    assert finished.returncode == 0, finished.stderr.decode()
+    assert (colder.parent / "fcenvelope-colder-overlay.png").is_file()
 
 
 def test_the_script_stops_on_a_result_of_the_wrong_kind(tmp_path, envelope_script, lines):
@@ -353,8 +440,8 @@ def test_every_template_shares_one_copy_of_the_common_helpers():
             .joinpath("templates", f"{name}.py")
             .read_text(encoding="utf-8")
         )
-        start = text.index("def load(")
-        return text[start : text.index("def ", text.index("def show(") + 1)]
+        start = text.index("def beside(")
+        return text[start : text.index("def image_for(")]
 
     shared = {helpers(name) for name in {*TEMPLATES.values(), "overlay"}}
     assert len(shared) == 1

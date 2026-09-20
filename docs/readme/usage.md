@@ -174,7 +174,7 @@ uv run fcenvelope run input.json
 #   -> input_envelope_plot.py       作図スクリプト
 
 # 図を作る。ここを何度でも繰り返す（次の節を参照）
-python input_envelope_plot.py
+uv run python input_envelope_plot.py
 
 # 名前を決めるなら -o
 uv run fcenvelope run input.json -o result.json
@@ -261,17 +261,22 @@ uv run fcenvelope run input_envelope_config.json -o again.json
 
 ```bash
 uv run fcenvelope run input.json -o result.json   # 重いのはここだけ
-python result_plot.py                             # 端末に図が出る
+uv run python result_plot.py                      # 端末に図が出る
 vi result_plot.py                                 # 軸・色・注釈を直す
-python result_plot.py                             # すぐ出る
+uv run python result_plot.py                      # すぐ出る
 ```
 
 スクリプトは `json` と `matplotlib` だけで動き、`fcenvelope` を import しない。中身を
 読めば何を描いているかが全部分かるし、matplotlib にできることは何でも書ける。
 
+`uv run python` で起動しているのは、`uv sync` で入れた matplotlib がプロジェクトの
+仮想環境の中にあるからである。matplotlib が入った環境が既に有効なら（`pip install` で
+入れた場合や、`uv run` の中から呼ぶ場合）素の `python` でよい。
+
 出力先は 2 つある。
 
-- **画像ファイル**（`fcenvelope-result.png`）は毎回書かれる。
+- **画像ファイル**（`fcenvelope-result.png`）は毎回書かれる。書き出し先は先頭の
+  `OUTPUT` にあり、引数でほかの結果を指したときはその結果の名前に追従する（下記）。
 - **端末**には、標準出力が端末のときだけ図がそのまま出る（kitty graphics protocol）。
   パイプやリダイレクトのときは何も出ない。端末に出す図だけは窓の幅に合わせて描き直す
   ので、ファイルの `DPI` とは別に決まる。
@@ -293,11 +298,21 @@ X_SCALE = 1.0        # eV にするなら "eV", 1.0 / 8065.543937
 draw(ax, load("result_100K.json", KIND), label="100 K", color="C3")
 ```
 
+ここに書くファイル名は**スクリプトの隣**が基準である。`DATA` や `OUTPUT` と同じ基準
+なので、どのディレクトリから起動しても同じ図が出る。
+
 別のデータに同じ設定を当てるなら引数で渡す。条件を振った結果を同じ体裁で見るときに使う。
+こちらの名前は、シェルで書くものなので**カレントディレクトリ**が基準である。
 
 ```bash
-python result_plot.py result_0K.json
+uv run python result_plot.py result_0K.json
+#   -> fcenvelope-result_0K.png
 ```
+
+**画像の名前は描いたデータに追従する。** 引数でほかの結果を指すと、その結果の隣に
+`fcenvelope-<結果の名前>.png` が出る。見比べるために走らせるたびに前の図が消える、
+ということにはならない。引数なしで走らせたときだけ `OUTPUT` に書くので、書き出し先を
+手で決めたければ `OUTPUT` を書き替えればよい。
 
 **計算をやり直しても作図スクリプトは上書きされない。** 調整した設定はそのまま残り、
 新しいデータに当たる。
@@ -305,7 +320,7 @@ python result_plot.py result_0K.json
 ```bash
 uv run fcenvelope run input.json -o result.json --override broadening.sigma=80
 #   -> result.json を更新、result_plot.py はそのまま（kept ... と出る）
-python result_plot.py
+uv run python result_plot.py
 ```
 
 作り直したいときは `--force-script`、保存済みの結果から作り直すときは `script` を使う。
@@ -326,7 +341,7 @@ uv run fcenvelope script result.json -o result_plot.py --force
 ```bash
 # FC 因子と遷移エネルギーを書き出し、重みの上位 10 本を表示する
 uv run fcenvelope lines input.json -o lines.json
-python lines_plot.py                     # 棒スペクトルはこれで出る
+uv run python lines_plot.py              # 棒スペクトルはこれで出る
 
 # T = 0 で、より細かい閾値まで拾う
 uv run fcenvelope lines input.json -o lines_0K.json --override temperature=0 \
@@ -479,8 +494,11 @@ for temperature in (0.0, 77.0, 300.0):
 uv run fcenvelope run    input.json -o result.json
 uv run fcenvelope lines  input.json -o lines.json
 uv run fcenvelope script result.json lines.json -o overlay_plot.py
-python overlay_plot.py
+uv run python overlay_plot.py                     # -> fcenvelope-overlay.png
 ```
+
+引数でほかの結果を指したときは `fcenvelope-<エンベロープの名前>-overlay.png` になり、
+同じ結果を単独で描いた図と混ざらない。
 
 **縦軸は 1 本しかない。** 線の重み w は無次元だが、規格化した線形状の頂点値
 L(0)（ガウス型なら 1/(σ√(2π))）を掛けて密度と同じ 1/cm⁻¹ に直してから描く。この高さは

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from pathlib import Path
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -28,7 +29,7 @@ import typer
 
 from . import emit, logs
 from .envelope import compute_envelope
-from .errors import FCEnvelopeError
+from .errors import FCEnvelopeError, NumericalQualityWarning
 from .inputs import FCEnvelopeInput
 from .io import JsonObject, JsonValue, kind_for, load_any, save_any
 from .lines import compute_fc_lines
@@ -583,6 +584,13 @@ def main(
         typer.Option("--version", help="Show the package version and exit.", is_eager=True),
     ] = False,
 ) -> None:
+    # 品質の警告を利用者に見せるのは `_echo_warnings` の 1 行だけにする（ADR-0068）。
+    # `report_quality` が `warnings.warn` でも上げるのはライブラリとして使う人への
+    # 通知で、`warnings` は「ライブラリが上げ、アプリケーションが決める」ための
+    # 仕組みである。この 1 行がその決定で、CLI という 1 つのアプリケーションの
+    # 方針なので、副命令ごとではなくここに置く。ログと `Diagnostics.messages` は
+    # `warnings` のフィルタとは別の経路なので、そのまま残る。
+    warnings.filterwarnings("ignore", category=NumericalQualityWarning)
     if version:
         typer.echo(__version__)
         raise typer.Exit()
