@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python = ">=3.11" の両端。下限と最新だけを見る。
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: uv を入れる
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: 依存を入れる
+        run: uv sync --locked
+
+      - name: テストを走らせる
+        run: uv run pytest
