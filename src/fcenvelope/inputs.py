@@ -7,6 +7,9 @@
 単位の軸は項目ごとに独立している（ADR-0053）。トップレベルの `frequency_unit` は
 `modes[].frequency` だけに効き、sigma とグリッドは各ブロックの `unit` を持つ。
 
+有次元の値は `[値, "単位"]` の組でも書け、そのときは添えた単位が既定より優先される
+（ADR-0072）。3 つの書き方を 1 つの形へ畳むのは `Quantity` である。
+
 トップレベルの `frequency_unit` / `coupling_convention` / `coupling_unit` は正準化の
 際に消費され、
 `to_system()` を通った後の表現は常に (frequency [cm^-1], huang_rhys) である。
@@ -29,13 +32,16 @@ import json
 import logging
 import tomllib
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
+    PlainSerializer,
     ValidationError,
     ValidationInfo,
     field_validator,
@@ -75,6 +81,7 @@ __all__ = [
     "FCEnvelopeInput",
     "GridPointsSpec",
     "ModeSpec",
+    "Quantity",
     "SelectionSpec",
     "read_mode_specs_csv",
 ]
@@ -90,6 +97,74 @@ def _at(location: str, exc: InvalidInputError) -> InvalidInputError:
     return InvalidInputError(f"{location}: {exc}")
 
 
+@dataclass(frozen=True, slots=True)
+class Quantity:
+    """入力ファイル中の有次元の値（ADR-0072）。
+
+    `150.0` / `[150.0]` / `[0.0186, "eV"]` の 3 つの書き方がここへ畳まれる。`unit` が
+    `None` なら、その値はブロック（またはトップレベル）の単位で読む。
+    """
+
+    value: float
+    unit: str | None = None
+
+    def unit_or(self, default: str | None) -> str | None:
+        """この値を読むときの単位。添えてなければ既定の単位。"""
+        return self.unit if self.unit is not None else default
+
+    def in_canonical(self, default: str) -> float:
+        """既定の単位を補って正準単位（cm^-1）の数にする。"""
+        return self.value * energy_conversion_factor(self.unit_or(default))
+
+
+#: 有次元の値として受け付ける書き方。誤りの報告にそのまま載せる。
+_QUANTITY_FORMS: Final = 'a number, [value] or [value, "unit"]'
+
+
+def _to_quantity(written: object) -> object:
+    """入力ファイルに書かれた有次元の値を `Quantity` にする（ADR-0072）。
+
+    受けるのは検証前のファイルの値なので `object` で取る。単位が換算表にあることは
+    ここで確かめ、保つのは名前のままである。単位と流儀の噛み合わせは正準化で見る。
+    """
+    if isinstance(written, Quantity):
+        return written
+    if isinstance(written, list):
+        if not 1 <= len(written) <= 2:
+            raise ValueError(f"expected {_QUANTITY_FORMS}, got {written!r}")
+        number = written[0]
+        unit = written[1] if len(written) == 2 else None
+    else:
+        number, unit = written, None
+    if unit is not None:
+        energy_conversion_factor(unit)  # 未知の単位・型はここで報告される
+        unit = str(unit)
+    return Quantity(value=_to_number(number), unit=unit)
+
+
+def _to_number(written: object) -> float:
+    """有次元の値の数の部分。CSV から来る文字列もここで数にする。"""
+    if isinstance(written, bool) or not isinstance(written, int | float | str):
+        raise ValueError(f"expected {_QUANTITY_FORMS}, got {written!r}")
+    try:
+        return float(written)
+    except ValueError as exc:
+        raise ValueError(f"expected {_QUANTITY_FORMS}, got {written!r}") from exc
+
+
+def _as_written(quantity: Quantity) -> float | list[object]:
+    """`Quantity` を書かれたままの姿へ戻す。実効設定の書き出しに使う（ADR-0065）。"""
+    if quantity.unit is None:
+        return quantity.value
+    return [quantity.value, quantity.unit]
+
+
+#: 有次元の値のフィールド。3 つの書き方を `Quantity` へ畳み、書き出しでは元の姿へ戻す。
+Dimensioned = Annotated[
+    Quantity, BeforeValidator(_to_quantity), PlainSerializer(_as_written)
+]
+
+
 class _Spec(BaseModel):
     """入力ファイル中の 1 ブロック。構造だけを検査する。"""
 
@@ -102,6 +177,9 @@ class _EnergySpec(_Spec):
     単位の軸は項目ごとに独立で、入力ファイル全体で 1 つにはしない（ADR-0053）。
     sigma とグリッドは同じエネルギー軸上の量だが、出どころが違うので指定は
     ブロックごとに分けて持つ。省略時は正準単位である。
+
+    ここの `unit` はブロックの**既定**で、値が自分で単位を持っていればそちらが勝つ
+    （ADR-0072）。
     """
 
     unit: str = CANONICAL_ENERGY_UNIT
@@ -113,27 +191,27 @@ class _EnergySpec(_Spec):
         energy_conversion_factor(value)  # 未知の単位・型はここで報告される
         return str(value)
 
-    @property
-    def to_canonical(self) -> float:
-        """このブロックの値に掛けると cm^-1 になる係数。"""
-        return energy_conversion_factor(self.unit)
+    def to_canonical(self, quantity: Quantity) -> float:
+        """このブロックの値を cm^-1 の数にする。単位はブロックの `unit` で補う。"""
+        return quantity.in_canonical(self.unit)
 
 
 class ModeSpec(_Spec):
     """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。
 
-    単位はモードごとではなくトップレベルに置く。CSV でモードを渡すときも単位を
-    担うのは入力ファイルの側である（ADR-0019, 0053）。
+    単位の既定はモードごとではなくトップレベルに置く。CSV でモードを渡すときも
+    既定を担うのは入力ファイルの側である（ADR-0019, 0053）。個々の値に組の形で
+    単位を添えることはできる（ADR-0072）が、CSV には数しか書けない。
     """
 
-    frequency: float
-    coupling: float
+    frequency: Dimensioned
+    coupling: Dimensioned
 
 
 class BroadeningSpec(_EnergySpec):
     """線形状のブロック。"""
 
-    sigma: float
+    sigma: Dimensioned
 
 
 class GridPointsSpec(_Spec):
@@ -149,7 +227,7 @@ class GridPointsSpec(_Spec):
     n: int | None = None
     """全域グリッドの点数。2 の冪のみ。dE = 全域幅 / n は端数になりうる。"""
 
-    de: float | None = None
+    de: Dimensioned | None = None
     """出力グリッド間隔。これを満たす最小の 2 の冪が n になる。"""
 
     shift: int = 0
@@ -171,8 +249,8 @@ class GridPointsSpec(_Spec):
 class EnergyGridSpec(_EnergySpec):
     """エネルギーグリッドのブロック。`e_min` / `e_max` は出力窓である。"""
 
-    e_min: float
-    e_max: float
+    e_min: Dimensioned
+    e_max: Dimensioned
     points: GridPointsSpec
 
 
@@ -389,14 +467,19 @@ class FCEnvelopeInput(BaseModel):
     def to_system(self) -> VibrationalSystem:
         """単位と流儀を消費して正準形の系を返す。"""
         convention = self.convention
-        # 軸は独立なので、frequency と coupling はそれぞれの単位から別々に正準単位へ
-        # 直す（ADR-0053）。coupling の係数は流儀の次元のぶんだけべきが乗る。
-        frequency_to_canonical = energy_conversion_factor(self.frequency_unit)
-        coupling_to_canonical = convention.coupling_to_canonical(self.coupling_unit)
         modes: list[VibrationalMode] = []
         for index, spec in enumerate(self.modes):
-            frequency = spec.frequency * frequency_to_canonical
-            coupling = spec.coupling * coupling_to_canonical
+            # 軸は独立なので、frequency と coupling はそれぞれの単位から別々に正準単位
+            # へ直す（ADR-0053）。単位はモードが自分で持っていればそれ、なければ
+            # トップレベルの既定である（ADR-0072）。coupling の係数は流儀の次元の
+            # ぶんだけべきが乗る。
+            try:
+                frequency = spec.frequency.in_canonical(self.frequency_unit)
+                coupling = spec.coupling.value * convention.coupling_to_canonical(
+                    spec.coupling.unit_or(self.coupling_unit)
+                )
+            except InvalidInputError as exc:
+                raise _at(f"modes[{index}]", exc) from exc
             try:
                 modes.append(
                     VibrationalMode(
@@ -410,9 +493,8 @@ class FCEnvelopeInput(BaseModel):
 
     def to_broadening(self) -> Broadening:
         """単位を消費して線形状を計算用の値にする。"""
-        to_canonical = self.broadening.to_canonical
         try:
-            return Broadening(sigma=self.broadening.sigma * to_canonical)
+            return Broadening(sigma=self.broadening.to_canonical(self.broadening.sigma))
         except InvalidInputError as exc:
             raise _at("broadening", exc) from exc
 
@@ -423,9 +505,8 @@ class FCEnvelopeInput(BaseModel):
         コンストラクタが持つ。ここが決めるのは**どちらの書き方か**だけである
         （ADR-0070）。
         """
-        to_canonical = self.grid.to_canonical
-        e_min = self.grid.e_min * to_canonical
-        e_max = self.grid.e_max * to_canonical
+        e_min = self.grid.to_canonical(self.grid.e_min)
+        e_max = self.grid.to_canonical(self.grid.e_max)
         points = self.grid.points
         try:
             if points.n is not None:
@@ -434,7 +515,7 @@ class FCEnvelopeInput(BaseModel):
             return EnergyGrid.from_spacing(
                 e_min=e_min,
                 e_max=e_max,
-                de=points.de * to_canonical,
+                de=self.grid.to_canonical(points.de),
                 shift=points.shift,
             )
         except InvalidInputError as exc:
@@ -465,6 +546,10 @@ class FCEnvelopeInput(BaseModel):
         省略された項目は既定値で埋まり、`{"path": ...}` で渡したモードは行に展開されて
         埋め込まれる。この文字列をそのまま入力ファイルとして与えれば、同じ計算が再現
         できる。結果ファイルの入力エコーが正準形なのとは狙いが違う（ADR-0010, 0065）。
+
+        有次元の値は書いたままの姿で出る。素の数値で書けば素の数値、組で書けば組で
+        ある（ADR-0072）。単位フィールドは既定値で埋まって必ず書かれるので、どちらで
+        書いてもこのファイルだけを見れば単位は分かる。
 
         書き出しは TOML ではなく JSON である。機械が書いて機械が読み返すファイルなので、
         `max_quanta` の `null` をそのまま書ける書式のほうが都合がよい（ADR-0069）。

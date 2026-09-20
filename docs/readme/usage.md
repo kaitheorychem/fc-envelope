@@ -63,16 +63,16 @@ max_lines = 10000
 | フィールド | 意味 | 制約 |
 |---|---|---|
 | `schema_version` | 入力ファイルの版 | `3` 固定 |
-| `frequency_unit` | `modes[].frequency` の単位 | 下の単位表のいずれか、既定 `"cm^-1"` |
+| `frequency_unit` | `modes[].frequency` の既定の単位 | 下の単位表のいずれか、既定 `"cm^-1"` |
 | `coupling_convention` | `coupling` の流儀（下の流儀表） | 既定は `"g"` |
-| `coupling_unit` | `modes[].coupling` の単位 | 有次元の流儀では必須、無次元の流儀では書けない |
+| `coupling_unit` | `modes[].coupling` の既定の単位 | 有次元の流儀では必須、無次元の流儀では書けない |
 | `modes[].frequency` | ε_α | > 0 |
 | `modes[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | 流儀による |
 | `temperature` | T [K] | ≥ 0（0 は許可） |
 | `broadening.sigma` | 線形状の幅 σ | > 0 |
-| `broadening.unit` | σ の単位 | 既定 `"cm^-1"` |
+| `broadening.unit` | σ の既定の単位 | 既定 `"cm^-1"` |
 | `grid.e_min` / `e_max` | 出力窓 | `e_min` < `e_max` |
-| `grid.unit` | `e_min` / `e_max` / `points.de` の単位 | 既定 `"cm^-1"` |
+| `grid.unit` | `e_min` / `e_max` / `points.de` の既定の単位 | 既定 `"cm^-1"` |
 | `grid.points.n` | 全域グリッドの点数 | 2 の冪。`de` とは排他 |
 | `grid.points.de` | 出力グリッド間隔 | > 0。`n` とは排他 |
 | `grid.points.shift` | 冪のずらし幅 | ≥ 0、既定 0。`de` と一緒のときだけ書ける |
@@ -82,6 +82,10 @@ max_lines = 10000
 
 `run` が読むのは `temperature` / `broadening` / `grid`、`lines` が読むのは
 `temperature` / `selection` で、どちらも同じファイルを使える。`selection` は省略できる。
+
+有次元の値（`modes[].frequency` / `modes[].coupling` / `broadening.sigma` /
+`grid.e_min` / `e_max` / `grid.points.de`）は、`sigma = [0.0186, "eV"]` のように値の側に
+単位を添えても書ける。[値に単位を添えて書く](#値に単位を添えて書く)を参照。
 
 ### グリッドの取り方
 
@@ -217,6 +221,58 @@ uv run fcenvelope run docs/readme/examples/sigma-in-ev.toml -o result.json
 ```
 
 描画の横軸は当面 cm⁻¹ 固定で、この 4 つの軸とは別である。
+
+#### 値に単位を添えて書く
+
+有次元の値は `[値, "単位"]` の組でも書ける。単位がその値のすぐ隣にあるので、ブロックを
+見に行かなくても何の単位で書いたのか分かる。
+
+```toml
+[broadening]
+sigma = [0.0186, "eV"]      # unit = "eV" の行を別に書くのと同じ
+```
+
+書き方は次の 3 つで、どれも同じ量を表す。
+
+| 書き方 | 意味 |
+|---|---|
+| `sigma = 150.0` | 既定の単位（ブロックの `unit`、省略時は `"cm^-1"`） |
+| `sigma = [150.0]` | 同上 |
+| `sigma = [0.0186, "eV"]` | 添えた単位で読む |
+
+組を書けるのは有次元の値、すなわち `modes[].frequency` / `modes[].coupling` /
+`broadening.sigma` / `grid.e_min` / `grid.e_max` / `grid.points.de` の 6 つである。
+無次元の値（`grid.points.n` / `shift` / `selection` のつまみ）には書けない。温度は K
+固定なので、これにも書けない。
+
+上の 4 つの単位フィールドは**既定**として残っている。値に単位を添えればそちらが勝ち、
+添えなければ既定で読む。`grid` のように 3 つの値が同じ単位を共有するブロックは、
+`unit` を 1 回書くほうが短い。
+
+```toml
+[[modes]]
+frequency = [0.05579, "eV"]   # このモードだけ eV
+coupling = 0.8
+
+[broadening]
+sigma = [0.0186, "eV"]        # σ ひとつのために unit の行を足さずに済む
+
+[grid]
+unit = "eV"                   # e_min / e_max / points.de をまとめて eV
+e_min = -0.5579
+e_max = 0.124
+```
+
+そのまま動く例が [`examples/units-on-values.toml`](examples/units-on-values.toml) にある。
+
+`--override` の値も同じ組で渡せる（値は書式によらず JSON として読まれる）。
+
+```bash
+uv run fcenvelope run input.toml --override 'broadening.sigma=[0.0186, "eV"]'
+```
+
+CSV で渡すモードには単位を添えられない。CSV に書けるのは数だけなので、単位は入力
+ファイル側の `frequency_unit` / `coupling_unit` が担う。
 
 ### モードを CSV で渡す
 

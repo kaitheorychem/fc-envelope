@@ -131,8 +131,11 @@ INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキスト�
 - `FCEnvelopeInput` — 入力ファイル全体。構造・単位・流儀だけを検査する
 - `ModeSpec(frequency, coupling)` / `BroadeningSpec` / `EnergyGridSpec` / `GridPointsSpec`
   / `SelectionSpec`。`EnergyGridSpec.points` が `GridPointsSpec`（`n` / `de` / `shift`）
-- `BroadeningSpec` と `EnergyGridSpec` は `_EnergySpec` を継承し、自分の `unit` と
-  `.to_canonical`（cm⁻¹ への換算係数）を持つ
+- `BroadeningSpec` と `EnergyGridSpec` は `_EnergySpec` を継承し、自分の `unit`（ブロックの
+  **既定**の単位）と `.to_canonical(quantity)`（そのブロックの値を cm⁻¹ の数にする）を持つ
+- `Quantity(value, unit)` — 有次元の値。`150.0` / `[150.0]` / `[0.0186, "eV"]` の 3 つの
+  書き方がここへ畳まれる（ADR-0072）。`unit` が `None` なら既定の単位で読む。
+  `.unit_or(default)` / `.in_canonical(default)` を持つ
 
 範囲の検査は値の型に任せ、値の型が送出したエラーにフィールドの位置（`modes[1]`、`grid` など）
 を添える（ADR-0045, 0051）。
@@ -239,22 +242,32 @@ max_lines = 10000
 | `frequency_unit` | str | `ENERGY_UNITS` のいずれか | `modes[].frequency` の単位。既定 `"cm^-1"` |
 | `coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` | 既定 `"g"` |
 | `coupling_unit` | str \| null | `ENERGY_UNITS` のいずれか | `modes[].coupling` の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
-| `modes[].frequency` | float | > 0（正準化後） | ε_α。単位は `frequency_unit` |
-| `modes[].coupling` | float | 流儀による | 流儀に従った値。単位は `coupling_unit` |
-| `temperature` | float | ≥ 0 | T [K]。0 は許可（n_α = 0） |
-| `broadening.sigma` | float | > 0 | σ。単位は `broadening.unit` |
-| `broadening.unit` | str | `ENERGY_UNITS` のいずれか | 既定 `"cm^-1"` |
-| `grid.e_min` / `e_max` | float | `e_min` < `e_max` | 出力窓。単位は `grid.unit` |
-| `grid.unit` | str | `ENERGY_UNITS` のいずれか | 既定 `"cm^-1"` |
+| `modes[].frequency` | 有次元 | > 0（正準化後） | ε_α。既定の単位は `frequency_unit` |
+| `modes[].coupling` | 有次元 | 流儀による | 流儀に従った値。既定の単位は `coupling_unit` |
+| `temperature` | float | ≥ 0 | T [K]。0 は許可（n_α = 0）。単位の軸を持たない |
+| `broadening.sigma` | 有次元 | > 0 | σ。既定の単位は `broadening.unit` |
+| `broadening.unit` | str | `ENERGY_UNITS` のいずれか | ブロックの既定。既定 `"cm^-1"` |
+| `grid.e_min` / `e_max` | 有次元 | `e_min` < `e_max` | 出力窓。既定の単位は `grid.unit` |
+| `grid.unit` | str | `ENERGY_UNITS` のいずれか | ブロックの既定。既定 `"cm^-1"` |
 | `grid.points` | object | `n` と `de` のどちらか一方だけ | 全域グリッドの取り方（ADR-0070） |
 | `grid.points.n` | int \| null | 2 の冪、≥ 2 | 全域グリッドの点数。ΔE = 2·e_half / n |
-| `grid.points.de` | float \| null | > 0 | 出力グリッド間隔。単位は `grid.unit` |
+| `grid.points.de` | 有次元 \| null | > 0 | 出力グリッド間隔。既定の単位は `grid.unit` |
 | `grid.points.shift` | int | ≥ 0、既定 0 | `de` のときだけ書ける。全域幅を保ったまま点数を 2^shift 倍 |
 | `selection` | object | 省略可 | 省略時は `Selection` の既定値 |
 
 単位フィールドは 4 つとも省略でき、省略時はすべて `cm^-1` である。単位を書いていない
 入力ファイルは従来どおりの意味で読まれるので、単位の導入では `schema_version` を
 上げていない（ADR-0053）。単位の実例は `docs/readme/examples/` にある（ADR-0056）。
+
+**有次元**の欄は、素の数値のほかに `[値, "単位"]` の組でも書ける（ADR-0072）。
+`sigma = 0.0186` / `sigma = [0.0186]` / `sigma = [0.0186, "eV"]` の 3 つが受け付ける
+すべてで、単位を添えなければ上の 4 つの単位フィールド（ブロックまたはトップレベルの
+既定）で読む。添えた単位はその値にだけ効き、既定より優先される。無次元の値
+（`grid.points.n` / `shift` / `selection` の各つまみ / `temperature`）には書けない。
+組も**追加**なので `schema_version` は 3 のままである。
+
+実効設定（`*_config.json`）は書いたままの姿で書き出す。素の数値で書けば素の数値、組で
+書けば組で、単位フィールドは省略しても既定値で埋まって必ず書かれる（ADR-0065, 0072）。
 
 `modes` は最低 1 要素（TOML では `[[modes]]` の並び）。配列の代わりに
 `{"path": "<file>.csv"}`（TOML では `modes = { path = "<file>.csv" }`）を置くと外部 CSV を

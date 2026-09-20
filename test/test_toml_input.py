@@ -56,7 +56,7 @@ def toml_file(tmp_path):
 def test_from_toml_reads_text():
     parsed = FCEnvelopeInput.from_toml(TOML_INPUT)
 
-    assert [mode.frequency for mode in parsed.modes] == [1200.0, 450.0]
+    assert [mode.frequency.value for mode in parsed.modes] == [1200.0, 450.0]
     assert parsed.to_system().modes[0].huang_rhys == 0.25
 
 
@@ -83,7 +83,7 @@ def test_toml_comments_are_allowed(tmp_path):
         encoding="utf-8",
     )
 
-    assert FCEnvelopeInput.from_path(path).modes[0].coupling == 0.5
+    assert FCEnvelopeInput.from_path(path).modes[0].coupling.value == 0.5
 
 
 def test_modes_can_reference_a_csv_relative_to_the_toml_file(tmp_path):
@@ -108,7 +108,7 @@ coupling = 0.8
 
     parsed = FCEnvelopeInput.from_path(path)
 
-    assert [mode.frequency for mode in parsed.modes] == [1200.0, 450.0]
+    assert [mode.frequency.value for mode in parsed.modes] == [1200.0, 450.0]
 
 
 def test_malformed_toml_is_reported_as_an_input_error():

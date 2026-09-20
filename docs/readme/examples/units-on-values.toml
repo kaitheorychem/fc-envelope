@@ -1,0 +1,26 @@
+# 有次元の値に単位を添えて書く例（ADR-0072）。σ は値の側だけで eV と書き、グリッドは
+# 3 つの値が同じ単位なのでブロックの unit でまとめて指定する。
+#   uv run fcenvelope run docs/readme/examples/units-on-values.toml -o result.json
+
+schema_version = 3
+coupling_convention = "g"
+temperature = 300.0
+
+[[modes]]
+frequency = 1200.0            # frequency_unit を省いたので cm^-1
+coupling = 0.5
+
+[[modes]]
+frequency = [0.05579, "eV"]   # このモードだけ eV（450 cm^-1）
+coupling = 0.8
+
+[broadening]
+sigma = [0.0186, "eV"]        # 150 cm^-1 を eV で書いたもの
+
+[grid]
+unit = "eV"                   # e_min / e_max / points.de がまとめて eV
+e_min = -0.5579
+e_max = 0.124
+
+[grid.points]
+de = 0.000496

@@ -757,3 +757,26 @@ def test_script_rejects_more_than_two_files(tmp_path, result_and_lines):
         ["script", str(result), str(lines), str(lines), "-o", str(tmp_path / "x.py")],
     )
     assert invocation.exit_code == 2
+
+
+def test_an_override_may_carry_its_own_unit(tmp_path, input_payload):
+    """上書きの値にも `[値, "単位"]` を渡せること（ADR-0064, 0072）。
+
+    上書きの値は書式によらず JSON として読むので、組はそのまま通る。単位を変える
+    のに値と `unit` を 2 回に分けて上書きする必要がない。
+    """
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+    in_ev = 300.0 / units.energy_conversion_factor("eV")
+
+    output = tmp_path / "result.json"
+    invocation = runner.invoke(
+        app,
+        [
+            "run", str(path), "-o", str(output),
+            "--override", f'broadening.sigma=[{in_ev}, "eV"]',
+        ],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert load_envelope(output).broadening.sigma == pytest.approx(300.0, rel=1e-12)
