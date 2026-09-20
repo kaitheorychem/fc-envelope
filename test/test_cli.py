@@ -342,22 +342,25 @@ def test_an_override_value_is_read_as_json(tmp_path, input_file):
 # --- 品質の警告の見せ方（ADR-0009） ---
 
 
-def test_a_quality_warning_is_shown_once_in_the_cli_s_own_form(tmp_path, input_file):
+@pytest.mark.parametrize("command", ["run", "lines"])
+def test_a_quality_warning_is_shown_once_in_the_cli_s_own_form(tmp_path, input_file, command):
     """同じ文言が 2 度、片方は実装のファイル名と行番号つきで出ることのないように。
 
-    `report_quality` は `warnings.warn` でも発報するが、CLI は結果を受け取ってから
-    自分の書式で出す。利用者に見せる形は 1 つに決める。
+    `report_quality` は `warnings.warn` でも発報するが、CLI は結果の診断値から
+    自分の書式で出す。利用者に見せる形は 1 つに決める（ADR-0068）。閾値を割る
+    のは `run` だけなので、`lines` では 1 度も出ないことを見る。
     """
     output = tmp_path / "result.json"
+    expected = 1 if command == "run" else 0
 
     with warnings.catch_warnings(record=True) as raised:
         warnings.simplefilter("always")
-        invocation = runner.invoke(app, ["run", str(input_file), "-o", str(output)])
+        invocation = runner.invoke(app, [command, str(input_file), "-o", str(output)])
 
     assert invocation.exit_code == 0, invocation.output
     assert not [w for w in raised if issubclass(w.category, NumericalQualityWarning)]
-    assert invocation.output.count("edge_intensity_ratio") == 1
-    assert "warning: edge_intensity_ratio" in invocation.output
+    assert invocation.output.count("edge_intensity_ratio") == expected
+    assert invocation.output.count("cli.py:") == 0
 
 
 def test_a_quality_warning_still_reaches_the_log(tmp_path, input_file):

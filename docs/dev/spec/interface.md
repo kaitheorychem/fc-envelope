@@ -362,6 +362,8 @@ fcenvelope --version
 書けるものは `--override` を通る（ADR-0064）。
 `--version` は副命令を取らず、パッケージ版だけを出して終了する。
 終了コード: `0` 正常 / `1` `FCEnvelopeError` / `2` 使用法エラー。
+品質の警告は結果の `Diagnostics.messages` から `warning: ...` として 1 度だけ出す。
+`warnings` の表示はアプリケーションの入口で降ろしてある（ADR-0068）。
 
 ## 作図スクリプト
 

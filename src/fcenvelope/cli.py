@@ -219,24 +219,6 @@ _NOT_A_FAILURE = (typer.Exit, typer.Abort, typer.BadParameter)
 
 
 @contextmanager
-def _quality_reported_once() -> Iterator[None]:
-    """品質の警告が 2 度出るのを止める。
-
-    `report_quality` は同じ文言を 3 か所へ流す（ADR-0009）——`warnings.warn`、
-    ログ、そして `Diagnostics.messages` である。CLI は結果を受け取ってから
-    `_echo_warnings` で整形して出すので、`warnings` の既定の表示をそのまま通すと、
-    同じ内容が 2 度、片方は実装のファイル名と行番号つきで出てしまう。利用者に
-    見せる形は 1 つに決める。
-
-    抑えるのは `warnings` の表示だけで、ログと `Diagnostics.messages` は別の経路
-    なのでそのまま残る。ライブラリとして使う場合の `warnings.warn` にも触らない。
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", NumericalQualityWarning)
-        yield
-
-
-@contextmanager
 def _traced(log: Path | None, output: Path) -> Iterator[None]:
     """節目の記録と `FCEnvelopeError` の扱いをまとめる（ADR-0052）。
 
@@ -246,8 +228,7 @@ def _traced(log: Path | None, output: Path) -> Iterator[None]:
     """
     trace = logs.Trace(log)
     try:
-        with _quality_reported_once():
-            yield
+        yield
     except FCEnvelopeError as exc:
         logger.error("%s", exc)
         typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
@@ -603,6 +584,13 @@ def main(
         typer.Option("--version", help="Show the package version and exit.", is_eager=True),
     ] = False,
 ) -> None:
+    # 品質の警告を利用者に見せるのは `_echo_warnings` の 1 行だけにする（ADR-0068）。
+    # `report_quality` が `warnings.warn` でも上げるのはライブラリとして使う人への
+    # 通知で、`warnings` は「ライブラリが上げ、アプリケーションが決める」ための
+    # 仕組みである。この 1 行がその決定で、CLI という 1 つのアプリケーションの
+    # 方針なので、副命令ごとではなくここに置く。ログと `Diagnostics.messages` は
+    # `warnings` のフィルタとは別の経路なので、そのまま残る。
+    warnings.filterwarnings("ignore", category=NumericalQualityWarning)
     if version:
         typer.echo(__version__)
         raise typer.Exit()
