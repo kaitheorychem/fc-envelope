@@ -9,6 +9,8 @@
 （ADR-0064）。キーは入力ファイル中の項目の位置そのもので、CLI 側にその写しを持たない。
 実際に使われた設定は、計算を始める前に `RESULT_config.json` へ書き出す（ADR-0065）。
 
+入力ファイルは TOML と JSON のどちらでもよく、書式は拡張子で決まる（ADR-0069）。
+
 `-o` は省略できる。省略時の出力は入力ファイルの名前を継いで、その隣に置く（ADR-0063）。
 
 節目のログは `--log` で指定したファイルに書く。指定がなければメモリに溜めるだけで、
@@ -99,8 +101,9 @@ Overrides = Annotated[
         help=(
             "Override one field of the input file, e.g. --override temperature=0 "
             "or --override grid.de=2.5. Nested fields are dotted, values are read "
-            "as JSON (null, numbers, strings) and in the input file's own units "
-            "and convention. Repeatable. modes cannot be overridden."
+            "as JSON (null, numbers, strings) whatever the input file's format, and "
+            "in the input file's own units and convention. Repeatable. modes cannot "
+            "be overridden."
         ),
     ),
 ]
@@ -254,9 +257,11 @@ UNOVERRIDABLE = ("modes", "schema_version")
 def _parse_override(item: str) -> tuple[list[str], JsonValue]:
     """`KEY=VALUE` を、入力ファイル中の位置と値に分ける（ADR-0064）。
 
-    値は JSON として読み、読めなければ文字列として扱う。`null` も `2.5` も `eV` も
-    同じ規則で通る。ここで見るのは**書式そのもの**だけで、キーの存在と値の妥当性は
-    入力ファイルの型が見る。使用法エラーで止まるのもここまでである。
+    値は入力ファイルの書式によらず JSON として読み、読めなければ文字列として扱う。
+    `null` も `2.5` も `eV` も同じ規則で通る。TOML には `null` がないので、入力を
+    TOML で書いた場合でも「無し」を渡せるのはこの口だけである（ADR-0069）。
+    ここで見るのは**書式そのもの**だけで、キーの存在と値の妥当性は入力ファイルの型が
+    見る。使用法エラーで止まるのもここまでである。
     """
     key, separator, raw = item.partition("=")
     if not separator or not key:
@@ -336,7 +341,13 @@ def _echo_warnings(messages) -> None:
 def run(
     input_path: Annotated[
         Path,
-        typer.Argument(metavar="INPUT.json", help="Input JSON with modes (inline or a CSV reference) and the computation conditions."),
+        typer.Argument(
+            metavar="INPUT.toml",
+            help=(
+                "Input file (.toml or .json) with modes (inline or a CSV reference) "
+                "and the computation conditions."
+            ),
+        ),
     ],
     output: Annotated[
         Optional[Path],
@@ -387,8 +398,11 @@ def lines(
     input_path: Annotated[
         Path,
         typer.Argument(
-            metavar="INPUT.json",
-            help="Input JSON with modes (inline or a CSV reference) and the computation conditions.",
+            metavar="INPUT.toml",
+            help=(
+                "Input file (.toml or .json) with modes (inline or a CSV reference) "
+                "and the computation conditions."
+            ),
         ),
     ],
     output: Annotated[

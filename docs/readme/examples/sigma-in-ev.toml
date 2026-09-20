@@ -1,0 +1,25 @@
+# 単位の軸が項目ごとに独立していることの例。振動数は cm^-1、σ だけ eV で書く。
+# 同じ内容を JSON で書いたものが sigma-in-ev.json にある。
+#   uv run fcenvelope run docs/readme/examples/sigma-in-ev.toml -o result.json
+
+schema_version = 2
+frequency_unit = "cm^-1"
+coupling_convention = "g"
+temperature = 300.0
+
+[[modes]]
+frequency = 1200.0
+coupling = 0.5
+
+[[modes]]
+frequency = 450.0
+coupling = 0.8
+
+[broadening]
+sigma = 0.0186              # 150 cm^-1 を eV で書いたもの
+unit = "eV"
+
+[grid]
+e_min = -4000.0
+e_max = 1000.0
+de = 5.0

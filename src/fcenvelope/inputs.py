@@ -15,6 +15,10 @@
 
 `modes` はモードの配列を直接書くか、`{"path": "modes.csv"}` で CSV のモード表を
 参照する。参照はパース時に解決され、パース後は配列で書いた場合と区別がない。
+
+書式は TOML と JSON の 2 つで、拡張子で振り分ける（ADR-0069）。読んだ後は同じ辞書に
+なるので、このモジュールの残りは書式を知らない。利用者が書くのは TOML で、JSON は
+実効設定（`to_json`）を読み返す側に残っている。
 """
 
 from __future__ import annotations
@@ -23,6 +27,8 @@ import csv
 import io
 import json
 import logging
+import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Final, Literal
 
@@ -60,6 +66,7 @@ _DEFAULT_SELECTION = Selection()
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "INPUT_FORMATS",
     "MODES_CSV_COLUMNS",
     "SCHEMA_VERSION",
     "BroadeningSpec",
@@ -113,7 +120,7 @@ class ModeSpec(_Spec):
     """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。
 
     単位はモードごとではなくトップレベルに置く。CSV でモードを渡すときも単位を
-    担うのは JSON の側である（ADR-0019, 0053）。
+    担うのは入力ファイルの側である（ADR-0019, 0053）。
     """
 
     frequency: float
@@ -153,7 +160,7 @@ def read_mode_specs_csv(path: str | Path) -> list[ModeSpec]:
     組（順序は問わない）ならヘッダとして扱い、そうでなければ `frequency, coupling`
     の順のデータ行として扱う。列名は数値にならないため、この判定は曖昧にならない。
     RFC 4180 にないコメント行は受け付けず、空行は空のレコードとしてエラーにする。
-    `coupling` の流儀と単位は参照元の入力 JSON に従う。
+    `coupling` の流儀と単位は参照元の入力ファイルに従う。
 
     見るのは構造と数値として読めるかまでで、値の範囲は検査しない（ADR-0051）。
     """
@@ -201,6 +208,57 @@ def read_mode_specs_csv(path: str | Path) -> list[ModeSpec]:
     return specs
 
 
+def _as_text(text: str | bytes) -> str:
+    """バイト列で渡された入力を UTF-8 のテキストにする。"""
+    if isinstance(text, bytes):
+        try:
+            return text.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise InvalidInputError(f"input file must be UTF-8 text: {exc}") from exc
+    return text
+
+
+def _parse_toml(text: str) -> object:
+    """TOML のテキストを辞書にする。"""
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise InvalidInputError(f"invalid TOML: {exc}") from exc
+
+
+def _parse_json(text: str) -> object:
+    """JSON のテキストを辞書にする。"""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise InvalidInputError(f"invalid JSON: {exc}") from exc
+
+
+#: 拡張子 -> テキストを辞書にする関数（ADR-0049, 0069）。入力ファイルの**書式**を
+#: 知っているのはこの表だけで、以降の検証・正準化はどちらの書式でも同じ辞書を見る。
+#: 書式を足すときはここに 1 行足す。
+INPUT_FORMATS: dict[str, Callable[[str], object]] = {
+    ".toml": _parse_toml,
+    ".json": _parse_json,
+}
+
+
+def _parser_for(path: Path) -> Callable[[str], object]:
+    """拡張子から書式を決める。中身は見ない（ADR-0069）。
+
+    中身から推測すると、書き間違えた TOML が JSON として読まれて別の失敗の仕方を
+    するなど、誤りの報告が読みにくくなる。拡張子が分からなければその場で止める。
+    """
+    parse = INPUT_FORMATS.get(path.suffix.lower())
+    if parse is None:
+        known = ", ".join(sorted(INPUT_FORMATS))
+        raise InvalidInputError(
+            f"cannot tell the format of input file {path} from its extension "
+            f"{path.suffix!r} (expected one of {known})"
+        )
+    return parse
+
+
 class FCEnvelopeInput(BaseModel):
     """入力ファイル全体。
 
@@ -224,7 +282,7 @@ class FCEnvelopeInput(BaseModel):
     """有次元の流儀の `coupling` の単位。無次元の流儀では書いてはならない。
 
     位置はトップレベルで、モードごとではない。CSV でモードを渡すときも単位を担うのは
-    JSON の側である（ADR-0019, 0053）。
+    入力ファイルの側である（ADR-0019, 0053）。
     """
 
     modes: list[ModeSpec] = Field(min_length=1)
@@ -360,6 +418,9 @@ class FCEnvelopeInput(BaseModel):
         省略された項目は既定値で埋まり、`{"path": ...}` で渡したモードは行に展開されて
         埋め込まれる。この文字列をそのまま入力ファイルとして与えれば、同じ計算が再現
         できる。結果ファイルの入力エコーが正準形なのとは狙いが違う（ADR-0010, 0065）。
+
+        書き出しは TOML ではなく JSON である。機械が書いて機械が読み返すファイルなので、
+        `max_quanta` の `null` をそのまま書ける書式のほうが都合がよい（ADR-0069）。
         """
         return json.dumps(self.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n"
 
@@ -384,23 +445,33 @@ class FCEnvelopeInput(BaseModel):
             raise InvalidInputError(str(exc)) from exc
 
     @classmethod
+    def from_toml(
+        cls, text: str | bytes, *, base_dir: str | Path | None = None
+    ) -> "FCEnvelopeInput":
+        """TOML 文字列から生成する。"""
+        return cls.from_obj(_parse_toml(_as_text(text)), base_dir=base_dir)
+
+    @classmethod
     def from_json(
         cls, text: str | bytes, *, base_dir: str | Path | None = None
     ) -> "FCEnvelopeInput":
         """JSON 文字列から生成する。"""
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise InvalidInputError(f"invalid JSON: {exc}") from exc
-        return cls.from_obj(data, base_dir=base_dir)
+        return cls.from_obj(_parse_json(_as_text(text)), base_dir=base_dir)
 
     @classmethod
     def from_path(cls, path: str | Path) -> "FCEnvelopeInput":
-        """入力 JSON ファイルを読み込む。`modes.path` はこのファイルからの相対パス。"""
+        """入力ファイルを読み込む。`modes.path` はこのファイルからの相対パス。
+
+        書式は拡張子で決まる（`.toml` / `.json`、ADR-0069）。どちらで書いても読んだ
+        後は同じで、以降の扱いは変わらない。
+        """
         p = Path(path)
+        parse = _parser_for(p)
         with stage(logger, f"read {p}"):
             try:
                 text = p.read_text(encoding="utf-8")
             except OSError as exc:
                 raise InvalidInputError(f"cannot read input file {p}: {exc}") from exc
-            return cls.from_json(text, base_dir=p.parent)
+            except UnicodeDecodeError as exc:
+                raise InvalidInputError(f"input file {p} must be UTF-8 text: {exc}") from exc
+            return cls.from_obj(parse(text), base_dir=p.parent)
