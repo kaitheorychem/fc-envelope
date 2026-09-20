@@ -30,6 +30,7 @@ TOML を基本とし、JSON でも同じように読める（書式は拡張子�
 
 ## ディレクトリ
 - CONTEXT.md: 用語集。語の定義と避けるべき言い換えのみ。
+- CHANGELOG.md: 版ごとの変更履歴。利用者から見て何が変わったかだけを書く。
 - src/: 実装本体。`src/<パッケージ名>/` の形で置く。
 - docs/: ドキュメント
   - adr/: 設計上の決定記録（Architecture Decision Record）。連番・追記のみ。決定を覆すときは新しい ADR を起こし、古い方の状態を更新する。
@@ -37,6 +38,7 @@ TOML を基本とし、JSON でも同じように読める（書式は拡張子�
     - spec/: 仕様。実装とずれやすいので、変更が行われにくいインターフェイス部分のみを簡潔に記載し、詳細は実際のコードの方を本体とする。
     - plan/: 実行が決まった作業の段取り。完了したら削除するか spec/ に畳む。
     - idea/: 考え中のアイデア・思いつきなど。実行に写すかどうか未確定のメモ。
+    - release.md: リリースの手順。版の上げ方とタグの打ち方。
   - readme/: READMEの補助ドキュメント。ユーザとして使う人のための資料。
     - examples/: そのまま動く入力ファイルの実例（TOML と JSON）。文書の説明と食い違わないことをテストで見る。
   - theory/: 実装のための元になる理論
@@ -123,3 +125,25 @@ uv run pytest
 
 同じコマンドが GitHub Actions でも走る（`.github/workflows/test.yaml`）。main への push と
 pull request のたびに、Python 3.11 と 3.13 の 2 つで実行される。
+
+## 版とリリース
+
+版番号は `pyproject.toml` の `version` に書き、リリースのときに同じ番号の git タグ
+`vX.Y.Z` を打つ。書かれた版が唯一の情報源で、タグはそれを指す印である。
+
+```bash
+uv run fcenvelope --version   # 0.1.0
+git describe --tags           # v0.1.0
+```
+
+番号は semantic versioning として読む。判定の対象は、利用者から見える公開 API・CLI・
+ファイル形式の 3 つである。取り上げれば X、足せば Y、どれも変わらなければ Z が上がる。
+同じ入力から出る数が変わる変更は、不具合修正であっても Y を上げる。1.0.0 の前は X を
+上げず、Y が major と minor を兼ねる。
+
+入力ファイルと結果ファイルの `schema_version` は**これとは別の数**である。形式が 3 の
+まま版だけが進むことも、形式だけが上がることもある。
+
+版ごとに何が変わったかは [CHANGELOG.md](CHANGELOG.md)、リリースの手順は
+[docs/dev/release.md](docs/dev/release.md)、そう決めた理由は
+[ADR-0073](docs/adr/0073-version-is-pyproject-and-a-matching-git-tag.md) にある。
