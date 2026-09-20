@@ -32,6 +32,7 @@ SAVE = True
 SHOW = None
 SHOW_WIDTH = 0.9     # 端末の幅に対する図の幅の割合
 SHOW_DPI = 110       # 端末が画素数を返さないときの解像度。ファイルの DPI とは別
+IMAGE_PREFIX = "fcenvelope-"   # 引数でほかの結果を指したときの画像名の頭
 
 # 図の設定。ここから下はすべて手で変えてよい。
 FIGSIZE = (7.0, 4.2)
@@ -51,9 +52,22 @@ X_UNIT = "cm$^{-1}$"
 X_SCALE = 1.0
 
 
+def beside(path: Path | str) -> Path:
+    """スクリプトの中に書いたファイル名を、このスクリプトの隣として読む。
+
+    生成ヘッダの位置がこのファイルからの相対で解決される（ADR-0059）のに合わせる。
+    2 本目を足すときに書くファイル名も同じ基準になるので、どこから起動しても同じ図が
+    出る。コマンドラインの引数はシェルの都合でカレントディレクトリ基準なので、`main`
+    が先に絶対パスへ直してから渡す（ADR-0067）。
+    """
+    path = Path(path)
+    return path if path.is_absolute() else Path(__file__).parent / path
+
+
 def load(path: Path | str, kind: str) -> dict:
     """結果 JSON を読む。種類と版が合わなければ読める文言で止まる。"""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    path = beside(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("kind") != kind or data.get("schema_version") != SCHEMA_VERSION:
         raise SystemExit(
             f"{path}: expected {kind} (schema {SCHEMA_VERSION}), got "
@@ -97,6 +111,18 @@ def show(fig) -> None:
     out.flush()
 
 
+def image_for(source: Path) -> Path:
+    """図の書き出し先。引数でほかの結果を指したときは、その名前に追従する。
+
+    既定のデータを描くなら OUTPUT で、手で書き替えたものがそのまま効く。別の結果を
+    指したなら、その結果の隣に `fcenvelope-<結果の名前>.png` を置く。条件を振った
+    結果を同じ設定で描いて見比べるときに、前の図を潰さないためである（ADR-0067）。
+    """
+    if source.resolve() == DATA.resolve():
+        return OUTPUT
+    return source.with_name(f"{IMAGE_PREFIX}{source.stem}.png")
+
+
 def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> None:
     """離散 FC 因子を底辺 0 の棒として描く。図の中身はここだけ。"""
     energy = [line["energy"] * X_SCALE for line in data["lines"]]
@@ -110,7 +136,11 @@ def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> No
 
 
 def main() -> None:
-    data = load(sys.argv[1] if len(sys.argv) > 1 else DATA, KIND)
+    # 引数はシェルの都合でカレントディレクトリ基準。ここで絶対パスに直しておくと、
+    # 以降はスクリプトの隣を指す DATA と同じに扱える（ADR-0067）。
+    source = Path(sys.argv[1]).absolute() if len(sys.argv) > 1 else DATA
+    data = load(source, KIND)
+    output = image_for(source)
 
     fig, ax = plt.subplots(figsize=FIGSIZE, layout="constrained")
     draw(ax, data)
@@ -129,13 +159,13 @@ def main() -> None:
 
     if SAVE:
         # 見た目には出ない覚え書きを PNG のテキストチャンクに入れておく。
-        fig.savefig(OUTPUT, dpi=DPI, metadata={
+        fig.savefig(output, dpi=DPI, metadata={
             "Software": f"fcenvelope {data['fcenvelope_version']}",
-            "Source": f"{Path(DATA).name} ({data['created_at']})",
+            "Source": f"{source.name} ({data['created_at']})",
             "Description": f"T = {data['input']['temperature']:g} K, "
                            f"{len(data['lines'])} lines",
         })
-        print(f"wrote {OUTPUT}")
+        print(f"wrote {output}")
     if SHOW if SHOW is not None else sys.stdout.isatty():
         show(fig)
 

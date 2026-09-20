@@ -57,7 +57,7 @@ uv run fcenvelope --version
 ```bash
 uv run fcenvelope run input.json     # -> input_envelope.json, input_envelope_config.json,
                                      #    input_envelope_plot.py
-python input_envelope_plot.py        # 図を作る。端末にも出る
+uv run python input_envelope_plot.py # 図を作る。端末にも出る
 uv run fcenvelope lines input.json   # -> input_lines.json, ...
 
 # 名前を決めるなら -o。条件を差し替えるなら --override
@@ -65,7 +65,7 @@ uv run fcenvelope run input.json -o result.json --override temperature=0
 
 # 2つを1枚に重ねる作図スクリプトを作る
 uv run fcenvelope script input_envelope.json input_lines.json -o overlay_plot.py
-python overlay_plot.py
+uv run python overlay_plot.py
 
 uv run fcenvelope run input.json --log run.log  # 節目のログを残す
 ```

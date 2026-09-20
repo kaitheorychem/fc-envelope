@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from pathlib import Path
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -28,7 +29,7 @@ import typer
 
 from . import emit, logs
 from .envelope import compute_envelope
-from .errors import FCEnvelopeError
+from .errors import FCEnvelopeError, NumericalQualityWarning
 from .inputs import FCEnvelopeInput
 from .io import JsonObject, JsonValue, kind_for, load_any, save_any
 from .lines import compute_fc_lines
@@ -218,6 +219,24 @@ _NOT_A_FAILURE = (typer.Exit, typer.Abort, typer.BadParameter)
 
 
 @contextmanager
+def _quality_reported_once() -> Iterator[None]:
+    """品質の警告が 2 度出るのを止める。
+
+    `report_quality` は同じ文言を 3 か所へ流す（ADR-0009）——`warnings.warn`、
+    ログ、そして `Diagnostics.messages` である。CLI は結果を受け取ってから
+    `_echo_warnings` で整形して出すので、`warnings` の既定の表示をそのまま通すと、
+    同じ内容が 2 度、片方は実装のファイル名と行番号つきで出てしまう。利用者に
+    見せる形は 1 つに決める。
+
+    抑えるのは `warnings` の表示だけで、ログと `Diagnostics.messages` は別の経路
+    なのでそのまま残る。ライブラリとして使う場合の `warnings.warn` にも触らない。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", NumericalQualityWarning)
+        yield
+
+
+@contextmanager
 def _traced(log: Path | None, output: Path) -> Iterator[None]:
     """節目の記録と `FCEnvelopeError` の扱いをまとめる（ADR-0052）。
 
@@ -227,7 +246,8 @@ def _traced(log: Path | None, output: Path) -> Iterator[None]:
     """
     trace = logs.Trace(log)
     try:
-        yield
+        with _quality_reported_once():
+            yield
     except FCEnvelopeError as exc:
         logger.error("%s", exc)
         typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)

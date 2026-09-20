@@ -382,6 +382,7 @@ SCHEMA_VERSION = 2
 |---|---|
 | `SAVE` / `SHOW` | 出力先。`SHOW` が `None` なら端末のときだけ出す |
 | `SHOW_WIDTH` / `SHOW_DPI` | 端末に出す図の大きさ。ファイルの `DPI` とは別（ADR-0061） |
+| `IMAGE_PREFIX` | 引数でほかの結果を指したときの画像名の頭（ADR-0067） |
 | `FIGSIZE` / `DPI` / `TITLE` / `XLIM` / `YLIM` / 色 | 図の体裁 |
 | `X_UNIT` / `X_SCALE` | 横軸の単位（ADR-0062） |
 | `MAGNIFY` | 重ね描きの棒の倍率（ADR-0028。凡例に出る） |
@@ -390,14 +391,23 @@ SCHEMA_VERSION = 2
 
 | 関数 | 役目 |
 |---|---|
+| `beside(path)` | スクリプトの中に書いた相対パスを、スクリプトの隣として読む（ADR-0067） |
 | `load(path, kind)` | 結果 JSON を読む。`kind` と `schema_version` が合わなければ止まる |
+| `image_for(source)` | 図の書き出し先。既定のデータなら `OUTPUT`、引数でほかの結果を指したならその隣（ADR-0067） |
 | `draw(ax, data)` | 図の中身。notebook から import して使える |
 | `show(fig)` | kitty graphics protocol で端末に出す |
 | `main()` | 読む → 描く → 画像と端末へ出す |
 
-`load` / `terminal_pixel_width` / `show` は 3 つの雛形で同一で、食い違わないことを
-`test/test_emit.py` が確かめる。画像には見た目に出ない覚え書き（`Software` / `Source` /
-`Description`）が入る。
+`beside` / `load` / `terminal_pixel_width` / `show` は 3 つの雛形で同一で、食い違わない
+ことを `test/test_emit.py` が確かめる。`image_for` は雛形ごとに違う（単独の図はデータ 1 つ、
+重ね描きはエンベロープを見る）ので共有部分には入らない。
+
+パスの基準は 2 つあり、どちらも 1 つの規則で言える（ADR-0067）。スクリプトの中に書いた
+名前はスクリプトの隣、コマンドラインの引数はカレントディレクトリである。`main` が引数を
+`Path(...).absolute()` で先に絶対パスへ直すので、以降は生成ヘッダの位置と同じに扱える。
+
+画像には見た目に出ない覚え書き（`Software` / `Source` / `Description`）が入る。`Source`
+には生成時のデータ名ではなく、**実際に読んだデータ**の名前が入る。
 
 `--log FILE` は節目のログの書き出し先（下の「ログ」を参照）。省略時は書き出さない。
 
