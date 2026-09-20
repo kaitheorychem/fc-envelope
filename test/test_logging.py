@@ -206,8 +206,9 @@ def test_log_option_writes_the_stages(tmp_path, input_file):
 
     assert invocation.exit_code == 0, invocation.output
     written = log.read_text(encoding="utf-8")
-    # 読み込み・計算・結果の保存・作図スクリプトの書き出しが、この順に始まって終わる。
-    assert written.count("begin ") == written.count("end ") == 4
+    # 読み込み・実効設定の書き出し・計算・結果の保存・作図スクリプトの書き出しが、
+    # この順に始まって終わる。
+    assert written.count("begin ") == written.count("end ") == 5
     for label in ("read", "envelope:", f"write {output}"):
         assert f"begin {label}" in written
     assert f"begin write {script_path_for(output)}" in written
@@ -225,7 +226,8 @@ def test_a_successful_run_writes_no_log_file(tmp_path, input_file):
 def test_a_failing_run_leaves_the_trace_next_to_the_output(tmp_path, input_file):
     output = tmp_path / "result.json"
     invocation = runner.invoke(
-        app, ["run", str(input_file), "-o", str(output), "--e-min", "5000"]
+        app,
+        ["run", str(input_file), "-o", str(output), "--override", "grid.e_min=5000"],
     )
 
     assert invocation.exit_code == 1
@@ -243,7 +245,10 @@ def test_an_explicit_log_file_is_not_duplicated_on_failure(tmp_path, input_file)
     log = tmp_path / "run.log"
     invocation = runner.invoke(
         app,
-        ["run", str(input_file), "-o", str(output), "--e-min", "5000", "--log", str(log)],
+        [
+            "run", str(input_file), "-o", str(output),
+            "--override", "grid.e_min=5000", "--log", str(log),
+        ],
     )
 
     assert invocation.exit_code == 1
@@ -256,8 +261,13 @@ def test_an_unwritable_trace_does_not_hide_the_error(tmp_path, input_file):
     output = tmp_path / "absent" / "result.json"
     (tmp_path / "absent").write_text("not a directory", encoding="utf-8")
 
+    # 書き出せない場所は実効設定も書けないので、ここで見たいのは痕跡の話だけにする。
     invocation = runner.invoke(
-        app, ["run", str(input_file), "-o", str(output), "--e-min", "5000"]
+        app,
+        [
+            "run", str(input_file), "-o", str(output), "--no-config",
+            "--override", "grid.e_min=5000",
+        ],
     )
 
     assert invocation.exit_code == 1

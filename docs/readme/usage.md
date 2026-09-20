@@ -167,34 +167,90 @@ E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 ## CLI
 
 ```bash
-# 計算して結果 JSON を書き出す。作図スクリプトも一緒に出る
-uv run fcenvelope run input.json -o result.json
-#   -> result.json      計算結果
-#   -> result_plot.py   作図スクリプト
+# 計算して結果 JSON を書き出す。実効設定と作図スクリプトも一緒に出る
+uv run fcenvelope run input.json
+#   -> input_envelope.json          計算結果
+#   -> input_envelope_config.json   この実行で実際に使われた設定
+#   -> input_envelope_plot.py       作図スクリプト
 
 # 図を作る。ここを何度でも繰り返す（次の節を参照）
-python result_plot.py
+python input_envelope_plot.py
+
+# 名前を決めるなら -o
+uv run fcenvelope run input.json -o result.json
 
 # 条件だけ振る（modes は上書きできない。値は入力ファイルと同じ単位で読む）
-uv run fcenvelope run input.json -o result_0K.json --temperature 0
+uv run fcenvelope run input.json -o result_0K.json --override temperature=0
 
 # 離散 FC 因子の一覧を書き出す
-uv run fcenvelope lines input.json -o lines.json --min-weight 1e-5
+uv run fcenvelope lines input.json -o lines.json --override selection.min_weight=1e-5
 
 # 2 つの結果を 1 枚に重ねる作図スクリプトを作る（与える順序は問わない）
 uv run fcenvelope script result.json lines.json -o overlay_plot.py
 
 # 名前を変えながら掃引するときは作図スクリプトを作らせない
-uv run fcenvelope run input.json -o T100.json --temperature 100 --no-script
+uv run fcenvelope run input.json -o T100.json --override temperature=100 --no-script
 
 # 版を表示して終了する
 uv run fcenvelope --version
 
 # 節目のログをファイルに残す（どの副命令でも使える）
-uv run fcenvelope run input.json -o result.json --log run.log
+uv run fcenvelope run input.json --log run.log
 ```
 
 終了コードは 正常 `0` / 入力・計算エラー `1` / 使用法エラー `2`。
+
+### 出力の名前
+
+`-o` を省くと、**入力ファイルの拡張子を除いた部分**に種類の名前を付けたものが、
+**入力ファイルの隣**に出る。
+
+| 呼び出し | 結果 | 実効設定 | 作図スクリプト |
+|---|---|---|---|
+| `fcenvelope run input.json` | `input_envelope.json` | `input_envelope_config.json` | `input_envelope_plot.py` |
+| `fcenvelope lines input.json` | `input_lines.json` | `input_lines_config.json` | `input_lines_plot.py` |
+
+`_envelope` / `_lines` が付くので、既定の出力が入力ファイルを潰すことはなく、同じ入力に
+`run` と `lines` を当てても衝突しない。結果と実効設定は計算のたびに上書きされ、手で直す
+作図スクリプトだけが残る。名前を変えながら掃引するときは今までどおり `-o` を書く。
+
+### 条件を差し替える
+
+入力ファイルの項目を差し替えるつまみは `--override KEY=VALUE` 1 つで、何度でも書ける。
+キーは**入力ファイル中の項目の位置**そのもので、入れ子はドットで繋ぐ。
+
+```bash
+uv run fcenvelope run input.json --override temperature=0 --override grid.de=2.5
+uv run fcenvelope lines input.json --override selection.max_quanta=null
+```
+
+- 値は JSON として読む。`null` も数も文字列（`eV` など）も同じ規則で通る。
+- 値は**入力ファイルと同じ単位・流儀**で読む。σ を eV で書いたファイルなら
+  `--override broadening.sigma=0.02` も eV である。
+- `modes` は上書きできない。どの分子を計算したかが履歴に残らなくなるため。
+- 知らないキーはエラーになる。`grid.dee=4` は黙って無視されず、その場で止まる。
+
+### 実際に使われた設定を見る
+
+`run` と `lines` は、入力を読んで上書きを当てた直後、**計算を始める前**に、その実行で
+実際に使われる設定を書き出す。上書き後の値も、書かなかったので既定値になった項目も、
+ここを見れば分かる。
+
+```bash
+uv run fcenvelope run input.json --override temperature=77
+cat input_envelope_config.json     # -> "temperature": 77.0, "selection": { ... 既定値 ... }
+```
+
+書き出しは入力ファイルと同じ単位・流儀のままなので、手元の入力ファイルと diff が取れる。
+`{"path": "modes.csv"}` で渡したモードは行に展開されるため、このファイルだけで完結する。
+**そのまま入力として与えれば同じ計算が再現できる。**
+
+```bash
+uv run fcenvelope run input_envelope_config.json -o again.json
+```
+
+計算の前に書くので、値の誤りで止まった実行でも「何が使われるはずだったか」は残る。
+場所を変えるなら `--config FILE`、要らないなら `--no-config`。
 
 **図のつまみは CLI にない。** 表題も色も軸の範囲も作図スクリプトの中にあり、調整は
 そのファイルを直して行う。
@@ -247,7 +303,7 @@ python result_plot.py result_0K.json
 新しいデータに当たる。
 
 ```bash
-uv run fcenvelope run input.json -o result.json --sigma 80
+uv run fcenvelope run input.json -o result.json --override broadening.sigma=80
 #   -> result.json を更新、result_plot.py はそのまま（kept ... と出る）
 python result_plot.py
 ```
@@ -273,8 +329,8 @@ uv run fcenvelope lines input.json -o lines.json
 python lines_plot.py                     # 棒スペクトルはこれで出る
 
 # T = 0 で、より細かい閾値まで拾う
-uv run fcenvelope lines input.json -o lines_0K.json --temperature 0 \
-    --min-weight 1e-6
+uv run fcenvelope lines input.json -o lines_0K.json --override temperature=0 \
+    --override selection.min_weight=1e-6
 
 # 表示だけ増やす（--top 0 で表を出さない）
 uv run fcenvelope lines input.json -o lines.json --top 30
@@ -313,7 +369,7 @@ T = 0 では始状態が振動基底状態だけなので両者は一致する�
 
 ### どこまで返すか
 
-`--min-weight`（既定 1e-4）以上の線を**すべて**返す。全遷移は無限個あるので閾値が要る。
+`selection.min_weight`（既定 1e-4）以上の線を**すべて**返す。全遷移は無限個あるので閾値が要る。
 
 - どれだけ拾えたかは `captured_weight`（拾った線の重みの総和）で分かる。1 に近いほど
   スペクトルの全体を見ていることになる。
@@ -446,7 +502,7 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 注意点が 2 つある。
 
 - 横軸は `result` の E 窓に合わせるので、窓の外に立つ線は描かれない。落ちた本数は
-  スクリプトが警告に出す。すべて見たいなら `run` の `--e-min` / `--e-max` を広げる。
+  スクリプトが警告に出す。すべて見たいなら `run` の `grid.e_min` / `grid.e_max` を広げる。
 - 2 つの結果の系か温度が食い違っていると警告が出る。棒と曲線の対応が
   成り立つのは同じ系・同じ温度で計算した場合だけなので、図には出すが鵜呑みにしない。
 
@@ -486,9 +542,9 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 
 | 診断値 | 意味するもの | 対処 |
 |---|---|---|
-| `captured_weight` | 小さい（< 0.9）と閾値が粗く、スペクトルの大半を取りこぼしている | `--min-weight` を下げる |
-| `beam_truncated` | True なら `max_lines` で列挙を打ち切っており、閾値以上の線が欠けている | `--max-lines` を上げるか閾値を粗くする |
-| `min_mode_completeness` | 1 から外れると振動梯子の打ち切り | `--max-quanta` を上げる |
+| `captured_weight` | 小さい（< 0.9）と閾値が粗く、スペクトルの大半を取りこぼしている | `selection.min_weight` を下げる |
+| `beam_truncated` | True なら `max_lines` で列挙を打ち切っており、閾値以上の線が欠けている | `selection.max_lines` を上げるか閾値を粗くする |
+| `min_mode_completeness` | 1 から外れると振動梯子の打ち切り | `selection.max_quanta` を上げる |
 | `recurrence_limited` | True なら漸化式の桁落ちを避けて始状態を打ち切っている | 閾値を粗くするか温度を下げる |
 | `mean_energy` | ⟨E⟩。収束していれば −λ に一致する（記録のみ） | — |
 

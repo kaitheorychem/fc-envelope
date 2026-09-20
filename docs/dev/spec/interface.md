@@ -100,6 +100,9 @@ FCEnvelopeInput.to_temperature() -> float
 FCEnvelopeInput.to_broadening()  -> Broadening
 FCEnvelopeInput.to_grid()        -> EnergyGrid
 FCEnvelopeInput.to_selection()   -> Selection
+
+FCEnvelopeInput.to_json()        -> str    # 実効設定。単位・流儀は入力ファイルのまま
+FCEnvelopeInput.save(path)       -> None   # from_path で読み返せる形（ADR-0065）
 ```
 
 ## データモデル
@@ -212,6 +215,9 @@ coupling と frequency の単位が揃うことは前提にできないので、
 `run` は `temperature` / `broadening` / `grid` を、`lines` は `temperature` / `selection` を
 読む。どちらの副命令も同じファイルを使える（ADR-0005）。
 
+実効設定の書き出し（`*_config.json`）もこの形式である。省略した項目が既定値で埋まり、
+`modes` が行に展開されているだけで、入力ファイルとして読み返せる（ADR-0065）。
+
 ### 出力（エンベロープ）
 
 ```json
@@ -282,15 +288,13 @@ coupling と frequency の単位が揃うことは前提にできないので、
 ## CLI
 
 ```
-fcenvelope run INPUT.json -o RESULT.json [--script FILE | --no-script] [--force-script]
-                          [--temperature FLOAT] [--sigma FLOAT]
-                          [--e-min FLOAT] [--e-max FLOAT] [--de FLOAT]
-                          [--log FILE]
+fcenvelope run INPUT.json [-o RESULT.json] [--override KEY=VALUE]...
+                          [--script FILE | --no-script] [--force-script]
+                          [--config FILE | --no-config] [--log FILE]
 
-fcenvelope lines INPUT.json -o LINES.json [--script FILE | --no-script] [--force-script]
-                          [--temperature FLOAT] [--min-weight FLOAT]
-                          [--max-lines INT] [--max-quanta INT] [--top INT]
-                          [--log FILE]
+fcenvelope lines INPUT.json [-o LINES.json] [--override KEY=VALUE]... [--top INT]
+                          [--script FILE | --no-script] [--force-script]
+                          [--config FILE | --no-config] [--log FILE]
 
 fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force] [--log FILE]
 
@@ -299,11 +303,48 @@ fcenvelope --version
 
 **図のつまみは CLI にない**（ADR-0057）。調整は生成された作図スクリプトを直して行う。
 
-上書きできるのは `temperature` / `broadening` / `grid` / `selection` で、`modes` は上書き
-しない（ADR-0012, 0035）。上書きの値は**入力ファイルと同じ単位・流儀で読み**、入力ファイルの
-型に適用してから正準化する（ADR-0050）。`--sigma` はファイルの `broadening.unit` で、
-`--e-min` / `--e-max` / `--de` はファイルの `grid.unit` で読む。上書き系オプションの既定値はすべて「上書きしない」
-という意味の `None` で、つまみの既定値は `Selection` の 1 箇所にしかない。
+### 出力の名前
+
+`-o` は省略でき、省略時の出力は**入力ファイルの拡張子を除いた部分**に種類の接尾辞を
+付けた名前で、**入力ファイルの隣**に置く（ADR-0063）。接尾辞があるので既定の出力名が
+入力ファイルと一致することはなく、`run` と `lines` の出力も衝突しない。
+
+| 呼び出し | 結果 | 実効設定 | 作図スクリプト |
+|---|---|---|---|
+| `fcenvelope run input.json` | `input_envelope.json` | `input_envelope_config.json` | `input_envelope_plot.py` |
+| `fcenvelope lines input.json` | `input_lines.json` | `input_lines_config.json` | `input_lines_plot.py` |
+
+結果と実効設定は既にあっても黙って上書きする。作図スクリプトだけが残る（ADR-0060）。
+名前を変えながら掃引する実行では `-o` を書く。
+
+### 上書き
+
+入力ファイルの項目を差し替えるつまみは `--override KEY=VALUE` 1 つで、繰り返し指定できる
+（ADR-0064）。
+
+| 決め | 内容 |
+|---|---|
+| キー | 入力ファイル中の項目の位置。入れ子はドットで繋ぐ（`grid.de`、`broadening.sigma`） |
+| 値 | JSON として読み、読めなければ文字列（`null` / `2.5` / `eV`） |
+| 単位・流儀 | 入力ファイルのもの。`broadening.sigma` はファイルの `broadening.unit` で読む |
+| 拒否する位置 | `modes` 以下（ADR-0012, 0035）と `schema_version` |
+| 誤字 | 入力ファイルの型が `extra="forbid"` なので未知のフィールドとして弾かれる |
+
+上書きの値は入力ファイルの型に適用してから正準化する（ADR-0050）。つまみの既定値は
+`Selection` の 1 箇所にしかなく、CLI 側に項目の写しを持たない。使用法エラー（終了コード 2）に
+なるのは**書式そのものの誤り**——`=` がない、キーが空、`modes` を指す、ブロックでない位置に
+潜ろうとする——だけで、キーの存在と値の妥当性は入力の検証（終了コード 1）が見る。
+
+### 実効設定
+
+`run` と `lines` は、入力を読んで上書きを当てた直後、**計算を始める前**に、その実行で実際に
+使われる設定を JSON で書き出す（ADR-0065）。書き出すのは正準化前の姿、すなわち**入力
+ファイルと同じ単位・流儀**の値で、省略した項目は既定値で埋まり、`{"path": ...}` で渡した
+モードは行に展開される。これを入力として与えれば同じ計算が再現できる。
+
+結果ファイルの入力エコーが常に正準形なのとは狙いが違う（ADR-0010）。エコーは結果を読む側が
+流儀と単位を気にせずに済むためのもの、実効設定は手元の入力ファイルと突き合わせ、再実行する
+ためのものである。`--config FILE` で場所を変え、`--no-config` で書かせない。
 
 `run` と `lines` は結果 JSON に添えて作図スクリプトを**既定で**書き出す（ADR-0060）。
 生成先は `-o` の名前から作り（`result.json` → `result_plot.py`）、既にあれば書かずに
@@ -316,6 +357,9 @@ fcenvelope --version
 組み合わせが違えば使用法エラー。壊したスクリプトを作り直す口でもある。
 
 `--top N` は図ではなく結果の報告で、強い線を N 本まで端末に表として出す（旧 `--show`）。
+入力ファイルに書けないものはフラグのまま残る——`--top` / `--log` / `--script` /
+`--no-script` / `--force-script` / `--config` / `--no-config` がそれで、入力ファイルに
+書けるものは `--override` を通る（ADR-0064）。
 `--version` は副命令を取らず、パッケージ版だけを出して終了する。
 終了コード: `0` 正常 / `1` `FCEnvelopeError` / `2` 使用法エラー。
 
@@ -458,7 +502,7 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 | `logs.py` | 節目のログの出力先（ADR-0052） | errors |
 | `models.py` | 計算用の値の型 | errors, physics |
 | `units.py` | 流儀オブジェクト、エネルギー単位の換算表 | errors |
-| `inputs.py` | 入力ファイルの型（pydantic）と正準化 | errors, logs, units, models |
+| `inputs.py` | 入力ファイルの型（pydantic）と正準化、実効設定の書き出し | errors, logs, units, models |
 | `result.py` | 結果クラス、`Provenance` | models |
 | `envelope.py` | グリッド構成・FFT | errors, logs, models, result |
 | `lines.py` | 漸化式・線の列挙 | errors, logs, models, physics, result |

@@ -353,6 +353,23 @@ class FCEnvelopeInput(BaseModel):
         except InvalidInputError as exc:
             raise _at("temperature", exc) from exc
 
+    def to_json(self) -> str:
+        """実効設定の JSON テキスト（ADR-0065）。
+
+        書き出すのは正準化**前**の姿、すなわち入力ファイルと同じ単位・流儀の値である。
+        省略された項目は既定値で埋まり、`{"path": ...}` で渡したモードは行に展開されて
+        埋め込まれる。この文字列をそのまま入力ファイルとして与えれば、同じ計算が再現
+        できる。結果ファイルの入力エコーが正準形なのとは狙いが違う（ADR-0010, 0065）。
+        """
+        return json.dumps(self.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n"
+
+    def save(self, path: str | Path) -> None:
+        """実効設定を書き出す。`from_path` で読み返せる形である（ADR-0065）。"""
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with stage(logger, f"write {target}"):
+            target.write_text(self.to_json(), encoding="utf-8")
+
     @classmethod
     def from_obj(
         cls, data: object, *, base_dir: str | Path | None = None
