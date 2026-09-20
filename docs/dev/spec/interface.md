@@ -91,7 +91,8 @@ emit.write_overlay_script(envelope, envelope_path, lines, lines_path, script, *,
 入力ファイルの読み込みは `FCEnvelopeInput` を経由する。
 
 ```python
-FCEnvelopeInput.from_path(path)                   -> FCEnvelopeInput   # modes.path はファイル基準
+FCEnvelopeInput.from_path(path)                   -> FCEnvelopeInput   # 書式は拡張子、modes.path はファイル基準
+FCEnvelopeInput.from_toml(text, *, base_dir=None) -> FCEnvelopeInput
 FCEnvelopeInput.from_json(text, *, base_dir=None) -> FCEnvelopeInput
 FCEnvelopeInput.from_obj(data, *, base_dir=None)  -> FCEnvelopeInput   # base_dir 省略時は cwd 基準
 
@@ -103,6 +104,8 @@ FCEnvelopeInput.to_selection()   -> Selection
 
 FCEnvelopeInput.to_json()        -> str    # 実効設定。単位・流儀は入力ファイルのまま
 FCEnvelopeInput.save(path)       -> None   # from_path で読み返せる形（ADR-0065）
+
+INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキストを辞書にする（ADR-0069）
 ```
 
 ## データモデル
@@ -170,6 +173,42 @@ coupling と frequency の単位が揃うことは前提にできないので、
 
 ### 入力
 
+書式は TOML（`.toml`）と JSON（`.json`）の 2 つで、**拡張子だけ**で振り分ける
+（`inputs.INPUT_FORMATS`、ADR-0069）。読んだ後は同じ辞書になるので、構造・単位・流儀の
+扱いは以下どちらの書式でも同じである。利用者が書くのは TOML、実効設定の読み返しが JSON。
+
+```toml
+schema_version = 2
+frequency_unit = "cm^-1"
+coupling_convention = "g"
+temperature = 300.0
+
+[[modes]]
+frequency = 1200.0
+coupling = 0.5
+
+[[modes]]
+frequency = 450.0
+coupling = 0.8
+
+[broadening]
+sigma = 150.0
+unit = "cm^-1"
+
+[grid]
+e_min = -4000.0
+e_max = 1000.0
+de = 5.0
+unit = "cm^-1"
+
+[selection]
+min_weight = 0.0001
+max_lines = 10000
+# max_quanta は省略（TOML に null はない）
+```
+
+同じものを JSON で書くとこうなる。実効設定（`*_config.json`）もこの形である。
+
 ```json
 {
   "schema_version": 2,
@@ -191,7 +230,7 @@ coupling と frequency の単位が揃うことは前提にできないので、
 | `schema_version` | int | `2` 固定 | 不一致は `SchemaVersionError`。1 の互換層は置かない（ADR-0040） |
 | `frequency_unit` | str | `ENERGY_UNITS` のいずれか | `modes[].frequency` の単位。既定 `"cm^-1"` |
 | `coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` | 既定 `"g"` |
-| `coupling_unit` | str \| null | `ENERGY_UNITS` のいずれか | `modes[].coupling` の単位。無次元の流儀では書いてはならず、有次元の流儀では要る |
+| `coupling_unit` | str \| null | `ENERGY_UNITS` のいずれか | `modes[].coupling` の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
 | `modes[].frequency` | float | > 0（正準化後） | ε_α。単位は `frequency_unit` |
 | `modes[].coupling` | float | 流儀による | 流儀に従った値。単位は `coupling_unit` |
 | `temperature` | float | ≥ 0 | T [K]。0 は許可（n_α = 0） |
@@ -206,8 +245,9 @@ coupling と frequency の単位が揃うことは前提にできないので、
 入力ファイルは従来どおりの意味で読まれるので、`schema_version` は 2 に据え置く
 （ADR-0053）。単位の実例は `docs/readme/examples/` にある（ADR-0056）。
 
-`modes` は最低 1 要素。配列の代わりに `{"path": "<file>.csv"}` を置くと外部 CSV を参照する
-（相対パスは入力 JSON のディレクトリ基準）。CSV は RFC 4180 準拠で、列は `frequency` /
+`modes` は最低 1 要素（TOML では `[[modes]]` の並び）。配列の代わりに
+`{"path": "<file>.csv"}`（TOML では `modes = { path = "<file>.csv" }`）を置くと外部 CSV を
+参照する（相対パスは入力ファイルのディレクトリ基準）。CSV は RFC 4180 準拠で、列は `frequency` /
 `coupling` の 2 列のみ。ヘッダは省略可（省略時はこの順、ヘッダがあれば順序自由）。
 コメント行・空行・補助列は受け付けない。CSV が報告するのは**構造の誤りだけ**で、行番号が
 付くのもそこまでである。値の範囲は正準化のときに値の型が見るので、位置はモードの番号になる。
@@ -215,8 +255,13 @@ coupling と frequency の単位が揃うことは前提にできないので、
 `run` は `temperature` / `broadening` / `grid` を、`lines` は `temperature` / `selection` を
 読む。どちらの副命令も同じファイルを使える（ADR-0005）。
 
-実効設定の書き出し（`*_config.json`）もこの形式である。省略した項目が既定値で埋まり、
-`modes` が行に展開されているだけで、入力ファイルとして読み返せる（ADR-0065）。
+実効設定の書き出し（`*_config.json`）は**常に JSON** である。省略した項目が既定値で埋まり、
+`modes` が行に展開されているだけで、入力ファイルとして読み返せる（ADR-0065）。TOML には
+`null` がなく、「無し」で埋まった `coupling_unit` / `selection.max_quanta` を書けないため、
+入力が TOML でも書き出しは JSON になる（ADR-0069）。
+
+`--override` の値は入力ファイルの書式によらず JSON として読む（ADR-0064）。TOML 入力から
+「無し」を渡せるのはこの口だけである。
 
 ### 出力（エンベロープ）
 

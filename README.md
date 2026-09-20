@@ -13,7 +13,8 @@ cm⁻¹・eV・hartree・THz・kJ/mol・kcal/mol から選べる。どちらも�
 
 ## 技術構成
 python + uv で実装。Python 3.11 以上。
-CLI（typer）から入力 JSON の読み込みと結果 JSON の書き出しができる。図は CLI では
+CLI（typer）から入力ファイルの読み込みと結果 JSON の書き出しができる。入力ファイルは
+TOML を基本とし、JSON でも同じように読める（書式は拡張子で決まる）。図は CLI では
 描かず、結果の隣に置かれる作図スクリプト（matplotlib）を走らせて作る。
 ライブラリとしては `pip install` でインストールし、スペクトルの表現ごとに
 「計算・保存・読み込み・描画」の自由関数 4 つを 1 組として公開する。
@@ -37,7 +38,7 @@ CLI（typer）から入力 JSON の読み込みと結果 JSON の書き出しが
     - plan/: 実行が決まった作業の段取り。完了したら削除するか spec/ に畳む。
     - idea/: 考え中のアイデア・思いつきなど。実行に写すかどうか未確定のメモ。
   - readme/: READMEの補助ドキュメント。ユーザとして使う人のための資料。
-    - examples/: そのまま動く入力ファイルの実例。文書の説明と食い違わないことをテストで見る。
+    - examples/: そのまま動く入力ファイルの実例（TOML と JSON）。文書の説明と食い違わないことをテストで見る。
   - theory/: 実装のための元になる理論
 - test/: テスト用。pytestによる実装
 
@@ -55,23 +56,24 @@ uv run fcenvelope --version
 ## 使い方
 
 ```bash
-uv run fcenvelope run input.json     # -> input_envelope.json, input_envelope_config.json,
+uv run fcenvelope run input.toml     # -> input_envelope.json, input_envelope_config.json,
                                      #    input_envelope_plot.py
 uv run python input_envelope_plot.py # 図を作る。端末にも出る
-uv run fcenvelope lines input.json   # -> input_lines.json, ...
+uv run fcenvelope lines input.toml   # -> input_lines.json, ...
 
 # 名前を決めるなら -o。条件を差し替えるなら --override
-uv run fcenvelope run input.json -o result.json --override temperature=0
+uv run fcenvelope run input.toml -o result.json --override temperature=0
 
 # 2つを1枚に重ねる作図スクリプトを作る
 uv run fcenvelope script input_envelope.json input_lines.json -o overlay_plot.py
 uv run python overlay_plot.py
 
-uv run fcenvelope run input.json --log run.log  # 節目のログを残す
+uv run fcenvelope run input.toml --log run.log  # 節目のログを残す
 ```
 
 `-o` を省くと入力ファイルの名前を継いだ出力が入力の隣に出る。その実行で実際に使われた
 設定は `*_config.json` に書き出され、それをそのまま入力として与えれば同じ計算になる。
+入力を書くのは TOML、この正準化された設定を読み返すのが JSON、という使い分けである。
 
 作図スクリプトは `json` と `matplotlib` だけで動き、`fcenvelope` を import しない。
 表題・色・軸の範囲・横軸の単位はすべてその中の定数で、直して走らせ直せば図が変わる。
@@ -83,7 +85,7 @@ from fcenvelope import (
     plot_envelope, plot_overlay, save_envelope, save_lines,
 )
 
-parsed = FCEnvelopeInput.from_path("input.json")
+parsed = FCEnvelopeInput.from_path("input.toml")
 system = parsed.to_system()
 
 result = compute_envelope(
@@ -108,7 +110,7 @@ plot_overlay(result, lines).savefig("overlay.png", dpi=300)
 
 入力ファイルの書き方・流儀と単位の選び方・E 軸の符号規約・診断値の読み方・ログの
 読み方は [docs/readme/usage.md](docs/readme/usage.md) を参照。
-単位を書いた入力の実例は [docs/readme/examples/](docs/readme/examples/) にある。
+入力ファイルの実例は [docs/readme/examples/](docs/readme/examples/) にある。
 インターフェイスの一覧は [docs/dev/spec/interface.md](docs/dev/spec/interface.md)。
 
 ## テスト

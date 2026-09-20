@@ -24,22 +24,39 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 ## 入力ファイル
 
 モードデータと計算条件を 1 ファイルに入れる。このファイル 1 つで計算が完全に再現できる。
+書式は **TOML**（`.toml`）を基本とする。JSON（`.json`）でも同じように動くが、そちらの
+出番は主に実効設定の読み返しである（下の「JSON で書く」）。
 
-```json
-{
-  "schema_version": 2,
-  "frequency_unit": "cm^-1",
-  "coupling_convention": "g",
-  "modes": [
-    { "frequency": 1200.0, "coupling": 0.5 },
-    { "frequency":  450.0, "coupling": 0.8 }
-  ],
-  "temperature": 300.0,
-  "broadening": { "sigma": 150.0 },
-  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 },
-  "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
-}
+```toml
+schema_version = 2
+frequency_unit = "cm^-1"
+coupling_convention = "g"
+temperature = 300.0
+
+# 1 モード = 1 つの [[modes]]。並び順は結果に効かない。
+[[modes]]
+frequency = 1200.0
+coupling = 0.5
+
+[[modes]]
+frequency = 450.0
+coupling = 0.8
+
+[broadening]
+sigma = 150.0
+
+[grid]
+e_min = -4000.0
+e_max = 1000.0
+de = 5.0
+
+[selection]
+min_weight = 0.0001
+max_lines = 10000
+# max_quanta は省略すると自動
 ```
+
+そのまま動く例が [`examples/basic.toml`](examples/basic.toml) にある。
 
 | フィールド | 意味 | 制約 |
 |---|---|---|
@@ -57,10 +74,34 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 | `grid.unit` | グリッドの単位 | 既定 `"cm^-1"` |
 | `selection.min_weight` | 保持する重みの下限 | 0 < x ≤ 1、既定 1e-4 |
 | `selection.max_lines` | 保持・列挙する線数の上限 | ≥ 1、既定 10000 |
-| `selection.max_quanta` | 1 モードあたりの振動量子数の上限 | ≥ 0 または `null`（自動）、既定 `null` |
+| `selection.max_quanta` | 1 モードあたりの振動量子数の上限 | ≥ 0、省略すると自動（既定）|
 
 `run` が読むのは `temperature` / `broadening` / `grid`、`lines` が読むのは
 `temperature` / `selection` で、どちらも同じファイルを使える。`selection` は省略できる。
+
+TOML で書くときの決まりごとは 2 つだけである。
+
+- `modes` は `[[modes]]` を並べる。1 つの `[[modes]]` が 1 モードで、`frequency` と
+  `coupling` をその下に書く。1 行で済ませたいなら
+  `modes = [{ frequency = 1200.0, coupling = 0.5 }]` とも書ける。
+- **TOML に `null` はない。** 「無し」にあたる `coupling_unit` と `selection.max_quanta`
+  は、`null` と書くかわりに**その項目ごと省略する**。省略すれば既定値（どちらも「無し」）
+  になる。すでに書いてある項目をその実行だけ「無し」に戻すなら
+  `--override selection.max_quanta=null` を使う。
+
+### JSON で書く
+
+`.json` の入力ファイルも同じように読まれる。読んだ後は TOML と区別がないので、どちらで
+書いても結果は変わらない（ADR-0069）。
+
+JSON の主な出番は、実行のたびに書き出される**実効設定**（`*_config.json`）をそのまま
+入力として与え直すことである。これは省略した項目が既定値で埋まった正準化済みのファイルで、
+「何が使われたのか」を確かめたり、その条件をもう一度再現したりするのに使う（下の
+「実際に使われた設定を見る」）。実効設定が TOML ではなく JSON なのは、`null` を書けるのが
+JSON だけだからである。
+
+書式は**拡張子だけ**で決まる。中身は見ないので、`.txt` のような知らない拡張子は
+読む前にエラーになる。
 
 ### 流儀
 
@@ -103,26 +144,37 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 都合で単位が決まり、σ とグリッドは利用者が計算窓として選ぶ量なので、揃うことを前提に
 できないためである。
 
-```json
-{
-  "schema_version": 2,
-  "frequency_unit": "cm^-1",
-  "coupling_convention": "lambda",
-  "coupling_unit": "eV",
-  "modes": [{ "frequency": 1200.0, "coupling": 0.037 }],
-  "temperature": 300.0,
-  "broadening": { "sigma": 0.0186, "unit": "eV" },
-  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0, "unit": "cm^-1" }
-}
+```toml
+schema_version = 2
+frequency_unit = "cm^-1"
+coupling_convention = "lambda"
+coupling_unit = "eV"
+temperature = 300.0
+
+[[modes]]
+frequency = 1200.0
+coupling = 0.037
+
+[broadening]
+sigma = 0.0186
+unit = "eV"
+
+[grid]
+e_min = -4000.0
+e_max = 1000.0
+de = 5.0
+unit = "cm^-1"
 ```
 
 この例では振動数を cm⁻¹、λ と σ を eV、グリッドを cm⁻¹ で書いている。結果は単位の
 書き方によらず同じで、出力ファイルの中身は常に cm⁻¹ である。
 
-そのまま動く例が [`examples/sigma-in-ev.json`](examples/sigma-in-ev.json) にある。
+そのまま動く例が [`examples/sigma-in-ev.toml`](examples/sigma-in-ev.toml) にある。同じ
+内容を JSON で書いたものが [`examples/sigma-in-ev.json`](examples/sigma-in-ev.json) に
+並べてあり、両者が同じ実効設定になることはテストで見ている。
 
 ```bash
-uv run fcenvelope run docs/readme/examples/sigma-in-ev.json -o result.json
+uv run fcenvelope run docs/readme/examples/sigma-in-ev.toml -o result.json
 ```
 
 描画の横軸は当面 cm⁻¹ 固定で、この 4 つの軸とは別である。
@@ -131,17 +183,25 @@ uv run fcenvelope run docs/readme/examples/sigma-in-ev.json -o result.json
 
 モード数が多い場合や外部プログラムの出力を使う場合は、`modes` に CSV への参照を書ける。
 
-```json
-{
-  "schema_version": 2,
-  "frequency_unit": "cm^-1",
-  "coupling_convention": "g",
-  "modes": { "path": "modes.csv" },
-  "temperature": 300.0,
-  "broadening": { "sigma": 150.0 },
-  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0 }
-}
+```toml
+schema_version = 2
+frequency_unit = "cm^-1"
+coupling_convention = "g"
+temperature = 300.0
+
+modes = { path = "modes.csv" }
+
+[broadening]
+sigma = 150.0
+
+[grid]
+e_min = -4000.0
+e_max = 1000.0
+de = 5.0
 ```
+
+`modes = { path = ... }` は `[[modes]]` の並びの代わりに書く。TOML では表の順序に決まりが
+あるので、`[broadening]` などの見出しより**前**に置く。
 
 ```csv
 frequency,coupling
@@ -149,13 +209,13 @@ frequency,coupling
 450.0,0.8
 ```
 
-- 相対パスは**入力 JSON ファイルの場所**が基準。
+- 相対パスは**入力ファイルの場所**が基準。
 - 書式は CSV の標準（RFC 4180）に従う。列は `frequency` と `coupling` の 2 列のみで、ほかの列があるとエラー。
 - ヘッダ行は省略できる。省略時は `frequency,coupling` の順。ヘッダを書く場合は 1 行目に置き、列の順序は自由。
 - RFC 4180 にはコメントの規定がないため、コメント行は書けない。空行もエラー（ファイル末尾の改行 1 つは可）。
 - 行の順序は計算結果に影響しない。縮重モードは同じ値の行を複数書く。
-- 単位と流儀は JSON 側の `frequency_unit` / `coupling_convention` / `coupling_unit` に従う。
-  単位はモードごとではなく JSON 側が担うので、CSV に単位の列は置けない。
+- 単位と流儀は入力ファイル側の `frequency_unit` / `coupling_convention` / `coupling_unit`
+  に従う。単位はモードごとではなく入力ファイル側が担うので、CSV に単位の列は置けない。
 - 区切りはカンマのみ。**構造の誤り**（列数違い、数値として読めない、空行、引用の誤りなど）は
   `modes.csv:3: ...` のように行番号付きで報告される。**値の範囲**（ε ≤ 0 など）は流儀と単位を
   消費した後で判定するので、位置は `modes[2]` のようにモードの番号で報告される。
@@ -168,7 +228,7 @@ E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 
 ```bash
 # 計算して結果 JSON を書き出す。実効設定と作図スクリプトも一緒に出る
-uv run fcenvelope run input.json
+uv run fcenvelope run input.toml
 #   -> input_envelope.json          計算結果
 #   -> input_envelope_config.json   この実行で実際に使われた設定
 #   -> input_envelope_plot.py       作図スクリプト
@@ -177,25 +237,25 @@ uv run fcenvelope run input.json
 uv run python input_envelope_plot.py
 
 # 名前を決めるなら -o
-uv run fcenvelope run input.json -o result.json
+uv run fcenvelope run input.toml -o result.json
 
 # 条件だけ振る（modes は上書きできない。値は入力ファイルと同じ単位で読む）
-uv run fcenvelope run input.json -o result_0K.json --override temperature=0
+uv run fcenvelope run input.toml -o result_0K.json --override temperature=0
 
 # 離散 FC 因子の一覧を書き出す
-uv run fcenvelope lines input.json -o lines.json --override selection.min_weight=1e-5
+uv run fcenvelope lines input.toml -o lines.json --override selection.min_weight=1e-5
 
 # 2 つの結果を 1 枚に重ねる作図スクリプトを作る（与える順序は問わない）
 uv run fcenvelope script result.json lines.json -o overlay_plot.py
 
 # 名前を変えながら掃引するときは作図スクリプトを作らせない
-uv run fcenvelope run input.json -o T100.json --override temperature=100 --no-script
+uv run fcenvelope run input.toml -o T100.json --override temperature=100 --no-script
 
 # 版を表示して終了する
 uv run fcenvelope --version
 
 # 節目のログをファイルに残す（どの副命令でも使える）
-uv run fcenvelope run input.json --log run.log
+uv run fcenvelope run input.toml --log run.log
 ```
 
 終了コードは 正常 `0` / 入力・計算エラー `1` / 使用法エラー `2`。
@@ -207,8 +267,8 @@ uv run fcenvelope run input.json --log run.log
 
 | 呼び出し | 結果 | 実効設定 | 作図スクリプト |
 |---|---|---|---|
-| `fcenvelope run input.json` | `input_envelope.json` | `input_envelope_config.json` | `input_envelope_plot.py` |
-| `fcenvelope lines input.json` | `input_lines.json` | `input_lines_config.json` | `input_lines_plot.py` |
+| `fcenvelope run input.toml` | `input_envelope.json` | `input_envelope_config.json` | `input_envelope_plot.py` |
+| `fcenvelope lines input.toml` | `input_lines.json` | `input_lines_config.json` | `input_lines_plot.py` |
 
 `_envelope` / `_lines` が付くので、既定の出力が入力ファイルを潰すことはなく、同じ入力に
 `run` と `lines` を当てても衝突しない。結果と実効設定は計算のたびに上書きされ、手で直す
@@ -220,11 +280,13 @@ uv run fcenvelope run input.json --log run.log
 キーは**入力ファイル中の項目の位置**そのもので、入れ子はドットで繋ぐ。
 
 ```bash
-uv run fcenvelope run input.json --override temperature=0 --override grid.de=2.5
-uv run fcenvelope lines input.json --override selection.max_quanta=null
+uv run fcenvelope run input.toml --override temperature=0 --override grid.de=2.5
+uv run fcenvelope lines input.toml --override selection.max_quanta=null
 ```
 
-- 値は JSON として読む。`null` も数も文字列（`eV` など）も同じ規則で通る。
+- 値は**入力ファイルの書式によらず** JSON として読む。`null` も数も文字列（`eV` など）も
+  同じ規則で通る。入力が TOML でも `--override selection.max_quanta=null` と書けるのは
+  このためで、TOML では書けない「無し」を渡せる唯一の口である。
 - 値は**入力ファイルと同じ単位・流儀**で読む。σ を eV で書いたファイルなら
   `--override broadening.sigma=0.02` も eV である。
 - `modes` は上書きできない。どの分子を計算したかが履歴に残らなくなるため。
@@ -237,13 +299,18 @@ uv run fcenvelope lines input.json --override selection.max_quanta=null
 ここを見れば分かる。
 
 ```bash
-uv run fcenvelope run input.json --override temperature=77
+uv run fcenvelope run input.toml --override temperature=77
 cat input_envelope_config.json     # -> "temperature": 77.0, "selection": { ... 既定値 ... }
 ```
 
-書き出しは入力ファイルと同じ単位・流儀のままなので、手元の入力ファイルと diff が取れる。
-`{"path": "modes.csv"}` で渡したモードは行に展開されるため、このファイルだけで完結する。
+書き出しは入力ファイルと同じ単位・流儀のままなので、手元の入力ファイルと突き合わせられる。
+`{ path = "modes.csv" }` で渡したモードは行に展開されるため、このファイルだけで完結する。
 **そのまま入力として与えれば同じ計算が再現できる。**
+
+入力を TOML で書いても実効設定は JSON で出る。省略した項目が既定値で埋まっていることが
+このファイルの取り柄で、「無し」という既定値（`coupling_unit` と `selection.max_quanta`）を
+書けるのが JSON だけだからである。手で書き直す種類のファイルではないので、読みやすさより
+埋めた結果がそのまま書けることを採る（ADR-0069）。
 
 ```bash
 uv run fcenvelope run input_envelope_config.json -o again.json
@@ -260,7 +327,7 @@ uv run fcenvelope run input_envelope_config.json -o again.json
 `run` と `lines` は結果 JSON の隣に作図スクリプトを置く。図はそれを走らせて作る。
 
 ```bash
-uv run fcenvelope run input.json -o result.json   # 重いのはここだけ
+uv run fcenvelope run input.toml -o result.json   # 重いのはここだけ
 uv run python result_plot.py                      # 端末に図が出る
 vi result_plot.py                                 # 軸・色・注釈を直す
 uv run python result_plot.py                      # すぐ出る
@@ -318,7 +385,7 @@ uv run python result_plot.py result_0K.json
 新しいデータに当たる。
 
 ```bash
-uv run fcenvelope run input.json -o result.json --override broadening.sigma=80
+uv run fcenvelope run input.toml -o result.json --override broadening.sigma=80
 #   -> result.json を更新、result_plot.py はそのまま（kept ... と出る）
 uv run python result_plot.py
 ```
@@ -326,7 +393,7 @@ uv run python result_plot.py
 作り直したいときは `--force-script`、保存済みの結果から作り直すときは `script` を使う。
 
 ```bash
-uv run fcenvelope run input.json -o result.json --force-script
+uv run fcenvelope run input.toml -o result.json --force-script
 uv run fcenvelope script result.json -o result_plot.py --force
 ```
 
@@ -340,15 +407,15 @@ uv run fcenvelope script result.json -o result_plot.py --force
 
 ```bash
 # FC 因子と遷移エネルギーを書き出し、重みの上位 10 本を表示する
-uv run fcenvelope lines input.json -o lines.json
+uv run fcenvelope lines input.toml -o lines.json
 uv run python lines_plot.py              # 棒スペクトルはこれで出る
 
 # T = 0 で、より細かい閾値まで拾う
-uv run fcenvelope lines input.json -o lines_0K.json --override temperature=0 \
+uv run fcenvelope lines input.toml -o lines_0K.json --override temperature=0 \
     --override selection.min_weight=1e-6
 
 # 表示だけ増やす（--top 0 で表を出さない）
-uv run fcenvelope lines input.json -o lines.json --top 30
+uv run fcenvelope lines input.toml -o lines.json --top 30
 ```
 
 `--top` が決めるのは端末に出す**表**の行数だけで、書き出す線の本数ではない。
@@ -413,7 +480,7 @@ result = compute_envelope(
 )
 
 # 入力ファイルから（流儀と単位はここで消費される。modes の CSV 参照もここで解決）
-parsed = FCEnvelopeInput.from_path("input.json")
+parsed = FCEnvelopeInput.from_path("input.toml")
 result = compute_envelope(
     parsed.to_system(),
     temperature=parsed.to_temperature(),
@@ -491,8 +558,8 @@ for temperature in (0.0, 77.0, 300.0):
 `run` の曲線と `lines` の棒は同じ物理量の別表現で、E 軸の規約も共通しているので 1 枚に重ねられる。
 
 ```bash
-uv run fcenvelope run    input.json -o result.json
-uv run fcenvelope lines  input.json -o lines.json
+uv run fcenvelope run    input.toml -o result.json
+uv run fcenvelope lines  input.toml -o lines.json
 uv run fcenvelope script result.json lines.json -o overlay_plot.py
 uv run python overlay_plot.py                     # -> fcenvelope-overlay.png
 ```
@@ -572,8 +639,8 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 診断値（上の節）で、こちらが答えるのは**どこで止まったか**だけである。
 
 ```
-2026-09-17 12:34:56,102 INFO fcenvelope.inputs: begin read input.json
-2026-09-17 12:34:56,104 INFO fcenvelope.inputs: end read input.json (0.002 s)
+2026-09-17 12:34:56,102 INFO fcenvelope.inputs: begin read input.toml
+2026-09-17 12:34:56,104 INFO fcenvelope.inputs: end read input.toml (0.002 s)
 2026-09-17 12:34:56,104 INFO fcenvelope.envelope: begin envelope: 2 modes, T=300 K, de=5
 2026-09-17 12:34:56,131 INFO fcenvelope.envelope: end envelope: 2 modes, T=300 K, de=5 (0.027 s)
 2026-09-17 12:34:56,131 INFO fcenvelope.envelope: envelope: 1001 points, N_fft=2048, area=1, captured=0.998306
@@ -600,8 +667,8 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 | 指定せず、正常に終わった | **書かない**（ログのためにファイルに触れない） |
 
 ```bash
-uv run fcenvelope run input.json -o result.json --log run.log   # 常に残す
-uv run fcenvelope run input.json -o result.json                 # 失敗したときだけ result.log
+uv run fcenvelope run input.toml -o result.json --log run.log   # 常に残す
+uv run fcenvelope run input.toml -o result.json                 # 失敗したときだけ result.log
 ```
 
 異常終了には、入力・計算のエラーだけでなく、想定外のエラーと **Ctrl-C** も含まれる。

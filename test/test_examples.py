@@ -12,8 +12,17 @@ from pathlib import Path
 import pytest
 
 from fcenvelope import FCEnvelopeInput, compute_envelope, units
+from fcenvelope.inputs import INPUT_FORMATS
 
-EXAMPLES = sorted((Path(__file__).resolve().parents[1] / "docs/readme/examples").glob("*.json"))
+EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "docs/readme/examples"
+
+#: 例の書式は入力ファイルが受け付けるものと同じ（ADR-0069）。片方の書式の例だけが
+#: 検証される状態にならないよう、拡張子は `INPUT_FORMATS` から引く。
+EXAMPLES = sorted(
+    path
+    for suffix in INPUT_FORMATS
+    for path in EXAMPLES_DIR.glob(f"*{suffix}")
+)
 
 
 def test_there_is_at_least_one_example():
@@ -32,12 +41,30 @@ def test_an_example_parses_and_computes(path):
     assert result.energy.size > 0
 
 
-def test_sigma_in_ev_matches_the_documented_cm_inverse_width():
+def test_there_is_an_example_in_every_format():
+    """どの書式にも例が 1 つはあること。文書が TOML を基本に書いているので（ADR-0069）、
+    JSON の例だけが残って TOML が検証されない状態を防ぐ。"""
+    for suffix in INPUT_FORMATS:
+        assert any(path.suffix == suffix for path in EXAMPLES), suffix
+
+
+@pytest.mark.parametrize("suffix", sorted(INPUT_FORMATS), ids=lambda s: s.lstrip("."))
+def test_sigma_in_ev_matches_the_documented_cm_inverse_width(suffix):
     """usage.md の例が使う 150 cm^-1 と同じ幅を eV で書いたものであること。"""
-    parsed = FCEnvelopeInput.from_path(
-        Path(__file__).resolve().parents[1] / "docs/readme/examples/sigma-in-ev.json"
-    )
+    parsed = FCEnvelopeInput.from_path(EXAMPLES_DIR / f"sigma-in-ev{suffix}")
 
     assert parsed.broadening.unit == "eV"
     assert parsed.grid.unit == units.CANONICAL_ENERGY_UNIT
     assert parsed.to_broadening().sigma == pytest.approx(150.0, rel=1e-3)
+
+
+def test_the_two_sigma_in_ev_examples_say_the_same_thing():
+    """同じ入力を TOML と JSON で書いたら、実効設定まで一致すること（ADR-0069）。
+
+    書式が違っても読んだ後は同じで、以降の扱いは変わらない——という約束を、文書が
+    並べて見せている 2 つの例そのもので見る。
+    """
+    from_toml = FCEnvelopeInput.from_path(EXAMPLES_DIR / "sigma-in-ev.toml")
+    from_json = FCEnvelopeInput.from_path(EXAMPLES_DIR / "sigma-in-ev.json")
+
+    assert from_toml.to_json() == from_json.to_json()

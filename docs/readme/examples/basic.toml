@@ -1,0 +1,29 @@
+# usage.md「入力ファイル」の例。そのまま動く。
+#   uv run fcenvelope run docs/readme/examples/basic.toml -o result.json
+
+schema_version = 2
+frequency_unit = "cm^-1"
+coupling_convention = "g"   # coupling は無次元化 VCC の g。S = g^2
+temperature = 300.0         # K
+
+# 1 モード = 1 つの [[modes]]。並び順は結果に効かない。
+[[modes]]
+frequency = 1200.0
+coupling = 0.5
+
+[[modes]]
+frequency = 450.0
+coupling = 0.8
+
+[broadening]
+sigma = 150.0               # unit を省いたので cm^-1
+
+[grid]
+e_min = -4000.0
+e_max = 1000.0
+de = 5.0
+
+[selection]
+min_weight = 0.0001
+max_lines = 10000
+# max_quanta は省略すると自動（TOML に null はないので、書かずに既定へ任せる）
