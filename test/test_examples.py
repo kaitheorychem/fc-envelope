@@ -68,3 +68,22 @@ def test_the_two_sigma_in_ev_examples_say_the_same_thing():
     from_json = FCEnvelopeInput.from_path(EXAMPLES_DIR / "sigma-in-ev.json")
 
     assert from_toml.to_json() == from_json.to_json()
+
+
+def test_units_on_values_says_the_same_thing_as_the_block_unit_example():
+    """値に単位を添えた例が、同じ物理系を単位フィールドで書いた例と一致すること。
+
+    `units-on-values.toml` は組の書き方（ADR-0072）を見せるためのもので、丸めた
+    桁数のぶんだけずれる。同じ系を指していることが分かる精度で見る。
+    """
+    parsed = FCEnvelopeInput.from_path(EXAMPLES_DIR / "units-on-values.toml")
+
+    assert parsed.grid.unit == "eV"  # グリッドはブロックの単位でまとめて指定
+    assert parsed.broadening.unit == units.CANONICAL_ENERGY_UNIT  # σ は値の側で eV
+    assert parsed.to_broadening().sigma == pytest.approx(150.0, rel=1e-3)
+    frequencies = [mode.frequency for mode in parsed.to_system().modes]
+    assert frequencies == pytest.approx([1200.0, 450.0], rel=1e-3)
+    grid = parsed.to_grid()
+    assert (grid.e_min, grid.e_max, grid.de) == pytest.approx(
+        (-4500.0, 1000.0, 4.0), rel=1e-3
+    )

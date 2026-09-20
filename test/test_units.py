@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import numpy as np
 import pytest
 from conftest import compute_quietly
 
 from fcenvelope import FCEnvelopeInput, units
-from fcenvelope.errors import UnsupportedUnitError
+from fcenvelope.errors import InvalidInputError, UnsupportedUnitError
 
 
 def _in_unit(value: float, unit: str) -> float:
@@ -176,3 +177,133 @@ def test_an_unknown_block_unit_is_rejected(input_payload, block):
     payload[block] = {**payload[block], "unit": "nm"}
     with pytest.raises(UnsupportedUnitError):
         FCEnvelopeInput.from_obj(payload)
+
+
+# --- 値に添えて書く単位（ADR-0072） ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "written",
+    [150.0, [150.0], [150.0, "cm^-1"]],
+    ids=["bare", "pair-without-unit", "pair-with-unit"],
+)
+def test_the_three_ways_of_writing_a_value_agree(input_payload, written):
+    """素の数値・`[値]`・`[値, "単位"]` が同じ量を表すこと（ADR-0072）。"""
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": written}
+
+    assert FCEnvelopeInput.from_obj(payload).to_broadening().sigma == 150.0
+
+
+def test_a_value_may_carry_its_own_unit(input_payload):
+    """ブロックの `unit` を書かずに、値の側だけで単位を指定できること。"""
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": [_in_unit(150.0, "eV"), "eV"]}
+    converted = FCEnvelopeInput.from_obj(payload)
+
+    assert converted.broadening.unit == units.CANONICAL_ENERGY_UNIT
+    assert converted.to_broadening().sigma == pytest.approx(150.0, rel=1e-14)
+    _assert_same_spectrum(converted, FCEnvelopeInput.from_obj(input_payload))
+
+
+def test_the_unit_on_a_value_wins_over_the_block_unit(input_payload):
+    """値に添えた単位は、ブロックの単位より優先されること（ADR-0072）。"""
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": [_in_unit(150.0, "eV"), "eV"], "unit": "hartree"}
+
+    parsed = FCEnvelopeInput.from_obj(payload)
+
+    assert parsed.to_broadening().sigma == pytest.approx(150.0, rel=1e-14)
+
+
+def test_the_block_unit_still_covers_the_values_written_bare(input_payload):
+    """1 つのブロックの中で、組と素の数値が混ざってもそれぞれの単位で読まれること。"""
+    payload = copy.deepcopy(input_payload)
+    payload["grid"] = {
+        "e_min": [_in_unit(-4500.0, "eV"), "eV"],  # 自分の単位
+        "e_max": 1000.0,  # ブロックの単位
+        "points": {"de": 4.0},
+        "unit": "cm^-1",
+    }
+    grid = FCEnvelopeInput.from_obj(payload).to_grid()
+
+    assert grid.e_min == pytest.approx(-4500.0, rel=1e-14)
+    assert grid.e_max == pytest.approx(1000.0, rel=1e-14)
+    assert grid.de == pytest.approx(4.0, rel=1e-14)
+
+
+def test_a_mode_may_carry_its_own_frequency_unit(input_payload):
+    """モードごとに単位を書けること。書かないモードはトップレベルの既定で読む。"""
+    payload = copy.deepcopy(input_payload)
+    payload["modes"] = [
+        {"frequency": [_in_unit(1200.0, "eV"), "eV"], "coupling": 0.5},
+        {"frequency": 450.0, "coupling": 0.8},
+    ]
+    modes = FCEnvelopeInput.from_obj(payload).to_system().modes
+
+    assert modes[0].frequency == pytest.approx(1200.0, rel=1e-14)
+    assert modes[1].frequency == pytest.approx(450.0, rel=1e-14)
+    _assert_same_spectrum(
+        FCEnvelopeInput.from_obj(payload), FCEnvelopeInput.from_obj(input_payload)
+    )
+
+
+def test_a_coupling_unit_on_the_mode_satisfies_a_dimensioned_convention(input_payload):
+    """有次元の流儀で、単位をトップレベルではなく値に添えても通ること。"""
+    payload = copy.deepcopy(input_payload)
+    payload["coupling_convention"] = "lambda"
+    payload["modes"] = [{"frequency": 1200.0, "coupling": [_in_unit(300.0, "eV"), "eV"]}]
+
+    mode = FCEnvelopeInput.from_obj(payload).to_system().modes[0]
+
+    assert mode.huang_rhys == pytest.approx(0.25, rel=1e-14)  # S = lambda / eps
+
+
+def test_a_unit_on_a_dimensionless_coupling_names_the_mode(input_payload):
+    """無次元の流儀に単位を添えた誤りが、そのモードを名指しで報告されること。"""
+    payload = copy.deepcopy(input_payload)
+    payload["modes"] = [
+        {"frequency": 1200.0, "coupling": 0.5},
+        {"frequency": 450.0, "coupling": [0.8, "eV"]},
+    ]
+    parsed = FCEnvelopeInput.from_obj(payload)
+
+    with pytest.raises(InvalidInputError, match=r"modes\[1\]: .*dimensionless"):
+        parsed.to_system()
+
+
+def test_an_unknown_unit_on_a_value_is_rejected(input_payload):
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": [0.0186, "nm"]}
+
+    with pytest.raises(UnsupportedUnitError, match="unsupported energy unit"):
+        FCEnvelopeInput.from_obj(payload)
+
+
+@pytest.mark.parametrize(
+    "written",
+    [[], [150.0, "eV", 1.0], {"value": 150.0, "unit": "eV"}, "wide", True, [None, "eV"]],
+    ids=["empty", "too-long", "table", "not-a-number", "bool", "no-value"],
+)
+def test_a_malformed_value_names_the_ways_of_writing_one(input_payload, written):
+    """受け付けるのは 3 つの書き方だけで、誤りの報告がその 3 つを挙げること。"""
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": written}
+
+    with pytest.raises(InvalidInputError, match=r'\[value, "unit"\]'):
+        FCEnvelopeInput.from_obj(payload)
+
+
+def test_the_effective_settings_keep_the_way_the_value_was_written(input_payload):
+    """実効設定は書いたままの姿で、そのまま読み返せること（ADR-0065, 0072）。"""
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": [_in_unit(150.0, "eV"), "eV"]}
+    parsed = FCEnvelopeInput.from_obj(payload)
+
+    written = json.loads(parsed.to_json())
+
+    assert written["broadening"]["sigma"] == [_in_unit(150.0, "eV"), "eV"]
+    assert written["grid"]["e_min"] == -4500.0  # 素で書いたものは素のまま
+    assert FCEnvelopeInput.from_json(parsed.to_json()).to_broadening().sigma == (
+        pytest.approx(150.0, rel=1e-14)
+    )
