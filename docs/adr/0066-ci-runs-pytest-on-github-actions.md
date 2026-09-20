@@ -4,7 +4,7 @@
 - 状態: 受理
 
 push（main）と pull request のたびに、GitHub Actions で `uv run pytest` を走らせる。
-ワークフローは `.github/workflows/test.yml` の 1 本だけである。
+ワークフローは `.github/workflows/test.yaml` の 1 本だけである。
 
 これまでテストは手元で走らせるだけだった。手元で緑であることと、リポジトリの main が
 緑であることは別で、後者を確かめる場所が無かった。
