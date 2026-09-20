@@ -19,12 +19,14 @@ coupling = 0.8
 sigma = 150.0               # unit を省いたので cm^-1
 
 [grid]
-e_min = -4000.0
+e_min = -4500.0
 e_max = 1000.0
 
 # グリッド数の指定。n を直接書くか、de から決めるかのどちらか（ADR-0070）。
+# de = 4.0 だと全域グリッドが 4096 点（全域幅 16384）になり、端の折り返しに余裕が出る。
+# 同じ窓でも de = 5.0 では 2048 点（10240）に留まり、edge_intensity_ratio が警告を出す。
 [grid.points]
-de = 5.0
+de = 4.0
 
 [selection]
 min_weight = 0.0001

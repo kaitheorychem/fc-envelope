@@ -88,5 +88,5 @@ def input_payload() -> dict:
         ],
         "temperature": 300.0,
         "broadening": {"sigma": 150.0},
-        "grid": {"e_min": -4000.0, "e_max": 1000.0, "points": {"de": 5.0}},
+        "grid": {"e_min": -4500.0, "e_max": 1000.0, "points": {"de": 4.0}},
     }
