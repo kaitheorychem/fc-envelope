@@ -1,0 +1,41 @@
+# fcenvelope の入力ファイルの雛形。1 項目 1 行のコメントは何を設定する数かだけを言う。
+# 書き方の決まりごとは docs/readme/usage.md にある。
+#   uv run fcenvelope run input.toml     # エンベロープ F(E)
+#   uv run fcenvelope lines input.toml   # 離散 FC 因子の一覧
+
+schema_version = 3          # 入力ファイルの版。3 固定
+frequency_unit = "cm^-1"    # modes[].frequency の既定の単位
+coupling_convention = "g"   # coupling の流儀。g / delta / huang_rhys / lambda
+# coupling_unit = "cm^-1"   # 有次元の流儀（lambda）のときだけ書く
+temperature = 300.0         # 温度 T [K]。0 でもよい
+
+# 1 モード = 1 つの [[modes]]。並び順は結果に効かない。
+# 行数が多いなら modes = { path = "modes.csv" } で frequency, coupling の 2 列の CSV を指せる。
+[[modes]]
+frequency = 1200.0          # 振動数 ε
+coupling = 0.5              # 流儀に従った結合の値（g なら S = g^2）
+
+[[modes]]
+frequency = 450.0
+coupling = 0.8
+
+[broadening]
+unit = "cm^-1"              # このブロックの値の既定の単位
+sigma = 150.0               # 線 1 本のガウス幅 σ。値の側に単位を添えて [0.0186, "eV"] とも書ける
+
+[grid]
+unit = "cm^-1"              # e_min / e_max / points.de の既定の単位
+e_min = -4500.0             # 出力窓の下端。E 軸の原点は ZPL で、サイドバンドは負側に立つ
+e_max = 1000.0              # 出力窓の上端
+
+# 全域グリッドの取り方。n と de のどちらか一方だけを書く。
+[grid.points]
+de = 4.0                    # 出力グリッド間隔 ΔE。点数はこれを満たす最小の 2 の冪になる
+# shift = 1                 # de のときだけ。全域幅はそのままに点数を 2^shift 倍する
+# n = 4096                  # 点数を直接書くならこちら。2 の冪のみ
+
+# lines が拾う範囲。ブロックごと省略すると下の値になる。
+[selection]
+min_weight = 0.0001         # 保持する線の重みの下限
+max_lines = 10000           # 保持・列挙する線数の上限
+# max_quanta = 8            # 1 モードあたりの量子数の上限。省略すると自動

@@ -60,6 +60,21 @@ max_lines = 10000
 
 そのまま動く例が [`examples/basic.toml`](examples/basic.toml) にある。
 
+### 雛形から書き始める
+
+`fcenvelope template` が、この形の入力ファイルを項目ごとの短いコメント付きで書き出す。
+
+```bash
+uv run fcenvelope template                 # 端末に出して眺める
+uv run fcenvelope template -o input.toml   # ファイルに書いて、そこから直す
+```
+
+雛形が答えるのは「入力ファイルに何が書けるか」だけで、条件の作り込みは入っていない。
+値の意味・単位・流儀の選び方はこの文書の側にあり、雛形のコメントはそれを繰り返さない。
+
+既にある `input.toml` は上書きせず `kept ...` と言って残す（本当に上書きするなら
+`--force`）。コメントが雛形の中身なので書式は TOML だけで、`-o` に `.json` は渡せない。
+
 | フィールド | 意味 | 制約 |
 |---|---|---|
 | `schema_version` | 入力ファイルの版 | `3` 固定 |
@@ -331,6 +346,9 @@ E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 ## CLI
 
 ```bash
+# 入力ファイルの雛形を書き出す（コメント付き。既にあるファイルは残す）
+uv run fcenvelope template -o input.toml
+
 # 計算して結果 JSON を書き出す。実効設定と作図スクリプトも一緒に出る
 uv run fcenvelope run input.toml
 #   -> input_envelope.json          計算結果

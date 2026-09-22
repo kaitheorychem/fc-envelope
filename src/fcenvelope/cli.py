@@ -10,6 +10,7 @@
 実際に使われた設定は、計算を始める前に `RESULT_config.json` へ書き出す（ADR-0065）。
 
 入力ファイルは TOML と JSON のどちらでもよく、書式は拡張子で決まる（ADR-0069）。
+その入力ファイルを書き始めるための雛形は `template` が書き出す（ADR-0074）。
 
 `-o` は省略できる。省略時の出力は入力ファイルの名前を継いで、その隣に置く（ADR-0063）。
 
@@ -32,7 +33,7 @@ import typer
 from . import emit, logs
 from .envelope import compute_envelope
 from .errors import FCEnvelopeError, NumericalQualityWarning
-from .inputs import FCEnvelopeInput
+from .inputs import FCEnvelopeInput, template_text
 from .io import JsonObject, JsonValue, kind_for, load_any, save_any
 from .lines import compute_fc_lines
 from .result import EnvelopeResult, FCLine, LinesResult, Result
@@ -501,6 +502,46 @@ def script(
             typer.echo(f"wrote {output}")
         else:
             typer.echo(f"kept {output} (--force to regenerate)")
+
+
+@app.command()
+def template(
+    output: Annotated[
+        Optional[Path],
+        typer.Option(
+            "-o",
+            "--output",
+            metavar="INPUT.toml",
+            help="Write the template here. Without it, it goes to standard output.",
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite an existing file."),
+    ] = False,
+) -> None:
+    """Write a commented input file to start from.
+
+    Every field carries one short comment saying what the number sets; the rules
+    themselves are in docs/readme/usage.md. The template shows the shape of the
+    input file, not a tuned set of conditions.
+    """
+    text = template_text()
+    if output is None:
+        typer.echo(text, nl=False)
+        return
+    if output.suffix.lower() != ".toml":
+        raise typer.BadParameter(
+            "the template is TOML and its comments are the point of it, "
+            f"so it cannot be written as {output.suffix!r}",
+            param_hint="-o",
+        )
+    if output.exists() and not force:
+        typer.echo(f"kept {output} (--force to overwrite)")
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(text, encoding="utf-8")
+    typer.echo(f"wrote {output}")
 
 
 def _transition_label(line: FCLine) -> str:
