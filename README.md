@@ -58,6 +58,8 @@ uv run fcenvelope --version
 ## 使い方
 
 ```bash
+uv run fcenvelope template -o input.toml  # 入力ファイルの雛形。コメント付きで出る
+
 uv run fcenvelope run input.toml     # -> input_envelope.json, input_envelope_config.json,
                                      #    input_envelope_plot.py
 uv run python input_envelope_plot.py # 図を作る。端末にも出る
@@ -72,6 +74,9 @@ uv run python overlay_plot.py
 
 uv run fcenvelope run input.toml --log run.log  # 節目のログを残す
 ```
+
+入力ファイルは `fcenvelope template` が書き出す雛形から始められる。項目ごとに何を設定する
+数かのコメントが 1 行ずつ付いており、規則そのものは usage.md の側にある。
 
 `-o` を省くと入力ファイルの名前を継いだ出力が入力の隣に出る。その実行で実際に使われた
 設定は `*_config.json` に書き出され、それをそのまま入力として与えれば同じ計算になる。

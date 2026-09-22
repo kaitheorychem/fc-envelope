@@ -22,6 +22,9 @@
 書式は TOML と JSON の 2 つで、拡張子で振り分ける（ADR-0069）。読んだ後は同じ辞書に
 なるので、このモジュールの残りは書式を知らない。利用者が書くのは TOML で、JSON は
 実効設定（`to_json`）を読み返す側に残っている。
+
+書き始めるための雛形は `templates/input.toml` に実物のファイルとして持ち、`template_text`
+がそれを読むだけである（ADR-0074）。
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ import logging
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import Annotated, Final, Literal
 
@@ -74,6 +78,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "INPUT_FORMATS",
+    "INPUT_TEMPLATE",
     "MODES_CSV_COLUMNS",
     "SCHEMA_VERSION",
     "BroadeningSpec",
@@ -84,6 +89,7 @@ __all__ = [
     "Quantity",
     "SelectionSpec",
     "read_mode_specs_csv",
+    "template_text",
 ]
 
 #: 入力ファイルの版（`docs/adr/0040-schema-version-2-without-a-compatibility-layer.md`）。
@@ -370,6 +376,24 @@ def _parser_for(path: Path) -> Callable[[str], object]:
             f"{path.suffix!r} (expected one of {known})"
         )
     return parse
+
+
+#: 入力ファイルの雛形。パッケージデータとして `templates/` に置く（ADR-0074）。
+INPUT_TEMPLATE: Final = "input.toml"
+
+
+def template_text() -> str:
+    """入力ファイルの雛形のテキスト（ADR-0074）。
+
+    雛形は作図スクリプトのそれと同じく**実物のファイル**で、ここは読むだけである
+    （ADR-0059）。項目ごとの短いコメントが雛形の中身なので、コメントを書けない JSON の
+    雛形は置かない。
+    """
+    return (
+        resources.files(__package__)
+        .joinpath("templates", INPUT_TEMPLATE)
+        .read_text(encoding="utf-8")
+    )
 
 
 class FCEnvelopeInput(BaseModel):

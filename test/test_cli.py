@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from fcenvelope import load_envelope, load_lines, units
 from fcenvelope.cli import app
 from fcenvelope.emit import image_path_for, script_path_for
+from fcenvelope.inputs import template_text
 from fcenvelope.errors import NumericalQualityWarning
 
 runner = CliRunner()
@@ -606,6 +607,63 @@ def test_help_and_version():
     version = runner.invoke(app, ["--version"])
     assert version.exit_code == 0
     assert version.output.strip()
+
+
+# --- template サブコマンド ---
+
+
+def test_template_goes_to_standard_output(tmp_path):
+    """`-o` がなければ端末に出る。そのまま見て書き方を確かめられる（ADR-0074）。"""
+    invocation = runner.invoke(app, ["template"])
+
+    assert invocation.exit_code == 0, invocation.output
+    assert invocation.output == template_text()
+
+
+def test_the_written_template_runs(tmp_path):
+    """書き出した雛形が、そのまま `run` に渡せること。"""
+    path = tmp_path / "input.toml"
+    written = runner.invoke(app, ["template", "-o", str(path)])
+
+    assert written.exit_code == 0, written.output
+    assert f"wrote {path}" in written.output
+
+    invocation = runner.invoke(app, ["run", str(path)])
+
+    assert invocation.exit_code == 0, invocation.output
+    assert load_envelope(path.with_name("input_envelope.json")).energy.size > 0
+
+
+def test_template_keeps_an_existing_input_file(tmp_path):
+    """既にある入力ファイルは黙って潰さない（作図スクリプトと同じ扱い、ADR-0060）。"""
+    path = tmp_path / "input.toml"
+    path.write_text("# 書きかけ\n", encoding="utf-8")
+
+    invocation = runner.invoke(app, ["template", "-o", str(path)])
+
+    assert invocation.exit_code == 0, invocation.output
+    assert path.read_text(encoding="utf-8") == "# 書きかけ\n"
+    assert f"kept {path}" in invocation.output
+
+
+def test_force_overwrites_an_existing_input_file(tmp_path):
+    path = tmp_path / "input.toml"
+    path.write_text("# 書きかけ\n", encoding="utf-8")
+
+    invocation = runner.invoke(app, ["template", "-o", str(path), "--force"])
+
+    assert invocation.exit_code == 0, invocation.output
+    assert path.read_text(encoding="utf-8") == template_text()
+
+
+def test_the_template_cannot_be_written_as_json(tmp_path):
+    """雛形はコメントが本体なので TOML だけである（ADR-0074）。"""
+    path = tmp_path / "input.json"
+
+    invocation = runner.invoke(app, ["template", "-o", str(path)])
+
+    assert invocation.exit_code == 2
+    assert not path.exists()
 
 
 # --- lines サブコマンド ---

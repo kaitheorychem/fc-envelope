@@ -181,7 +181,9 @@ coupling と frequency の単位が揃うことは前提にできないので、
 
 書式は TOML（`.toml`）と JSON（`.json`）の 2 つで、**拡張子だけ**で振り分ける
 （`inputs.INPUT_FORMATS`、ADR-0069）。読んだ後は同じ辞書になるので、構造・単位・流儀の
-扱いは以下どちらの書式でも同じである。利用者が書くのは TOML、実効設定の読み返しが JSON。
+扱いは以下どちらの書式でも同じである。利用者が書くのは TOML、実効設定の読み返しが JSON。雛形は
+`src/fcenvelope/templates/input.toml` に実物の TOML ファイルとして置き、
+`inputs.template_text()` が読むだけである（ADR-0074）。
 
 ```toml
 schema_version = 3
@@ -367,8 +369,14 @@ fcenvelope lines INPUT.json [-o LINES.json] [--override KEY=VALUE]... [--top INT
 
 fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force] [--log FILE]
 
+fcenvelope template [-o INPUT.toml] [--force]
+
 fcenvelope --version
 ```
+
+`template` は入力ファイルの雛形を書き出す（ADR-0074）。`-o` がなければ標準出力へ、
+あれば既存のファイルを残して（`--force` で上書き）そこへ書く。`.toml` 以外の拡張子は
+使用法エラーである。計算も追跡すべき節目もないので `--log` は取らない。
 
 **図のつまみは CLI にない**（ADR-0057）。調整は生成された作図スクリプトを直して行う。
 
@@ -583,7 +591,7 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 | `logs.py` | 節目のログの出力先（ADR-0052） | errors |
 | `models.py` | 計算用の値の型 | errors, physics |
 | `units.py` | 流儀オブジェクト、エネルギー単位の換算表 | errors |
-| `inputs.py` | 入力ファイルの型（pydantic）と正準化、実効設定の書き出し | errors, logs, units, models |
+| `inputs.py` | 入力ファイルの型（pydantic）と正準化、実効設定の書き出し、入力の雛形 | errors, logs, units, models |
 | `result.py` | 結果クラス、`Provenance` | models |
 | `envelope.py` | グリッド構成・FFT | errors, logs, models, result |
 | `lines.py` | 漸化式・線の列挙 | errors, logs, models, physics, result |
