@@ -19,6 +19,10 @@
 `modes` はモードの配列を直接書くか、`{"path": "modes.csv"}` で CSV のモード表を
 参照する。参照はパース時に解決され、パース後は配列で書いた場合と区別がない。
 
+`run` だけが読むブロック（`broadening` / `grid`）と `lines` だけが読むブロック
+（`selection`）はどちらも省略でき、無いことが分かるのは読む側の `to_*` である
+（ADR-0075）。構造の検査と「その命令に必要か」の判定は別の関心事である。
+
 書式は TOML と JSON の 2 つで、拡張子で振り分ける（ADR-0069）。読んだ後は同じ辞書に
 なるので、このモジュールの残りは書式を知らない。利用者が書くのは TOML で、JSON は
 実効設定（`to_json`）を読み返す側に残っている。
@@ -101,6 +105,15 @@ SCHEMA_VERSION: Final = 3
 def _at(location: str, exc: InvalidInputError) -> InvalidInputError:
     """値の型が送出したエラーに、入力ファイル中の位置を添える（ADR-0051）。"""
     return InvalidInputError(f"{location}: {exc}")
+
+
+def _missing(block: str, command: str, what: str) -> InvalidInputError:
+    """読む側から見て必要なブロックが書かれていないときの報告（ADR-0075）。
+
+    どの命令がそれを必要とするかを添える。省略できるのは**読まない命令から見たとき**
+    だけなので、「必須ではない」とだけ言うと直し方が分からない。
+    """
+    return InvalidInputError(f"{block}: required by `fcenvelope {command}` (add {what})")
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,6 +414,10 @@ class FCEnvelopeInput(BaseModel):
 
     `run` は `temperature` / `broadening` / `grid` を、`lines` は `temperature` /
     `selection` を読む。どちらの副命令も同じファイルを使える（ADR-0005）。
+
+    片方だけが読むブロックはどれも省略でき、読む命令に必要なものが無いことは
+    `to_broadening()` / `to_grid()` が言う（ADR-0075）。`lines` しか使わない入力に
+    使われないグリッドを書かせない、というのがこの形の狙いである。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -424,9 +441,19 @@ class FCEnvelopeInput(BaseModel):
 
     modes: list[ModeSpec] = Field(min_length=1)
     temperature: float
-    broadening: BroadeningSpec
-    grid: EnergyGridSpec
+
+    broadening: BroadeningSpec | None = None
+    """線形状のブロック。`run` だけが読む（ADR-0075）。"""
+
+    grid: EnergyGridSpec | None = None
+    """エネルギーグリッドのブロック。`run` だけが読む（ADR-0075）。"""
+
     selection: SelectionSpec = SelectionSpec()
+    """選択条件のブロック。`lines` だけが読む。
+
+    こちらは省略すると既定値で埋まる。σ や E 窓と違って、つまみの既定値には
+    分子によらない意味があるからである（ADR-0021, 0075）。
+    """
 
     # pydantic の `mode="before"` の検証器は**検証前**の値を受ける。構造が分からない
     # 位置なので `object` で取り、pydantic に渡し返すものだけを返す。
@@ -516,7 +543,13 @@ class FCEnvelopeInput(BaseModel):
         return VibrationalSystem(modes)
 
     def to_broadening(self) -> Broadening:
-        """単位を消費して線形状を計算用の値にする。"""
+        """単位を消費して線形状を計算用の値にする。
+
+        ブロックが無ければここで止める。σ は現象論的なモデルパラメータで分子ごとに
+        決まるから、既定値では埋めない（ADR-0021, 0035, 0075）。
+        """
+        if self.broadening is None:
+            raise _missing("broadening", "run", "a [broadening] block with sigma")
         try:
             return Broadening(sigma=self.broadening.to_canonical(self.broadening.sigma))
         except InvalidInputError as exc:
@@ -528,7 +561,15 @@ class FCEnvelopeInput(BaseModel):
         全域グリッドの解決（2 の冪への丸め、`shift` の適用）は `EnergyGrid` の
         コンストラクタが持つ。ここが決めるのは**どちらの書き方か**だけである
         （ADR-0070）。
+
+        ブロックが無ければここで止める。E 窓に分子によらない既定値は無い（ADR-0075）。
         """
+        if self.grid is None:
+            raise _missing(
+                "grid",
+                "run",
+                "a [grid] block with e_min, e_max and [grid.points]",
+            )
         e_min = self.grid.to_canonical(self.grid.e_min)
         e_max = self.grid.to_canonical(self.grid.e_max)
         points = self.grid.points

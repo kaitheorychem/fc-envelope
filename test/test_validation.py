@@ -143,12 +143,8 @@ def test_value_types_reject_bad_values_when_built_directly():
         VibrationalMode(frequency=0.0, huang_rhys=0.5)
 
 
-@pytest.mark.parametrize("block", ["broadening", "grid"])
-def test_missing_conditions(input_payload, block):
-    payload = copy.deepcopy(input_payload)
-    del payload[block]
-    with pytest.raises(InvalidInputError):
-        FCEnvelopeInput.from_obj(payload)
+# `broadening` / `grid` を書かなかった場合は構造の誤りではなく、それを読む副命令から見た
+# 不足である。その扱いは `test_optional_blocks.py` にある（ADR-0075）。
 
 
 @pytest.mark.parametrize(
