@@ -84,9 +84,9 @@ uv run fcenvelope template -o input.toml   # ファイルに書いて、そこ�
 | `modes[].frequency` | ε_α | > 0 |
 | `modes[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | 流儀による |
 | `temperature` | T [K] | ≥ 0（0 は許可） |
-| `broadening.sigma` | 線形状の幅 σ | > 0 |
+| `broadening.sigma` | 線形状の幅 σ | > 0。`run` では必須 |
 | `broadening.unit` | σ の既定の単位 | 既定 `"cm^-1"` |
-| `grid.e_min` / `e_max` | 出力窓 | `e_min` < `e_max` |
+| `grid.e_min` / `e_max` | 出力窓 | `e_min` < `e_max`。`run` では必須 |
 | `grid.unit` | `e_min` / `e_max` / `points.de` の既定の単位 | 既定 `"cm^-1"` |
 | `grid.points.n` | 全域グリッドの点数 | 2 の冪。`de` とは排他 |
 | `grid.points.de` | 出力グリッド間隔 | > 0。`n` とは排他 |
@@ -95,8 +95,28 @@ uv run fcenvelope template -o input.toml   # ファイルに書いて、そこ�
 | `selection.max_lines` | 保持・列挙する線数の上限 | ≥ 1、既定 10000 |
 | `selection.max_quanta` | 1 モードあたりの振動量子数の上限 | ≥ 0、省略すると自動（既定）|
 
-`run` が読むのは `temperature` / `broadening` / `grid`、`lines` が読むのは
-`temperature` / `selection` で、どちらも同じファイルを使える。`selection` は省略できる。
+### どの副命令がどこを読むか
+
+1 つのファイルを両方の副命令が使う。読む場所だけが違う。
+
+| 位置 | 読む副命令 | 省いたら |
+|---|---|---|
+| `modes` / `temperature` / 単位・流儀 | 両方 | エラー |
+| `[broadening]` / `[grid]` | `run` だけ | `run` はエラー、`lines` は通る |
+| `[selection]` | `lines` だけ | 既定値で埋まる |
+
+片方しか使わないなら、読まれないブロックはブロックごと省ける。`lines` だけを回す入力に
+使わないグリッドを書く必要はない（ADR-0075）。
+
+```
+$ fcenvelope run modes-only.toml
+error: broadening: required by `fcenvelope run` (add a [broadening] block with sigma)
+```
+
+`[broadening]` と `[grid]` が省けても既定値では埋まらないのは、σ も E 窓も分子と目的ごとに
+決まる量だからである。書き忘れが黙って通って、それらしい図が出るほうが困る。`[selection]`
+が既定値で埋まるのは、あれが「どこで打ち切るか」のつまみで、分子によらない妥当な既定が
+あるからである。
 
 有次元の値（`modes[].frequency` / `modes[].coupling` / `broadening.sigma` /
 `grid.e_min` / `e_max` / `grid.points.de`）は、`sigma = [0.0186, "eV"]` のように値の側に

@@ -290,11 +290,17 @@ def _apply_override(data: JsonObject, item: str) -> None:
 
     知らない名前のブロックはそのまま作る。入力ファイルの型が `extra="forbid"` なので、
     誤字は検証で未知のフィールドとして報告される（ADR-0064）。
+
+    書かなかった `broadening` / `grid` は書き出しで `null` として現れる（ADR-0075）。
+    ここではそれを「無い」と同じに扱うので、`--override grid.e_min=...` でブロックごと
+    起こすこともできる。
     """
     path, value = _parse_override(item)
     block = data
     for depth, name in enumerate(path[:-1], start=1):
-        nested = block.setdefault(name, {})
+        nested = block.get(name)
+        if nested is None:
+            nested = block[name] = {}
         if not isinstance(nested, dict):
             raise typer.BadParameter(
                 f"{'.'.join(path[:depth])} is not a block",

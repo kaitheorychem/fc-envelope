@@ -2,6 +2,9 @@
 # 書き方の決まりごとは docs/readme/usage.md にある。
 #   uv run fcenvelope run input.toml     # エンベロープ F(E)
 #   uv run fcenvelope lines input.toml   # 離散 FC 因子の一覧
+#
+# ここから下は 3 つに分かれる。両方が読む設定、run だけが読む [broadening] / [grid]、
+# lines だけが読む [selection] である。読まないほうのブロックは消してもよい。
 
 schema_version = 3          # 入力ファイルの版。3 固定
 frequency_unit = "cm^-1"    # modes[].frequency の既定の単位
@@ -19,10 +22,12 @@ coupling = 0.5              # 流儀に従った結合の値（g なら S = g^2�
 frequency = 450.0
 coupling = 0.8
 
+# 線形状。run だけが読む。lines しか使わないならブロックごと省ける。
 [broadening]
 unit = "cm^-1"              # このブロックの値の既定の単位
 sigma = 150.0               # 線 1 本のガウス幅 σ。値の側に単位を添えて [0.0186, "eV"] とも書ける
 
+# エネルギーグリッド。run だけが読む。こちらもブロックごと省ける。
 [grid]
 unit = "cm^-1"              # e_min / e_max / points.de の既定の単位
 e_min = -4500.0             # 出力窓の下端。E 軸の原点は ZPL で、サイドバンドは負側に立つ
@@ -34,7 +39,7 @@ de = 4.0                    # 出力グリッド間隔 ΔE。点数はこれを�
 # shift = 1                 # de のときだけ。全域幅はそのままに点数を 2^shift 倍する
 # n = 4096                  # 点数を直接書くならこちら。2 の冪のみ
 
-# lines が拾う範囲。ブロックごと省略すると下の値になる。
+# lines が拾う範囲。lines だけが読む。省くと下の既定値で埋まる（σ や E 窓と違う）。
 [selection]
 min_weight = 0.0001         # 保持する線の重みの下限
 max_lines = 10000           # 保持・列挙する線数の上限
