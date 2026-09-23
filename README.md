@@ -58,21 +58,22 @@ uv run fcenvelope --version
 ## 使い方
 
 ```bash
-uv run fcenvelope template -o input.toml  # 入力ファイルの雛形。コメント付きで出る
+uv run fcenvelope template -o mymolecule.toml  # 入力ファイルの雛形。コメント付きで出る
 
-uv run fcenvelope run input.toml     # -> input_envelope.json, input_envelope_config.json,
-                                     #    input_envelope_plot.py
-uv run python input_envelope_plot.py # 図を作る。端末にも出る
-uv run fcenvelope lines input.toml   # -> input_lines.json, ...
+uv run fcenvelope run mymolecule.toml       # -> mymolecule_envelope.json,
+                                            #    mymolecule_envelope_config.json,
+                                            #    mymolecule_envelope_plot.py
+uv run python mymolecule_envelope_plot.py   # 図を作る。端末にも出る
+uv run fcenvelope lines mymolecule.toml     # -> mymolecule_lines.json, ...
 
 # 名前を決めるなら -o。条件を差し替えるなら --override
-uv run fcenvelope run input.toml -o result.json --override temperature=0
+uv run fcenvelope run mymolecule.toml -o result.json --override temperature=0
 
 # 2つを1枚に重ねる作図スクリプトを作る
-uv run fcenvelope script input_envelope.json input_lines.json -o overlay_plot.py
+uv run fcenvelope script mymolecule_envelope.json mymolecule_lines.json -o overlay_plot.py
 uv run python overlay_plot.py
 
-uv run fcenvelope run input.toml --log run.log  # 節目のログを残す
+uv run fcenvelope run mymolecule.toml --log run.log  # 節目のログを残す
 ```
 
 入力ファイルは `fcenvelope template` が書き出す雛形から始められる。項目ごとに何を設定する
@@ -92,7 +93,7 @@ from fcenvelope import (
     plot_envelope, plot_overlay, save_envelope, save_lines,
 )
 
-parsed = FCEnvelopeInput.from_path("input.toml")
+parsed = FCEnvelopeInput.from_path("mymolecule.toml")
 system = parsed.to_system()
 
 result = compute_envelope(

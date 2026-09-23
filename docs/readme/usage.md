@@ -65,14 +65,14 @@ max_lines = 10000
 `fcenvelope template` が、この形の入力ファイルを項目ごとの短いコメント付きで書き出す。
 
 ```bash
-uv run fcenvelope template                 # 端末に出して眺める
-uv run fcenvelope template -o input.toml   # ファイルに書いて、そこから直す
+uv run fcenvelope template                      # 端末に出して眺める
+uv run fcenvelope template -o mymolecule.toml   # ファイルに書いて、そこから直す
 ```
 
 雛形が答えるのは「入力ファイルに何が書けるか」だけで、条件の作り込みは入っていない。
 値の意味・単位・流儀の選び方はこの文書の側にあり、雛形のコメントはそれを繰り返さない。
 
-既にある `input.toml` は上書きせず `kept ...` と言って残す（本当に上書きするなら
+既にある `mymolecule.toml` は上書きせず `kept ...` と言って残す（本当に上書きするなら
 `--force`）。コメントが雛形の中身なので書式は TOML だけで、`-o` に `.json` は渡せない。
 
 | フィールド | 意味 | 制約 |
@@ -303,7 +303,7 @@ e_max = 0.124
 `--override` の値も同じ組で渡せる（値は書式によらず JSON として読まれる）。
 
 ```bash
-uv run fcenvelope run input.toml --override 'broadening.sigma=[0.0186, "eV"]'
+uv run fcenvelope run mymolecule.toml --override 'broadening.sigma=[0.0186, "eV"]'
 ```
 
 CSV で渡すモードには単位を添えられない。CSV に書けるのは数だけなので、単位は入力
@@ -367,37 +367,37 @@ E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 
 ```bash
 # 入力ファイルの雛形を書き出す（コメント付き。既にあるファイルは残す）
-uv run fcenvelope template -o input.toml
+uv run fcenvelope template -o mymolecule.toml
 
 # 計算して結果 JSON を書き出す。実効設定と作図スクリプトも一緒に出る
-uv run fcenvelope run input.toml
-#   -> input_envelope.json          計算結果
-#   -> input_envelope_config.json   この実行で実際に使われた設定
-#   -> input_envelope_plot.py       作図スクリプト
+uv run fcenvelope run mymolecule.toml
+#   -> mymolecule_envelope.json          計算結果
+#   -> mymolecule_envelope_config.json   この実行で実際に使われた設定
+#   -> mymolecule_envelope_plot.py       作図スクリプト
 
 # 図を作る。ここを何度でも繰り返す（次の節を参照）
-uv run python input_envelope_plot.py
+uv run python mymolecule_envelope_plot.py
 
 # 名前を決めるなら -o
-uv run fcenvelope run input.toml -o result.json
+uv run fcenvelope run mymolecule.toml -o result.json
 
 # 条件だけ振る（modes は上書きできない。値は入力ファイルと同じ単位で読む）
-uv run fcenvelope run input.toml -o result_0K.json --override temperature=0
+uv run fcenvelope run mymolecule.toml -o result_0K.json --override temperature=0
 
 # 離散 FC 因子の一覧を書き出す
-uv run fcenvelope lines input.toml -o lines.json --override selection.min_weight=1e-5
+uv run fcenvelope lines mymolecule.toml -o lines.json --override selection.min_weight=1e-5
 
 # 2 つの結果を 1 枚に重ねる作図スクリプトを作る（与える順序は問わない）
 uv run fcenvelope script result.json lines.json -o overlay_plot.py
 
 # 名前を変えながら掃引するときは作図スクリプトを作らせない
-uv run fcenvelope run input.toml -o T100.json --override temperature=100 --no-script
+uv run fcenvelope run mymolecule.toml -o T100.json --override temperature=100 --no-script
 
 # 版を表示して終了する
 uv run fcenvelope --version
 
 # 節目のログをファイルに残す（どの副命令でも使える）
-uv run fcenvelope run input.toml --log run.log
+uv run fcenvelope run mymolecule.toml --log run.log
 ```
 
 終了コードは 正常 `0` / 入力・計算エラー `1` / 使用法エラー `2`。
@@ -409,8 +409,8 @@ uv run fcenvelope run input.toml --log run.log
 
 | 呼び出し | 結果 | 実効設定 | 作図スクリプト |
 |---|---|---|---|
-| `fcenvelope run input.toml` | `input_envelope.json` | `input_envelope_config.json` | `input_envelope_plot.py` |
-| `fcenvelope lines input.toml` | `input_lines.json` | `input_lines_config.json` | `input_lines_plot.py` |
+| `fcenvelope run mymolecule.toml` | `mymolecule_envelope.json` | `mymolecule_envelope_config.json` | `mymolecule_envelope_plot.py` |
+| `fcenvelope lines mymolecule.toml` | `mymolecule_lines.json` | `mymolecule_lines_config.json` | `mymolecule_lines_plot.py` |
 
 `_envelope` / `_lines` が付くので、既定の出力が入力ファイルを潰すことはなく、同じ入力に
 `run` と `lines` を当てても衝突しない。結果と実効設定は計算のたびに上書きされ、手で直す
@@ -422,8 +422,8 @@ uv run fcenvelope run input.toml --log run.log
 キーは**入力ファイル中の項目の位置**そのもので、入れ子はドットで繋ぐ。
 
 ```bash
-uv run fcenvelope run input.toml --override temperature=0 --override grid.points.de=2.5
-uv run fcenvelope lines input.toml --override selection.max_quanta=null
+uv run fcenvelope run mymolecule.toml --override temperature=0 --override grid.points.de=2.5
+uv run fcenvelope lines mymolecule.toml --override selection.max_quanta=null
 ```
 
 - 値は**入力ファイルの書式によらず** JSON として読む。`null` も数も文字列（`eV` など）も
@@ -441,8 +441,8 @@ uv run fcenvelope lines input.toml --override selection.max_quanta=null
 ここを見れば分かる。
 
 ```bash
-uv run fcenvelope run input.toml --override temperature=77
-cat input_envelope_config.json     # -> "temperature": 77.0, "selection": { ... 既定値 ... }
+uv run fcenvelope run mymolecule.toml --override temperature=77
+cat mymolecule_envelope_config.json   # -> "temperature": 77.0, "selection": { ... 既定値 ... }
 ```
 
 書き出しは入力ファイルと同じ単位・流儀のままなので、手元の入力ファイルと突き合わせられる。
@@ -455,7 +455,7 @@ cat input_envelope_config.json     # -> "temperature": 77.0, "selection": { ... 
 埋めた結果がそのまま書けることを採る（ADR-0069）。
 
 ```bash
-uv run fcenvelope run input_envelope_config.json -o again.json
+uv run fcenvelope run mymolecule_envelope_config.json -o again.json
 ```
 
 計算の前に書くので、値の誤りで止まった実行でも「何が使われるはずだったか」は残る。
@@ -469,7 +469,7 @@ uv run fcenvelope run input_envelope_config.json -o again.json
 `run` と `lines` は結果 JSON の隣に作図スクリプトを置く。図はそれを走らせて作る。
 
 ```bash
-uv run fcenvelope run input.toml -o result.json   # 重いのはここだけ
+uv run fcenvelope run mymolecule.toml -o result.json   # 重いのはここだけ
 uv run python result_plot.py                      # 端末に図が出る
 vi result_plot.py                                 # 軸・色・注釈を直す
 uv run python result_plot.py                      # すぐ出る
@@ -527,7 +527,7 @@ uv run python result_plot.py result_0K.json
 新しいデータに当たる。
 
 ```bash
-uv run fcenvelope run input.toml -o result.json --override broadening.sigma=80
+uv run fcenvelope run mymolecule.toml -o result.json --override broadening.sigma=80
 #   -> result.json を更新、result_plot.py はそのまま（kept ... と出る）
 uv run python result_plot.py
 ```
@@ -535,7 +535,7 @@ uv run python result_plot.py
 作り直したいときは `--force-script`、保存済みの結果から作り直すときは `script` を使う。
 
 ```bash
-uv run fcenvelope run input.toml -o result.json --force-script
+uv run fcenvelope run mymolecule.toml -o result.json --force-script
 uv run fcenvelope script result.json -o result_plot.py --force
 ```
 
@@ -549,15 +549,15 @@ uv run fcenvelope script result.json -o result_plot.py --force
 
 ```bash
 # FC 因子と遷移エネルギーを書き出し、重みの上位 10 本を表示する
-uv run fcenvelope lines input.toml -o lines.json
+uv run fcenvelope lines mymolecule.toml -o lines.json
 uv run python lines_plot.py              # 棒スペクトルはこれで出る
 
 # T = 0 で、より細かい閾値まで拾う
-uv run fcenvelope lines input.toml -o lines_0K.json --override temperature=0 \
+uv run fcenvelope lines mymolecule.toml -o lines_0K.json --override temperature=0 \
     --override selection.min_weight=1e-6
 
 # 表示だけ増やす（--top 0 で表を出さない）
-uv run fcenvelope lines input.toml -o lines.json --top 30
+uv run fcenvelope lines mymolecule.toml -o lines.json --top 30
 ```
 
 `--top` が決めるのは端末に出す**表**の行数だけで、書き出す線の本数ではない。
@@ -622,7 +622,7 @@ result = compute_envelope(
 )
 
 # 入力ファイルから（流儀と単位はここで消費される。modes の CSV 参照もここで解決）
-parsed = FCEnvelopeInput.from_path("input.toml")
+parsed = FCEnvelopeInput.from_path("mymolecule.toml")
 result = compute_envelope(
     parsed.to_system(),
     temperature=parsed.to_temperature(),
@@ -700,8 +700,8 @@ for temperature in (0.0, 77.0, 300.0):
 `run` の曲線と `lines` の棒は同じ物理量の別表現で、E 軸の規約も共通しているので 1 枚に重ねられる。
 
 ```bash
-uv run fcenvelope run    input.toml -o result.json
-uv run fcenvelope lines  input.toml -o lines.json
+uv run fcenvelope run    mymolecule.toml -o result.json
+uv run fcenvelope lines  mymolecule.toml -o lines.json
 uv run fcenvelope script result.json lines.json -o overlay_plot.py
 uv run python overlay_plot.py                     # -> fcenvelope-overlay.png
 ```
@@ -785,8 +785,8 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 診断値（上の節）で、こちらが答えるのは**どこで止まったか**だけである。
 
 ```
-2026-09-17 12:34:56,102 INFO fcenvelope.inputs: begin read input.toml
-2026-09-17 12:34:56,104 INFO fcenvelope.inputs: end read input.toml (0.002 s)
+2026-09-17 12:34:56,102 INFO fcenvelope.inputs: begin read mymolecule.toml
+2026-09-17 12:34:56,104 INFO fcenvelope.inputs: end read mymolecule.toml (0.002 s)
 2026-09-17 12:34:56,104 INFO fcenvelope.envelope: begin envelope: 2 modes, T=300 K, de=4
 2026-09-17 12:34:56,131 INFO fcenvelope.envelope: end envelope: 2 modes, T=300 K, de=4 (0.027 s)
 2026-09-17 12:34:56,131 INFO fcenvelope.envelope: envelope: 1376 points, N_fft=4096, area=1, captured=0.999013
@@ -813,8 +813,8 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 | 指定せず、正常に終わった | **書かない**（ログのためにファイルに触れない） |
 
 ```bash
-uv run fcenvelope run input.toml -o result.json --log run.log   # 常に残す
-uv run fcenvelope run input.toml -o result.json                 # 失敗したときだけ result.log
+uv run fcenvelope run mymolecule.toml -o result.json --log run.log   # 常に残す
+uv run fcenvelope run mymolecule.toml -o result.json                  # 失敗したときだけ result.log
 ```
 
 異常終了には、入力・計算のエラーだけでなく、想定外のエラーと **Ctrl-C** も含まれる。
