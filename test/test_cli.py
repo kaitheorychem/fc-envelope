@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import json
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import run_script
 from typer.testing import CliRunner
 
 from fcenvelope import load_envelope, load_lines, units
@@ -443,6 +445,92 @@ def test_the_default_output_goes_next_to_the_input(tmp_path, input_payload, monk
     assert invocation.exit_code == 0, invocation.output
     assert (elsewhere / "input_envelope.json").is_file()
     assert list(here.iterdir()) == []
+
+
+def _generate_everything(
+    input_path, *, run_output=None, lines_output=None
+) -> dict[str, bytes]:
+    """1 つの入力から作れるファイルを全部作り、新しくできたものの名前と中身を返す。
+
+    結果・実効設定・作図スクリプトに加えて、失敗時の痕跡のログと、スクリプトを
+    走らせてできる画像まで作る。名前の規則を関数ごとに信じるのではなく、実際に
+    ディレクトリに現れたものを数える。
+    """
+    folder = input_path.parent
+    before = {path.name for path in folder.iterdir()}
+
+    def target(output):
+        return [] if output is None else ["-o", str(output)]
+
+    failing = [
+        ["run", str(input_path), *target(run_output), "--override", "grid.e_min=5000"],
+        ["lines", str(input_path), *target(lines_output),
+         "--override", "selection.min_weight=0"],
+    ]
+    for arguments in failing:
+        assert runner.invoke(app, arguments).exit_code == 1
+    succeeding = [
+        ["run", str(input_path), *target(run_output)],
+        ["lines", str(input_path), *target(lines_output), "--top", "0"],
+    ]
+    for arguments in succeeding:
+        invocation = runner.invoke(app, arguments)
+        assert invocation.exit_code == 0, invocation.output
+
+    created = sorted(set(path.name for path in folder.iterdir()) - before)
+    for name in created:
+        if name.endswith(".py"):
+            finished = run_script(folder / name)
+            assert finished.returncode == 0, finished.stderr.decode()
+
+    return {
+        path.name: path.read_bytes()
+        for path in folder.iterdir()
+        if path.name not in before
+    }
+
+
+def test_two_inputs_in_one_folder_never_write_the_same_file(tmp_path, input_payload):
+    """既定の名前はどれも入力の名前を継ぐので、隣の入力の結果を上書きしない（ADR-0063）。
+
+    固定名のファイルが 1 つでも生まれると、同じディレクトリで 2 つ目の入力を流した
+    ときに黙って潰される。生成物の種類を増やしたときにそれを入れないための見張り。
+    """
+    alpha = tmp_path / "alpha.json"
+    beta = tmp_path / "beta.json"
+    for path in (alpha, beta):
+        path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    from_alpha = _generate_everything(alpha)
+    from_beta = _generate_everything(beta)
+
+    kinds = {".json", ".py", ".png", ".log"}
+    assert {Path(name).suffix for name in from_alpha} == kinds
+    assert all("alpha" in name for name in from_alpha), sorted(from_alpha)
+    assert all("beta" in name for name in from_beta), sorted(from_beta)
+    assert len(from_beta) == len(from_alpha)
+    for name, content in from_alpha.items():
+        assert (tmp_path / name).read_bytes() == content, name
+
+
+def test_every_derived_name_follows_the_output_name(tmp_path, input_file):
+    """`-o` を書けば、そこから先の名前は入力ではなく `-o` の名前を継ぐ（ADR-0060, 0063）。
+
+    温度を振って `-o T100.json` … と書く掃引で、添えるファイルが点ごとに分かれる
+    ことを確かめる。
+    """
+    created = _generate_everything(
+        input_file,
+        run_output=tmp_path / "T100.json",
+        lines_output=tmp_path / "L100.json",
+    )
+
+    kinds = {".json", ".py", ".png", ".log"}
+    assert {Path(name).suffix for name in created} == kinds
+    envelope = [name for name in created if "T100" in name]
+    lines = [name for name in created if "L100" in name]
+    assert sorted(envelope + lines) == sorted(created)
+    assert len(envelope) == len(lines)
 
 
 # --- 実効設定の書き出し（ADR-0065） ---
