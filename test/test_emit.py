@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import compute_quietly, lines_quietly
+from conftest import compute_quietly, lines_quietly, run_script
 
 from fcenvelope import Broadening, EnergyGrid, save_envelope, save_lines
 from fcenvelope.io import SCHEMA_VERSION
@@ -30,16 +30,6 @@ from fcenvelope.emit import (
 )
 
 KITTY_CHUNK = re.compile(rb"\033_G([^;]*);([^\033]*)\033\\")
-
-
-def run_script(script: Path, *arguments: str) -> subprocess.CompletedProcess:
-    """生成されたスクリプトを、標準出力が端末でない状態で走らせる。"""
-    return subprocess.run(
-        [sys.executable, str(script), *arguments],
-        capture_output=True,
-        env={**os.environ, "MPLBACKEND": "Agg"},
-        check=False,
-    )
 
 
 def run_script_on_a_terminal(

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import warnings
+from pathlib import Path
 
 import matplotlib
 import pytest
@@ -77,7 +81,14 @@ def multi_mode() -> VibrationalSystem:
 
 @pytest.fixture
 def input_payload() -> dict:
-    """`docs/dev/spec/interface.md`「ファイル形式 / 入力」のスキーマ。"""
+    """`docs/dev/spec/interface.md`「ファイル形式 / 入力」のスキーマ。
+
+    テストはこれを JSON で書き出して入力ファイルにすることが多いが、それは辞書を
+    書き出す手段が標準ライブラリに JSON しかない（`tomllib` は読むだけ）からで、
+    入力の基本が JSON だという意味ではない。人が書く入力の基本は TOML で、文書の
+    例もそちらで書く（ADR-0069）。書式が読んだ後に消えることは `test_toml_input.py`
+    が確かめているので、書式に関わらないテストは JSON のままでよい。
+    """
     return {
         "schema_version": 3,
         "frequency_unit": "cm^-1",
@@ -90,3 +101,13 @@ def input_payload() -> dict:
         "broadening": {"sigma": 150.0},
         "grid": {"e_min": -4500.0, "e_max": 1000.0, "points": {"de": 4.0}},
     }
+
+
+def run_script(script: Path, *arguments: str) -> subprocess.CompletedProcess:
+    """生成されたスクリプトを、標準出力が端末でない状態で走らせる。"""
+    return subprocess.run(
+        [sys.executable, str(script), *arguments],
+        capture_output=True,
+        env={**os.environ, "MPLBACKEND": "Agg"},
+        check=False,
+    )
