@@ -305,7 +305,9 @@ CSV が報告するのは**構造の誤りだけ**で、行番号が付くのも
 
 CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, *, explicit)` と、
 それをモード表に使う `inputs.read_mode_specs_csv(path, columns=None)` に分かれる。列は
-`inputs.CsvColumn(name, unit)` で表す。
+`inputs.CsvColumn(name, unit)` で表し、ファイルに書かれた列の並び（`columns`）は
+`inputs.csv_columns(written, units, *, location)` が `CsvColumn` の並びにする。ゴールデン
+ケースの参照データ（ADR-0082）も同じ 2 つで読む。
 
 `run` は `temperature` / `broadening` / `grid` を、`lines` は `temperature` / `selection` を
 読む。どちらの副命令も同じファイルを使える（ADR-0005）。

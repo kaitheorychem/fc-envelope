@@ -1,0 +1,20 @@
+# ゴールデンケースの記述（ADR-0082、手順は docs/dev/golden-tests.md）。
+# 計算の条件は同じディレクトリの input.toml、参照データはここに書いた CSV にある。
+
+[source]
+program = "analytic"
+note = """
+解析解。T = 0 の単一モードで、線の重みは Poisson 分布 w_k = exp(-S) S^k / k!
+（S = 0.5）、線は E = -k * 1200 cm^-1 に立つ。エンベロープは各線に幅 150 cm^-1 の
+ガウス型を掛けて足したもので、縦軸の大きさは任意（正規化して比べる）。
+線のエネルギーは単位を添える例として eV で書いた。
+"""
+
+[envelope]
+csv = { path = "envelope.csv", columns = [["energy", "cm^-1"], "density"] }
+tolerance = 1e-8
+
+[lines]
+csv = { path = "lines.csv", columns = [["energy", "eV"], "weight"] }
+energy_tolerance = [0.01, "cm^-1"]
+tolerance = 1e-10

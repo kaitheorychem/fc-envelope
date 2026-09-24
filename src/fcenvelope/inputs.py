@@ -107,6 +107,7 @@ __all__ = [
     "ModesSpec",
     "Quantity",
     "SelectionSpec",
+    "csv_columns",
     "read_csv_table",
     "read_mode_specs_csv",
     "template_text",
@@ -464,17 +465,22 @@ def read_mode_specs_csv(
     return read_csv_table(path, columns, ModeSpec.model_validate, explicit=explicit)
 
 
-def _csv_columns(
-    written: object, units: dict[str, Callable[[object], UnitForm]]
+def csv_columns(
+    written: object,
+    units: dict[str, Callable[[object], UnitForm]],
+    *,
+    location: str,
 ) -> list[CsvColumn]:
-    """入力ファイルに書かれた列の並びを `CsvColumn` の並びにする（ADR-0079）。
+    """ファイルに書かれた列の並びを `CsvColumn` の並びにする（ADR-0079）。
 
     各要素は列名か、列名に単位を添えた組（`["coupling", "a.u."]` /
     `["coupling", 1e-4, "a.u."]`）である。組の形は値に単位を添える形と同じで、値の
     位置に列名が入る。`units` は列名から、その列の単位を正式形にする関数を引く表で、
-    この表の列をちょうど 1 回ずつ並べる。
+    この表の列をちょうど 1 回ずつ並べる。`location` は誤りの報告に添える位置である。
+
+    入力ファイルのモード表のほか、ゴールデンケースの参照データ（ADR-0082）も同じ書き方で
+    列を書くので、表一般の `read_csv_table` と組にして公開している。
     """
-    location = "modes.csv.columns"
     forms = '"<column>", ["<column>", "<unit>"] or ["<column>", <scale>, "<unit>"]'
     if not isinstance(written, list):
         raise InvalidInputError(f"{location}: expected a list of columns, got {written!r}")
@@ -607,12 +613,13 @@ class ModesSpec(_Spec):
             )
         columns = None
         if "columns" in reference:
-            columns = _csv_columns(
+            columns = csv_columns(
                 reference["columns"],
                 {
                     "frequency": _energy_unit,
                     "coupling": lambda written: resolve("coupling", written),
                 },
+                location="modes.csv.columns",
             )
         base_dir = Path((info.context or {}).get("base_dir") or ".")
         resolved["rows"] = read_mode_specs_csv(base_dir / path, columns)
