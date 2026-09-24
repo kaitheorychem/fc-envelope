@@ -70,9 +70,9 @@ logger = logging.getLogger(__name__)
 ENVELOPE_KIND = "fcenvelope.envelope"
 LINES_KIND = "fcenvelope.fc_lines"
 
-#: 結果ファイルの版。入力ファイルの版（`inputs.SCHEMA_VERSION`）と同じ番号を共有
-#: するが、`io` は `inputs` に依存しないので（ADR-0041）ここに別に持つ。両者が
-#: 一致していることはテストで確かめる。
+#: 結果ファイルの版。版 3 までは入力ファイルの版（`inputs.SCHEMA_VERSION`）と同じ
+#: 番号を共有していたが、入力ファイルだけが 4 へ上がった（ADR-0079）。入力エコーは
+#: 正準形で既定の単位を持たないので、モード表の形の変更を受けない。
 SCHEMA_VERSION = 3
 
 #: 結果ファイルの形式の知識。計算側は常に cm^-1 しか扱わないので、単位は結果クラス

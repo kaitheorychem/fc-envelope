@@ -2,15 +2,17 @@
 # 3 つの値が同じ単位なのでブロックの unit でまとめて指定する。
 #   uv run fcenvelope run docs/readme/examples/units-on-values.toml -o result.json
 
-schema_version = 3
-coupling_convention = "g"
+schema_version = 4
 temperature = 300.0
 
-[[modes]]
+[modes]
+coupling_convention = "g"
+
+[[modes.rows]]
 frequency = 1200.0            # frequency_unit を省いたので cm^-1
 coupling = 0.5
 
-[[modes]]
+[[modes.rows]]
 frequency = [0.05579, "eV"]   # このモードだけ eV（450 cm^-1）
 coupling = 0.8
 

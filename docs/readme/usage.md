@@ -28,17 +28,20 @@ E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [
 出番は主に実効設定の読み返しである（下の「JSON で書く」）。
 
 ```toml
-schema_version = 3
-frequency_unit = "cm^-1"
-coupling_convention = "g"
+schema_version = 4
 temperature = 300.0
 
-# 1 モード = 1 つの [[modes]]。並び順は結果に効かない。
-[[modes]]
+# モード表。単位と流儀はこの表の列にだけ効く。
+[modes]
+frequency_unit = "cm^-1"
+coupling_convention = "g"
+
+# 1 モード = 1 つの [[modes.rows]]。並び順は結果に効かない。
+[[modes.rows]]
 frequency = 1200.0
 coupling = 0.5
 
-[[modes]]
+[[modes.rows]]
 frequency = 450.0
 coupling = 0.8
 
@@ -60,6 +63,10 @@ max_lines = 10000
 
 そのまま動く例が [`examples/basic.toml`](examples/basic.toml) にある。
 
+**トップレベルに単位の欄はない。** 既定の単位は、それを使うブロックがそれぞれ持つ。
+モード表の列の単位は `[modes]`、σ は `[broadening]`、グリッドは `[grid]` に書く
+（[単位](#単位)）。モードが多ければ、行を CSV から読める（[モードを CSV で渡す](#モードを-csv-で渡す)）。
+
 ### 雛形から書き始める
 
 `fcenvelope template` が、この形の入力ファイルを項目ごとの短いコメント付きで書き出す。
@@ -77,12 +84,13 @@ uv run fcenvelope template -o mymolecule.toml   # ファイルに書いて、そ
 
 | フィールド | 意味 | 制約 |
 |---|---|---|
-| `schema_version` | 入力ファイルの版 | `3` 固定 |
-| `frequency_unit` | `modes[].frequency` の既定の単位 | 下の単位表のいずれか（別名・倍率も可）、既定 `"cm^-1"` |
-| `coupling_convention` | `coupling` の流儀（下の流儀表） | 既定は `"g"` |
-| `coupling_unit` | `modes[].coupling` の既定の単位 | 有次元の流儀では必須、無次元の流儀では書けない |
-| `modes[].frequency` | ε_α | > 0 |
-| `modes[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | 流儀による |
+| `schema_version` | 入力ファイルの版 | `4` 固定 |
+| `modes.coupling_convention` | `coupling` の列の流儀（下の流儀表） | 既定は `"g"` |
+| `modes.frequency_unit` | `frequency` の列の既定の単位 | 下の単位表のいずれか（別名・倍率も可）、既定 `"cm^-1"` |
+| `modes.coupling_unit` | `coupling` の列の既定の単位 | 有次元の流儀では必須、無次元の流儀では書けない |
+| `modes.rows[].frequency` | ε_α | > 0 |
+| `modes.rows[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | 流儀による |
+| `modes.csv` | 行を CSV から読むときの参照 | `rows` とは排他。[モードを CSV で渡す](#モードを-csv-で渡す) |
 | `temperature` | T [K] | ≥ 0（0 は許可） |
 | `broadening.sigma` | 線形状の幅 σ | > 0。`run` では必須 |
 | `broadening.unit` | σ の既定の単位 | 既定 `"cm^-1"` |
@@ -101,7 +109,7 @@ uv run fcenvelope template -o mymolecule.toml   # ファイルに書いて、そ
 
 | 位置 | 読む副命令 | 省いたら |
 |---|---|---|
-| `modes` / `temperature` / 単位・流儀 | 両方 | エラー |
+| `[modes]` / `temperature` | 両方 | エラー |
 | `[broadening]` / `[grid]` | `run` だけ | `run` はエラー、`lines` は通る |
 | `[selection]` | `lines` だけ | 既定値で埋まる |
 
@@ -118,7 +126,7 @@ error: broadening: required by `fcenvelope run` (add a [broadening] block with s
 が既定値で埋まるのは、あれが「どこで打ち切るか」のつまみで、分子によらない妥当な既定が
 あるからである。
 
-有次元の値（`modes[].frequency` / `modes[].coupling` / `broadening.sigma` /
+有次元の値（`modes.rows[].frequency` / `modes.rows[].coupling` / `broadening.sigma` /
 `grid.e_min` / `e_max` / `grid.points.de`）は、`sigma = [0.0186, "eV"]` のように値の側に
 単位を添えても書ける。[値に単位を添えて書く](#値に単位を添えて書く)を参照。
 
@@ -155,11 +163,23 @@ shift = 1       # 任意。冪を 1 段上げ、ΔE = 2.5、点数は倍
 実際に使われた点数と ΔE は、`run` の終了行（`N=...`）と結果ファイルの
 `input.grid` / `diagnostics` に残る。
 
+E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
+ここで λ = Σ S_α ε_α、Var = Σ S_α ε_α²(2n_α+1) + σ²。
+
+これは**窓**の目安である。端の折り返し（`edge_intensity_ratio`）が見ているのは窓では
+なく**全域グリッドの端**で、全域幅は 2 の冪に切り上げた点数 × ΔE だから、窓を少し
+広げても切り上げ先の冪が変わらないあいだは 1 も動かない。窓が目安を満たしているのに
+警告が出るときは、窓を広げるより `de` を変えるほうが効くことがある。冒頭の入力ファイルの例（λ = 588）
+では、窓 −4500〜1000 に対して `de = 5.0` だと全域幅が 10240 で
+`edge_intensity_ratio` = 1.9e-4（警告が出る）、`de = 4.0` だと 16384 になって 9.4e-8 に落ちる。
+
+### TOML で書く
+
 TOML で書くときの決まりごとは 2 つだけである。
 
-- `modes` は `[[modes]]` を並べる。1 つの `[[modes]]` が 1 モードで、`frequency` と
-  `coupling` をその下に書く。1 行で済ませたいなら
-  `modes = [{ frequency = 1200.0, coupling = 0.5 }]` とも書ける。
+- モードは `[[modes.rows]]` を並べる。1 つの `[[modes.rows]]` が 1 モードで、`frequency` と
+  `coupling` をその下に書く。1 行で済ませたいなら `[modes]` の中に
+  `rows = [{ frequency = 1200.0, coupling = 0.5 }]` とも書ける。
 - **TOML に `null` はない。** 「無し」にあたる `coupling_unit` と `selection.max_quanta`
   は、`null` と書くかわりに**その項目ごと省略する**。省略すれば既定値（どちらも「無し」）
   になる。すでに書いてある項目をその実行だけ「無し」に戻すなら
@@ -181,7 +201,7 @@ JSON だけだからである。
 
 ### 流儀
 
-`coupling` をどの量で書くかを `coupling_convention` で選ぶ。量どうしの関係は
+`coupling` をどの量で書くかを `[modes]` の `coupling_convention` で選ぶ。量どうしの関係は
 `docs/theory/vcc.md` にある。
 
 | 流儀 | `coupling` が表すもの | S への変換 | 単位 |
@@ -206,9 +226,10 @@ V の単位は `"hartree/(bohr*sqrt(m_e))"` の 1 つだけで、質量重み付
 値と単位の間に数で写す（[別名と倍率](#別名と倍率)）。
 
 ```toml
+[modes]
 coupling_convention = "vcc"
 
-[[modes]]
+[[modes.rows]]
 frequency = 500.0
 coupling = [-0.3, 1e-4, "a.u."]   # 出力の VCC 列と、見出しの 10^-4 a.u.
 ```
@@ -235,19 +256,22 @@ coupling = [-0.3, 1e-4, "a.u."]   # 出力の VCC 列と、見出しの 10^-4 a.
 波長で指定できないためである。
 
 **単位の軸は項目ごとに独立している。** 1 つの指定がファイル全体に効くのではなく、
-`frequency_unit` / `coupling_unit` / `broadening.unit` / `grid.unit` の 4 つがそれぞれ
-別々の単位を取れる。振動数はほぼ常に cm⁻¹ で、`coupling` は値を出した外部プログラムの
+`modes.frequency_unit` / `modes.coupling_unit` / `broadening.unit` / `grid.unit` の 4 つが
+それぞれ別々の単位を取れる。どれも自分のブロックの値にだけ効き、トップレベルに単位の欄は
+ない。振動数はほぼ常に cm⁻¹ で、`coupling` は値を出した外部プログラムの
 都合で単位が決まり、σ とグリッドは利用者が計算窓として選ぶ量なので、揃うことを前提に
 できないためである。
 
 ```toml
-schema_version = 3
+schema_version = 4
+temperature = 300.0
+
+[modes]
 frequency_unit = "cm^-1"
 coupling_convention = "lambda"
 coupling_unit = "eV"
-temperature = 300.0
 
-[[modes]]
+[[modes.rows]]
 frequency = 1200.0
 coupling = 0.037
 
@@ -280,7 +304,7 @@ uv run fcenvelope run docs/readme/examples/sigma-in-ev.toml -o result.json
 #### 別名と倍率
 
 単位の名前には、上の表の**正式名**のほかに**別名**が使える。今ある別名は `"a.u."` だけで、
-どの欄に書いたかで意味が決まる。エネルギーの欄（`frequency_unit` / `broadening.unit` /
+どの欄に書いたかで意味が決まる。エネルギーの欄（`modes.frequency_unit` / `broadening.unit` /
 `grid.unit` と、流儀 `"lambda"` の coupling）では `"hartree"`、流儀 `"vcc"` の coupling では
 `"hartree/(bohr*sqrt(m_e))"` になる。
 
@@ -319,7 +343,7 @@ sigma = [0.0186, "eV"]      # unit = "eV" の行を別に書くのと同じ
 | `sigma = [0.0186, "eV"]` | 添えた単位で読む |
 | `sigma = [18.6, 0.001, "eV"]` | 倍率つきの単位で読む（[別名と倍率](#別名と倍率)） |
 
-組を書けるのは有次元の値、すなわち `modes[].frequency` / `modes[].coupling` /
+組を書けるのは有次元の値、すなわち `modes.rows[].frequency` / `modes.rows[].coupling` /
 `broadening.sigma` / `grid.e_min` / `grid.e_max` / `grid.points.de` の 6 つである。
 無次元の値（`grid.points.n` / `shift` / `selection` のつまみ）には書けない。温度は K
 固定なので、これにも書けない。
@@ -329,7 +353,7 @@ sigma = [0.0186, "eV"]      # unit = "eV" の行を別に書くのと同じ
 `unit` を 1 回書くほうが短い。
 
 ```toml
-[[modes]]
+[[modes.rows]]
 frequency = [0.05579, "eV"]   # このモードだけ eV
 coupling = 0.8
 
@@ -350,20 +374,20 @@ e_max = 0.124
 uv run fcenvelope run mymolecule.toml --override 'broadening.sigma=[0.0186, "eV"]'
 ```
 
-CSV で渡すモードには単位を添えられない。CSV に書けるのは数だけなので、単位は入力
-ファイル側の `frequency_unit` / `coupling_unit` が担う。
+CSV から読むモードにも、列ごとに同じ組の形で単位を添えられる（次の節）。
 
 ### モードを CSV で渡す
 
-モード数が多い場合や外部プログラムの出力を使う場合は、`modes` に CSV への参照を書ける。
+モード数が多い場合や外部プログラムの出力を使う場合は、行を CSV から読める。`[modes]` の
+中に、`[[modes.rows]]` の並びの代わりに `csv` を 1 行書く。
 
 ```toml
-schema_version = 3
-frequency_unit = "cm^-1"
-coupling_convention = "g"
+schema_version = 4
 temperature = 300.0
 
-modes = { path = "modes.csv" }
+[modes]
+coupling_convention = "g"
+csv = { path = "modes.csv", columns = [["frequency", "eV"], "coupling"] }
 
 [broadening]
 sigma = 150.0
@@ -376,36 +400,55 @@ e_max = 1000.0
 de = 4.0
 ```
 
-`modes = { path = ... }` は `[[modes]]` の並びの代わりに書く。TOML では表の順序に決まりが
-あるので、`[broadening]` などの見出しより**前**に置く。
-
 ```csv
-frequency,coupling
-1200.0,0.5
-450.0,0.8
+0.14878,0.5
+0.05579,0.8
 ```
 
-- 相対パスは**入力ファイルの場所**が基準。
-- 書式は CSV の標準（RFC 4180）に従う。列は `frequency` と `coupling` の 2 列のみで、ほかの列があるとエラー。
-- ヘッダ行は省略できる。省略時は `frequency,coupling` の順。ヘッダを書く場合は 1 行目に置き、列の順序は自由。
-- RFC 4180 にはコメントの規定がないため、コメント行は書けない。空行もエラー（ファイル末尾の改行 1 つは可）。
+CSV には数だけを書き、**ファイル名・列の並び・単位は入力ファイルの側に書く**。
+
+| キー | 意味 | 省略したとき |
+|---|---|---|
+| `path` | CSV のファイル名。相対パスは**入力ファイルの場所**が基準 | 省略できない |
+| `columns` | 列の並び。各列は列名か、列名に単位を添えた組 | `["frequency", "coupling"]` |
+
+列の単位の書き方は、値に単位を添える書き方（[値に単位を添えて書く](#値に単位を添えて書く)）の
+値の位置に列名を入れたものである。
+
+| 書き方 | その列の値の読み方 |
+|---|---|
+| `"frequency"` | `[modes]` の既定の単位（`frequency_unit`、省略時は `"cm^-1"`） |
+| `["frequency", "eV"]` | eV |
+| `["frequency", 1e-3, "eV"]` | meV（[別名と倍率](#別名と倍率)） |
+| `["coupling", 1e-4, "a.u."]` | 流儀 `vcc` なら 10⁻⁴ a.u. の V |
+
+列に添えた単位は、その列のすべての値に `[値, "単位"]` と添えたのと同じである。単位を
+添えない列は、行を直接書いたときと同じく `[modes]` の既定の単位で読む。したがって
+既定の単位のままなら `columns = ["frequency", "coupling"]` と名前だけで書け、この並びなら
+`columns` ごと省ける。
+
+```toml
+[modes]
+coupling_convention = "vcc"
+coupling_unit = [1e-4, "a.u."]                     # coupling の列の既定
+csv = { path = "modes.csv", columns = ["coupling", "frequency"] }   # 並びだけ変える
+```
+
+そのまま動く例が [`examples/modes-from-csv.toml`](examples/modes-from-csv.toml) にあり、
+[`examples/basic.toml`](examples/basic.toml) と同じ系を指していることはテストで見ている。
+
+- `csv` と `[[modes.rows]]` はどちらか一方だけを書く。
+- `columns` には `frequency` と `coupling` をちょうど 1 回ずつ並べる。ほかの列は置けない。
+- ヘッダ行は省略できる。ヘッダを書いて `columns` を省くと、ヘッダの並びで読む。ヘッダと
+  `columns` の両方を書くなら並びを揃える。食い違うとどちらを信じるか決められないので止まる。
+- 書式は CSV の標準（RFC 4180）に従い、区切りはカンマのみ。RFC 4180 にはコメントの規定が
+  ないため、コメント行は書けない。空行もエラー（ファイル末尾の改行 1 つは可）。
 - 行の順序は計算結果に影響しない。縮重モードは同じ値の行を複数書く。
-- 単位と流儀は入力ファイル側の `frequency_unit` / `coupling_convention` / `coupling_unit`
-  に従う。単位はモードごとではなく入力ファイル側が担うので、CSV に単位の列は置けない。
-- 区切りはカンマのみ。**構造の誤り**（列数違い、数値として読めない、空行、引用の誤りなど）は
-  `modes.csv:3: ...` のように行番号付きで報告される。**値の範囲**（ε ≤ 0 など）は流儀と単位を
-  消費した後で判定するので、位置は `modes[2]` のようにモードの番号で報告される。
-- 結果 JSON にはモードの値そのものが埋め込まれるので、CSV が後で変わっても結果ファイル単体で再現できる。
-
-E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
-ここで λ = Σ S_α ε_α、Var = Σ S_α ε_α²(2n_α+1) + σ²。
-
-これは**窓**の目安である。端の折り返し（`edge_intensity_ratio`）が見ているのは窓では
-なく**全域グリッドの端**で、全域幅は 2 の冪に切り上げた点数 × ΔE だから、窓を少し
-広げても切り上げ先の冪が変わらないあいだは 1 も動かない。窓が目安を満たしているのに
-警告が出るときは、窓を広げるより `de` を変えるほうが効くことがある。上の例（λ = 588）
-では、窓 −4500〜1000 に対して `de = 5.0` だと全域幅が 10240 で
-`edge_intensity_ratio` = 1.9e-4（警告が出る）、`de = 4.0` だと 16384 になって 9.4e-8 に落ちる。
+- **構造の誤り**（列数違い、数値として読めない、空行、引用の誤りなど）は `modes.csv:3: ...`
+  のように行番号付きで報告される。**値の範囲**（ε ≤ 0 など）は流儀と単位を消費した後で
+  判定するので、位置は `modes.rows[2]` のようにモードの番号で報告される。
+- 実効設定と結果 JSON にはモードの値そのものが埋め込まれる（列の単位は各値に添えた形に
+  なる）ので、CSV が後で変わっても再現できる。
 
 ## CLI
 
@@ -475,7 +518,8 @@ uv run fcenvelope lines mymolecule.toml --override selection.max_quanta=null
   このためで、TOML では書けない「無し」を渡せる唯一の口である。
 - 値は**入力ファイルと同じ単位・流儀**で読む。σ を eV で書いたファイルなら
   `--override broadening.sigma=0.02` も eV である。
-- `modes` は上書きできない。どの分子を計算したかが履歴に残らなくなるため。
+- `modes` とその下（流儀・列の単位を含む）は上書きできない。どの分子を計算したかが履歴に
+  残らなくなるため。
 - 知らないキーはエラーになる。`grid.points.dee=4` は黙って無視されず、その場で止まる。
 
 ### 実際に使われた設定を見る
@@ -492,7 +536,7 @@ cat mymolecule_envelope_config.json   # -> "temperature": 77.0, "selection": { .
 書き出しは入力ファイルと同じ単位・流儀のままなので、手元の入力ファイルと突き合わせられる。
 ただし別名で書いた単位は正式名に置き換わる（`"a.u."` → `"hartree"` など）。量としては同じ
 値なので、そのまま入力に戻せば同じ計算になる。
-`{ path = "modes.csv" }` で渡したモードは行に展開されるため、このファイルだけで完結する。
+`csv = { path = "modes.csv" }` で読んだモードは行に展開されるため、このファイルだけで完結する。
 **そのまま入力として与えれば同じ計算が再現できる。**
 
 入力を TOML で書いても実効設定は JSON で出る。省略した項目が既定値で埋まっていることが
@@ -667,7 +711,7 @@ result = compute_envelope(
     grid=EnergyGrid.from_spacing(e_min=-4500.0, e_max=1000.0, de=4.0),
 )
 
-# 入力ファイルから（流儀と単位はここで消費される。modes の CSV 参照もここで解決）
+# 入力ファイルから（流儀と単位はここで消費される。modes.csv の参照もここで解決）
 parsed = FCEnvelopeInput.from_path("mymolecule.toml")
 result = compute_envelope(
     parsed.to_system(),

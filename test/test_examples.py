@@ -87,3 +87,20 @@ def test_units_on_values_says_the_same_thing_as_the_block_unit_example():
     assert (grid.e_min, grid.e_max, grid.de) == pytest.approx(
         (-4500.0, 1000.0, 4.0), rel=1e-3
     )
+
+
+def test_modes_from_csv_says_the_same_thing_as_the_basic_example():
+    """CSV から列の単位つきで読んだ表が、行を直接書いた例と同じ系を指すこと（ADR-0079）。
+
+    CSV の振動数は eV に丸めた値なので、同じ系を指していることが分かる精度で見る。
+    """
+    from_csv = FCEnvelopeInput.from_path(EXAMPLES_DIR / "modes-from-csv.toml")
+    basic = FCEnvelopeInput.from_path(EXAMPLES_DIR / "basic.toml")
+
+    assert from_csv.modes.rows[0].frequency.unit == "eV"  # 列の単位が各値に添えられる
+    got = from_csv.to_system().modes
+    want = basic.to_system().modes
+    assert [mode.frequency for mode in got] == pytest.approx(
+        [mode.frequency for mode in want], rel=1e-4
+    )
+    assert [mode.huang_rhys for mode in got] == [mode.huang_rhys for mode in want]

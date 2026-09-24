@@ -36,9 +36,12 @@ def result(multi_mode):
     )
 
 
-def test_input_and_result_files_share_one_schema_version():
-    """`io` は `inputs` に依存しない（ADR-0041）ので版の一致はここで確かめる。"""
-    assert SCHEMA_VERSION == inputs_module.SCHEMA_VERSION
+def test_the_result_file_keeps_its_version_when_the_input_file_moves_on():
+    """入力ファイルだけが版 4 へ上がり、結果ファイルは版 3 のまま（ADR-0079）。
+
+    `io` は `inputs` に依存しない（ADR-0041）ので、両者の関係はここで確かめる。
+    """
+    assert (SCHEMA_VERSION, inputs_module.SCHEMA_VERSION) == (3, 4)
 
 
 def test_round_trip_is_exact(result, tmp_path):
@@ -69,9 +72,11 @@ def test_written_input_echo_is_canonical(tmp_path):
     """入力エコーは常に huang_rhys 流儀で書き出される。"""
     parsed = FCEnvelopeInput.from_obj(
         {
-            "schema_version": 3,
-            "coupling_convention": "g",
-            "modes": [{"frequency": 1200.0, "coupling": 0.5}],
+            "schema_version": 4,
+            "modes": {
+                "coupling_convention": "g",
+                "rows": [{"frequency": 1200.0, "coupling": 0.5}],
+            },
             "temperature": 300.0,
             "broadening": {"sigma": 150.0},
             "grid": {"e_min": -4000.0, "e_max": 1000.0, "points": {"de": 5.0}},

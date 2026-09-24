@@ -2,16 +2,18 @@
 # 同じ内容を JSON で書いたものが sigma-in-ev.json にある。
 #   uv run fcenvelope run docs/readme/examples/sigma-in-ev.toml -o result.json
 
-schema_version = 3
-frequency_unit = "cm^-1"
-coupling_convention = "g"
+schema_version = 4
 temperature = 300.0
 
-[[modes]]
+[modes]
+frequency_unit = "cm^-1"
+coupling_convention = "g"
+
+[[modes.rows]]
 frequency = 1200.0
 coupling = 0.5
 
-[[modes]]
+[[modes.rows]]
 frequency = 450.0
 coupling = 0.8
 

@@ -18,6 +18,7 @@ from fcenvelope.inputs import (
     EnergyGridSpec,
     GridPointsSpec,
     ModeSpec,
+    ModesSpec,
     SelectionSpec,
     template_text,
 )
@@ -25,6 +26,7 @@ from fcenvelope.inputs import (
 #: 雛形が触れているべき項目の出どころ。入力ファイルの型そのものから引く。
 SPECS = (
     FCEnvelopeInput,
+    ModesSpec,
     ModeSpec,
     BroadeningSpec,
     EnergyGridSpec,
@@ -68,10 +70,10 @@ def test_the_template_mentions_every_field(spec, field):
 def test_every_field_line_carries_a_comment():
     """値を書く行には、それが何の数かの短いコメントが付く（ADR-0074）。
 
-    2 つ目以降の `[[modes]]` は 1 つ目と同じ項目の繰り返しなので、そこは見ない。
+    2 つ目以降の `[[modes.rows]]` は 1 つ目と同じ項目の繰り返しなので、そこは見ない。
     """
     lines = template_text().splitlines()
-    first_repeat = lines.index("[[modes]]", lines.index("[[modes]]") + 1)
+    first_repeat = lines.index("[[modes.rows]]", lines.index("[[modes.rows]]") + 1)
 
     for line in lines[:first_repeat]:
         if re.match(r"^\w+\s*=", line):
@@ -82,3 +84,8 @@ def test_every_field_line_carries_a_comment():
 def test_the_template_names_every_coupling_convention(name):
     """流儀を足したら雛形のコメントにも出てくること。"""
     assert name in template_text(), name
+
+
+def test_the_template_shows_how_to_read_the_rows_from_a_csv():
+    """`csv` はフィールドではなく読み込み時に `rows` へ差し替わるので、別に確かめる。"""
+    assert re.search(r"^#\s*csv\s*=.*columns", template_text(), re.MULTILINE)

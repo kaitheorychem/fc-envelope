@@ -29,12 +29,13 @@
 
 入力で受け付けるエネルギー単位は `cm^-1` / `eV` / `hartree` / `THz` / `kJ/mol` /
 `kcal/mol`。波長（`nm`）は入れない（ADR-0054）。**単位の軸は項目ごとに独立**で、入力
-ファイル全体で 1 つではない（ADR-0053）。
+ファイル全体で 1 つではない（ADR-0053）。既定の単位はそれを使うブロックが持ち、
+トップレベルには置かない（ADR-0079）。
 
 | 軸 | 何の単位か | 既定 |
 |---|---|---|
-| `frequency_unit` | `modes[].frequency` | `cm^-1` |
-| `coupling_unit` | `modes[].coupling`。無次元の流儀では指定してはならない | 流儀による |
+| `modes.frequency_unit` | `modes.rows[].frequency`（CSV なら frequency の列） | `cm^-1` |
+| `modes.coupling_unit` | `modes.rows[].coupling`。無次元の流儀では指定してはならない | 流儀による |
 | `broadening.unit` | σ | `cm^-1` |
 | `grid.unit` | `e_min` / `e_max` / `points.de` | `cm^-1` |
 
@@ -92,7 +93,7 @@ emit.write_overlay_script(envelope, envelope_path, lines, lines_path, script, *,
 入力ファイルの読み込みは `FCEnvelopeInput` を経由する。
 
 ```python
-FCEnvelopeInput.from_path(path)                   -> FCEnvelopeInput   # 書式は拡張子、modes.path はファイル基準
+FCEnvelopeInput.from_path(path)                   -> FCEnvelopeInput   # 書式は拡張子、modes.csv.path はファイル基準
 FCEnvelopeInput.from_toml(text, *, base_dir=None) -> FCEnvelopeInput
 FCEnvelopeInput.from_json(text, *, base_dir=None) -> FCEnvelopeInput
 FCEnvelopeInput.from_obj(data, *, base_dir=None)  -> FCEnvelopeInput   # base_dir 省略時は cwd 基準
@@ -139,7 +140,7 @@ INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキスト�
   で、`None` なら既定の単位で読む。
   `.unit_or(default)` / `.in_canonical(default)` を持つ
 
-範囲の検査は値の型に任せ、値の型が送出したエラーにフィールドの位置（`modes[1]`、`grid` など）
+範囲の検査は値の型に任せ、値の型が送出したエラーにフィールドの位置（`modes.rows[1]`、`grid` など）
 を添える（ADR-0045, 0051）。
 
 ### 単位と流儀（`units.py`）
@@ -200,16 +201,18 @@ coupling と frequency の単位が揃うことは前提にできないので、
 `inputs.template_text()` が読むだけである（ADR-0074）。
 
 ```toml
-schema_version = 3
-frequency_unit = "cm^-1"
-coupling_convention = "g"
+schema_version = 4
 temperature = 300.0
 
-[[modes]]
+[modes]
+frequency_unit = "cm^-1"
+coupling_convention = "g"
+
+[[modes.rows]]
 frequency = 1200.0
 coupling = 0.5
 
-[[modes]]
+[[modes.rows]]
 frequency = 450.0
 coupling = 0.8
 
@@ -235,13 +238,16 @@ max_lines = 10000
 
 ```json
 {
-  "schema_version": 3,
-  "frequency_unit": "cm^-1",
-  "coupling_convention": "g",
-  "modes": [
-    { "frequency": 1200.0, "coupling": 0.5 },
-    { "frequency":  450.0, "coupling": 0.8 }
-  ],
+  "schema_version": 4,
+  "modes": {
+    "coupling_convention": "g",
+    "frequency_unit": "cm^-1",
+    "coupling_unit": null,
+    "rows": [
+      { "frequency": 1200.0, "coupling": 0.5 },
+      { "frequency":  450.0, "coupling": 0.8 }
+    ]
+  },
   "temperature": 300.0,
   "broadening": { "sigma": 150.0, "unit": "cm^-1" },
   "grid": {
@@ -254,12 +260,16 @@ max_lines = 10000
 
 | フィールド | 型 | 制約 | 意味 |
 |---|---|---|---|
-| `schema_version` | int | `3` 固定 | 不一致は `SchemaVersionError`。古い版の互換層は置かない（ADR-0040, 0070） |
-| `frequency_unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | `modes[].frequency` の単位。既定 `"cm^-1"` |
-| `coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` \| `"vcc"` | 既定 `"g"` |
-| `coupling_unit` | str \| [倍率, str] \| null | 流儀の単位の種類の正式名か別名。倍率は組で書く | `modes[].coupling` の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
-| `modes[].frequency` | 有次元 | > 0（正準化後） | ε_α。既定の単位は `frequency_unit` |
-| `modes[].coupling` | 有次元 | 流儀による | 流儀に従った値。既定の単位は `coupling_unit` |
+| `schema_version` | int | `4` 固定 | 不一致は `SchemaVersionError`。古い版の互換層は置かない（ADR-0040, 0070, 0079） |
+| `modes` | object | `rows` と `csv` のどちらか一方 | モード表（ADR-0079）。版 3 までの配列は拒否する |
+| `modes.coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` \| `"vcc"` | coupling の列の流儀。既定 `"g"` |
+| `modes.frequency_unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | frequency の列の既定の単位。既定 `"cm^-1"` |
+| `modes.coupling_unit` | str \| [倍率, str] \| null | 流儀の単位の種類の正式名か別名。倍率は組で書く | coupling の列の既定の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
+| `modes.rows[].frequency` | 有次元 | > 0（正準化後） | ε_α。既定の単位は `modes.frequency_unit` |
+| `modes.rows[].coupling` | 有次元 | 流儀による | 流儀に従った値。既定の単位は `modes.coupling_unit` |
+| `modes.csv` | object | キーは `path` と `columns` | 行を CSV から読む。パース時に `rows` へ差し替わる |
+| `modes.csv.path` | str | 空でない | CSV のパス。相対パスは入力ファイルのディレクトリ基準 |
+| `modes.csv.columns` | list | 各列ちょうど 1 回。要素は `"列名"` / `["列名", "単位"]` / `["列名", 倍率, "単位"]` | 列の並びと列の単位。既定 `["frequency", "coupling"]` |
 | `temperature` | float | ≥ 0 | T [K]。0 は許可（n_α = 0）。単位の軸を持たない |
 | `broadening.sigma` | 有次元 | > 0 | σ。既定の単位は `broadening.unit` |
 | `broadening.unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | ブロックの既定。既定 `"cm^-1"` |
@@ -271,32 +281,35 @@ max_lines = 10000
 | `grid.points.shift` | int | ≥ 0、既定 0 | `de` のときだけ書ける。全域幅を保ったまま点数を 2^shift 倍 |
 | `selection` | object | 省略可 | 省略時は `Selection` の既定値 |
 
-単位フィールドは 4 つとも省略でき、省略時はすべて `cm^-1` である。単位を書いていない
-入力ファイルは従来どおりの意味で読まれるので、単位の導入では `schema_version` を
-上げていない（ADR-0053）。単位の実例は `docs/readme/examples/` にある（ADR-0056）。
+単位フィールドは 4 つとも省略でき、省略時はすべて `cm^-1` である（coupling の単位は
+流儀による）。単位の実例は `docs/readme/examples/` にある（ADR-0056）。
 
 **有次元**の欄は、素の数値のほかに `[値, "単位"]` の組でも書ける（ADR-0072）。
 `sigma = 0.0186` / `sigma = [0.0186]` / `sigma = [0.0186, "eV"]` と、倍率つきの
-`sigma = [18.6, 0.001, "eV"]`（ADR-0078）が受け付けるすべてで、単位を添えなければ上の 4 つの単位フィールド（ブロックまたはトップレベルの
-既定）で読む。添えた単位はその値にだけ効き、既定より優先される。無次元の値
+`sigma = [18.6, 0.001, "eV"]`（ADR-0078）が受け付けるすべてで、単位を添えなければ上の 4 つの単位フィールド（ブロックの既定）で読む。添えた単位はその値にだけ効き、既定より優先される。無次元の値
 （`grid.points.n` / `shift` / `selection` の各つまみ / `temperature`）には書けない。
-組も**追加**なので `schema_version` は 3 のままである。
 
 実効設定（`*_config.json`）は書いたままの姿で書き出す。素の数値で書けば素の数値、組で
 書けば組で、単位フィールドは省略しても既定値で埋まって必ず書かれる（ADR-0065, 0072）。
 
-`modes` は最低 1 要素（TOML では `[[modes]]` の並び）。配列の代わりに
-`{"path": "<file>.csv"}`（TOML では `modes = { path = "<file>.csv" }`）を置くと外部 CSV を
-参照する（相対パスは入力ファイルのディレクトリ基準）。CSV は RFC 4180 準拠で、列は `frequency` /
-`coupling` の 2 列のみ。ヘッダは省略可（省略時はこの順、ヘッダがあれば順序自由）。
-コメント行・空行・補助列は受け付けない。CSV が報告するのは**構造の誤りだけ**で、行番号が
-付くのもそこまでである。値の範囲は正準化のときに値の型が見るので、位置はモードの番号になる。
+`modes.rows` は最低 1 要素（TOML では `[[modes.rows]]` の並び）。代わりに
+`modes.csv = {"path": "<file>.csv", "columns": [...]}` を置くと外部 CSV から行を読む
+（ADR-0019, 0079）。CSV は RFC 4180 準拠で、列は `frequency` / `coupling` の 2 列のみ。
+列に添えた単位は、その列のすべての値に `[値, "単位"]` と添えたものとして読むので、読んだ
+後は行を直接書いた場合と区別がない。ヘッダは省略可で、ヘッダがあり `columns` が無ければ
+ヘッダの並び、両方あれば並びが一致しなければ誤り。コメント行・空行・補助列は受け付けない。
+CSV が報告するのは**構造の誤りだけ**で、行番号が付くのもそこまでである。値の範囲は正準化の
+ときに値の型が見るので、位置はモードの番号（`modes.rows[i]`）になる。
+
+CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, *, explicit)` と、
+それをモード表に使う `inputs.read_mode_specs_csv(path, columns=None)` に分かれる。列は
+`inputs.CsvColumn(name, unit)` で表す。
 
 `run` は `temperature` / `broadening` / `grid` を、`lines` は `temperature` / `selection` を
 読む。どちらの副命令も同じファイルを使える（ADR-0005）。
 
 実効設定の書き出し（`*_config.json`）は**常に JSON** である。省略した項目が既定値で埋まり、
-`modes` が行に展開されているだけで、入力ファイルとして読み返せる（ADR-0065）。TOML には
+`modes.csv` が `modes.rows` に展開されているだけで、入力ファイルとして読み返せる（ADR-0065）。TOML には
 `null` がなく、「無し」で埋まった `coupling_unit` / `selection.max_quanta` を書けないため、
 入力が TOML でも書き出しは JSON になる（ADR-0069）。
 
@@ -367,8 +380,9 @@ max_lines = 10000
 読み込み時に reject する。`derived` は系から一意に決まる控えなので、書き出しはするが読み込み
 時は読み飛ばす（ADR-0047）。`load → save` でファイルは変化しない（ADR-0008）。
 
-入力ファイルと結果ファイルは同じ `schema_version` を共有するが、`io` は `inputs` に依存しない
-ため（ADR-0041）定数は別に持ち、一致はテストで確かめる。
+結果ファイルの `schema_version` は 3 で、入力ファイル（4）とは別に数える（ADR-0079）。
+入力エコーは正準形で既定の単位を持たないので、モード表の形の変更を受けていない。`io` は
+`inputs` に依存しないため（ADR-0041）定数は別に持つ。
 
 ## CLI
 
@@ -642,7 +656,7 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 | ローレンツ型・Voigt 型の線形状 | `Broadening`。線形状の知識はここに閉じており、`envelope.py` と `plotting.py` は種類を知らない | ADR-0034、提案 ADR-0038 / 0039 |
 | matplotlib 以外のツール向けの雛形 | `emit.py` の `TEMPLATES` と生成先の拡張子。多くのツールは JSON を読めないので、列指向のデータ書き出しを決めるところから始まる（ADR-0010 を開き直す） | ADR-0058 |
 | 入力フォーマットの見直し | `inputs.py`。入力ファイルの型と計算用の値の型が分かれており、計算側に触れずに変えられる | ADR-0045 |
-| 非対角な基底からの入力（対角化） | 別命令 `fcenvelope diagonalize` として足し、出力のモード CSV を `{"path": ...}` で読む。正準化の行き先は `VibrationalSystem` 1 つ | 提案 ADR-0037、ADR-0044 |
+| 非対角な基底からの入力（対角化） | 別命令 `fcenvelope diagonalize` として足し、出力のモード CSV を `modes.csv` で読む。正準化の行き先は `VibrationalSystem` 1 つ | 提案 ADR-0037、ADR-0044 |
 | 結果の種類の追加 | 関心ごとの表（`RESULT_KINDS` / `DRAWERS` / `REPORTERS`）に行を足す | ADR-0049 |
 
 「提案」の ADR は、その機能を実装するときに確定する。
