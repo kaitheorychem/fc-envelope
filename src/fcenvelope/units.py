@@ -4,10 +4,10 @@
 （ADR-0002, 0054）。換算係数の表は `ENERGY_UNITS`、引き当ては
 `ENERGY_UNIT_KIND.resolve`（と薄い `energy_conversion_factor`）にある。
 
-単位の文字列は**正式名**・**別名**・**倍率**の 3 つからなる（ADR-0076）。別名は
+単位は**正式名**・**別名**・**倍率**の 3 つからなる（ADR-0076）。別名は
 入力ファイルでだけ使える書き方で、どの欄に書かれたか（単位の種類 `UnitKind`）で
-正式名が決まる。倍率は名前の前に空白で区切って置く正の数である。`resolve` は
-別名を正式名へ置き換えた**正式形**と、倍率を掛けた換算係数を返す。
+正式名が決まる。倍率は名前と組にして `[0.001, "eV"]` と書く正の数である（ADR-0078）。
+`resolve` は別名を正式名へ置き換えた**正式形**と、倍率を掛けた換算係数を返す。
 
 流儀は Enum と関数表ではなくオブジェクトにする（ADR-0033）。変換式・単位の有無・
 振動数への依存の仕方を、流儀自身が知っている必要があるためである。
@@ -32,7 +32,6 @@ coupling の単位の種類は流儀が持つ（`CouplingConvention.unit_kind`�
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final
@@ -53,6 +52,7 @@ __all__ = [
     "HUANG_RHYS",
     "LAMBDA",
     "UNIT_FORMS",
+    "UnitForm",
     "VCC",
     "VCC_UNIT",
     "VCC_UNIT_KIND",
@@ -62,6 +62,7 @@ __all__ = [
     "coupling_convention",
     "energy_conversion_factor",
     "split_unit",
+    "unit_form",
 ]
 
 #: 内部で用いるエネルギーの単位。入力はここへ正準化される。振動数・sigma・グリッド・
@@ -88,51 +89,43 @@ ENERGY_UNITS: dict[str, float] = {
 }
 
 
-#: 受け付ける単位の書き方。誤りの報告にそのまま載せる（ADR-0076）。
-UNIT_FORMS: Final = '"<name>" or "<scale> <name>"'
+#: 単位の書き方。名前だけの `"eV"` か、倍率と名前の組 `(1e-3, "eV")` である
+#: （ADR-0078）。入力ファイルでは組は配列 `[0.001, "eV"]` として書かれ、検証を通った
+#: 後はタプルで持つ。
+UnitForm = str | tuple[float, str]
 
-#: 倍率として受け付ける字面。小数・指数表記か、10 の整数乗（ADR-0076）。負号は
-#: ここで弾かれる。
-_SCALE = re.compile(r"[+]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?|10\^([+-]?\d+)")
-
-
-def _scale_value(text: str) -> float:
-    """倍率の字面を数にする。正の有限な数でなければ `ValueError`。"""
-    match = _SCALE.fullmatch(text)
-    if match is None:
-        raise ValueError(f"the scale {text!r} is not a number")
-    exponent = match.group(4)
-    # 10^k は float(1ek) として読む。10.0**k は大きな k で OverflowError になるが、
-    # こちらは inf / 0 になるので下の検査 1 つで報告できる。
-    value = float(f"1e{exponent}") if exponent is not None else float(text)
-    if not (value > 0.0 and math.isfinite(value)):
-        raise ValueError(f"the scale {text!r} must be a positive finite number")
-    return value
+#: 受け付ける単位の書き方。誤りの報告にそのまま載せる（ADR-0078）。
+UNIT_FORMS: Final = '"<name>" or [<scale>, "<name>"]'
 
 
-def _split(written: object) -> tuple[str | None, str]:
-    """単位の文字列を (倍率の字面, 名前) に分ける。書き方の誤りは `ValueError`。"""
-    if not isinstance(written, str):
-        raise ValueError("a unit must be a string")
-    words = written.split()
-    if len(words) == 1:
-        return None, words[0]
-    if len(words) == 2:
-        _scale_value(words[0])
-        return words[0], words[1]
-    if not words:
-        raise ValueError("the unit is empty")
-    raise ValueError("too many words")
+def _split(written: object) -> tuple[float | None, str]:
+    """単位を (倍率, 名前) に分ける。書き方の誤りは `ValueError`。
+
+    倍率は文字列から読むのではなく、配列の要素として書かれた数をそのまま使う
+    （ADR-0078）。名前の字面はそのまま名前として扱い、空白で区切ったりはしない。
+    """
+    if isinstance(written, str):
+        return None, written
+    if not isinstance(written, list | tuple) or len(written) != 2:
+        raise ValueError("a unit must be a name or a [scale, name] pair")
+    scale, name = written
+    if isinstance(scale, bool) or not isinstance(scale, int | float):
+        raise ValueError(f"the scale {scale!r} is not a number")
+    if not (scale > 0.0 and math.isfinite(scale)):
+        raise ValueError(f"the scale {scale!r} must be a positive finite number")
+    if not isinstance(name, str):
+        raise ValueError(f"the unit name {name!r} is not a string")
+    return float(scale), name
 
 
-def split_unit(written: object) -> tuple[str | None, str]:
-    """単位の文字列を (倍率の字面, 名前) に分ける（ADR-0076）。
+def split_unit(written: object) -> tuple[float | None, str]:
+    """単位を (倍率, 名前) に分ける（ADR-0078）。
 
     単位の種類に依存しない**書き方だけ**の検査である。名前が既知かどうかは見ない。
     流儀が分かる前の coupling の欄が、これで書き方だけを確かめる。
 
-    前後の空白を除いて空白で区切り、1 語なら名前、2 語なら倍率と名前とする。
-    倍率は正の有限な数でなければならない。
+    受け付けるのは名前だけの文字列か、`[倍率, 名前]` の組である。倍率は正の有限な
+    数でなければならない。
     """
     try:
         return _split(written)
@@ -142,12 +135,17 @@ def split_unit(written: object) -> tuple[str | None, str]:
         ) from exc
 
 
+def unit_form(scale: float | None, name: str) -> UnitForm:
+    """倍率と名前から単位の書き方を作る。倍率が無ければ名前だけになる。"""
+    return name if scale is None else (scale, name)
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedUnit:
     """`UnitKind.resolve` の結果。"""
 
-    text: str
-    """正式形。別名を正式名に置き換え、倍率は書かれた字面のまま前に置いたもの。"""
+    form: UnitForm
+    """正式形。別名を正式名に置き換え、倍率はそのまま残したもの。"""
 
     factor: float
     """値に掛けると正準単位になる係数。倍率 × 正式名の係数である。"""
@@ -182,8 +180,8 @@ class UnitKind:
     def resolve(self, written: object) -> ResolvedUnit:
         """書かれた単位を正式形と換算係数にする。
 
-        受けるのは検証前のファイルの値なので `object` で取る。文字列でない値・書き方の
-        誤り・未知の名前は、どれも `UnsupportedUnitError` として同じ形で報告する。
+        受けるのは検証前のファイルの値なので `object` で取る。書き方の誤りと未知の
+        名前は、どちらも `UnsupportedUnitError` として同じ形で報告する。
         正式形を渡せば同じ正式形が返る（冪等）。
         """
         try:
@@ -198,9 +196,9 @@ class UnitKind:
                 f"unsupported {self.name} unit {written!r} ({self._describe()})"
             )
         factor = self.factors[formal]
-        if scale is None:
-            return ResolvedUnit(text=formal, factor=factor)
-        return ResolvedUnit(text=f"{scale} {formal}", factor=_scale_value(scale) * factor)
+        if scale is not None:
+            factor *= scale
+        return ResolvedUnit(form=unit_form(scale, formal), factor=factor)
 
 
 #: 別名 -> エネルギーの単位の正式名。入力ファイルでだけ使える（ADR-0076）。
@@ -271,7 +269,7 @@ class CouplingConvention:
         """
         return self.converter(coupling, frequency)
 
-    def check_coupling_unit(self, unit: str | None) -> None:
+    def check_coupling_unit(self, unit: UnitForm | None) -> None:
         """coupling に添えられた単位が、この流儀にとって妥当かを検査する。
 
         無次元の流儀に単位を添えるのは誤りであり、単位を持つ流儀では単位が要る。
@@ -291,7 +289,7 @@ class CouplingConvention:
                 f"({self.unit_kind.name}); a coupling unit must be given"
             )
 
-    def coupling_to_canonical(self, unit: str | None) -> float:
+    def coupling_to_canonical(self, unit: UnitForm | None) -> float:
         """coupling に掛けると正準単位になる係数。単位の妥当性もここで検査する。
 
         無次元の流儀では 1 である。有次元の流儀では、流儀の単位の種類で単位を

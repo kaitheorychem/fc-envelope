@@ -10,8 +10,9 @@
 有次元の値は `[値, "単位"]` の組でも書け、そのときは添えた単位が既定より優先される
 （ADR-0072）。3 つの書き方を 1 つの形へ畳むのは `Quantity` である。
 
-単位の文字列は検証を通った時点で**正式形**になっている（ADR-0076）。別名（`a.u.`）は
-欄の単位の種類が決める正式名へ置き換わり、倍率（`10^-4`）は字面のまま前に残る。
+単位は検証を通った時点で**正式形**になっている（ADR-0076）。別名（`a.u.`）は欄の単位の
+種類が決める正式名へ置き換わる。倍率は配列の要素として数で書き（`[0.0001, "a.u."]`、
+値に添えるなら `[-0.3, 0.0001, "a.u."]`、ADR-0078）、そのまま残る。
 エネルギーの欄は欄そのものが種類を決めるのでフィールドの検証器で置き換える。
 coupling の欄は種類を流儀が決めるので、流儀の見えるモデルの検証器
 （`_resolve_coupling_units`）で置き換える。
@@ -78,8 +79,10 @@ from .units import (
     DEFAULT_COUPLING_CONVENTION,
     ENERGY_UNIT_KIND,
     CouplingConvention,
+    UnitForm,
     coupling_convention,
     split_unit,
+    unit_form,
 )
 
 #: つまみの既定値の唯一の出どころ（ADR-0050）。`Selection` は slots 付きの
@@ -128,18 +131,19 @@ def _missing(block: str, command: str, what: str) -> InvalidInputError:
 class Quantity:
     """入力ファイル中の有次元の値（ADR-0072）。
 
-    `150.0` / `[150.0]` / `[0.0186, "eV"]` の 3 つの書き方がここへ畳まれる。`unit` が
-    `None` なら、その値はブロック（またはトップレベル）の単位で読む。
+    `150.0` / `[150.0]` / `[0.0186, "eV"]` / `[18.6, 0.001, "eV"]` の書き方がここへ
+    畳まれる（ADR-0072, 0078）。`unit` が `None` なら、その値はブロック（または
+    トップレベル）の単位で読む。
     """
 
     value: float
-    unit: str | None = None
+    unit: UnitForm | None = None
 
-    def unit_or(self, default: str | None) -> str | None:
+    def unit_or(self, default: UnitForm | None) -> UnitForm | None:
         """この値を読むときの単位。添えてなければ既定の単位。"""
         return self.unit if self.unit is not None else default
 
-    def in_canonical(self, default: str) -> float:
+    def in_canonical(self, default: UnitForm) -> float:
         """既定の単位を補って正準単位（cm^-1）の数にする。
 
         エネルギーの値のためのもので、coupling の換算は流儀が行う。保存されている
@@ -149,26 +153,51 @@ class Quantity:
 
 
 #: 有次元の値として受け付ける書き方。誤りの報告にそのまま載せる。
-_QUANTITY_FORMS: Final = 'a number, [value] or [value, "unit"]'
+_QUANTITY_FORMS: Final = 'a number, [value], [value, "unit"] or [value, scale, "unit"]'
 
 
-def _energy_unit(written: object) -> str:
+def _split_value(written: list[object]) -> tuple[object, object | None]:
+    """配列で書かれた有次元の値を (数, 単位の書き方) に分ける（ADR-0072, 0078）。
+
+    `[値]` は単位なし、`[値, "単位"]` は名前だけ、`[値, 倍率, "単位"]` は倍率つきの
+    単位である。倍率つきの単位は、単位の欄に書く `[倍率, "単位"]` の形にして返す。
+    """
+    if len(written) == 1:
+        return written[0], None
+    if len(written) == 2:
+        return written[0], written[1]
+    if len(written) == 3:
+        return written[0], [written[1], written[2]]
+    raise ValueError(f"expected {_QUANTITY_FORMS}, got {written!r}")
+
+
+def _join_value(value: object, unit: UnitForm | None) -> float | list[object]:
+    """`_split_value` の逆。数と単位の書き方を入力ファイルの書き方へ戻す。"""
+    if unit is None:
+        return value  # type: ignore[return-value]
+    if isinstance(unit, str):
+        return [value, unit]
+    return [value, *unit]
+
+
+def _energy_unit(written: object) -> UnitForm:
     """エネルギーの欄の単位を正式形にする（ADR-0076）。未知の単位・型はここで報告される。"""
-    return ENERGY_UNIT_KIND.resolve(written).text
+    return ENERGY_UNIT_KIND.resolve(written).form
 
 
-def _coupling_unit(written: object) -> str:
-    """coupling の欄の単位の書き方だけを確かめ、字面のまま保つ（ADR-0076）。
+def _coupling_unit(written: object) -> UnitForm:
+    """coupling の欄の単位の書き方だけを確かめ、そのまま保つ（ADR-0076）。
 
     この欄の単位の種類は流儀が決めるので、ここでは名前を引き当てない。有次元の流儀
     なら `_resolve_coupling_units` がすでに正式形へ置き換えている。無次元の流儀に
     添えた単位は `to_system` が報告する。
     """
-    split_unit(written)
-    return str(written)
+    return unit_form(*split_unit(written))
 
 
-def _quantity_with(check_unit: Callable[[object], str]) -> Callable[[object], object]:
+def _quantity_with(
+    check_unit: Callable[[object], UnitForm],
+) -> Callable[[object], object]:
     """単位の扱い方を決めて、書かれた有次元の値を `Quantity` にする関数を作る。"""
 
     def to_quantity(written: object) -> object:
@@ -180,15 +209,13 @@ def _quantity_with(check_unit: Callable[[object], str]) -> Callable[[object], ob
         if isinstance(written, Quantity):
             return written
         if isinstance(written, list):
-            if not 1 <= len(written) <= 2:
-                raise ValueError(f"expected {_QUANTITY_FORMS}, got {written!r}")
-            number = written[0]
-            unit = written[1] if len(written) == 2 else None
+            number, unit = _split_value(written)
         else:
             number, unit = written, None
-        if unit is not None:
-            unit = check_unit(unit)
-        return Quantity(value=_to_number(number), unit=unit)
+        return Quantity(
+            value=_to_number(number),
+            unit=None if unit is None else check_unit(unit),
+        )
 
     return to_quantity
 
@@ -205,9 +232,7 @@ def _to_number(written: object) -> float:
 
 def _as_written(quantity: Quantity) -> float | list[object]:
     """`Quantity` を書かれたままの姿へ戻す。実効設定の書き出しに使う（ADR-0065）。"""
-    if quantity.unit is None:
-        return quantity.value
-    return [quantity.value, quantity.unit]
+    return _join_value(quantity.value, quantity.unit)
 
 
 #: エネルギーの値のフィールド。3 つの書き方を `Quantity` へ畳み、書き出しでは元の姿へ
@@ -244,11 +269,11 @@ class _EnergySpec(_Spec):
     （ADR-0072）。
     """
 
-    unit: str = CANONICAL_ENERGY_UNIT
+    unit: UnitForm = CANONICAL_ENERGY_UNIT
 
     @field_validator("unit", mode="before")
     @classmethod
-    def _check_unit(cls, value: object) -> str:
+    def _check_unit(cls, value: object) -> UnitForm:
         """単位を正式形にする（ADR-0076）。"""
         return _energy_unit(value)
 
@@ -465,7 +490,7 @@ class FCEnvelopeInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal[3] = SCHEMA_VERSION
-    frequency_unit: str = CANONICAL_ENERGY_UNIT
+    frequency_unit: UnitForm = CANONICAL_ENERGY_UNIT
     coupling_convention: str = DEFAULT_COUPLING_CONVENTION.name
     """流儀の**名前**。流儀そのものは `convention` から引く。
 
@@ -474,7 +499,7 @@ class FCEnvelopeInput(BaseModel):
     同じ経路を通れる（ADR-0050）。
     """
 
-    coupling_unit: str | None = None
+    coupling_unit: UnitForm | None = None
     """有次元の流儀の `coupling` の単位。無次元の流儀では書いてはならない。
 
     位置はトップレベルで、モードごとではない。CSV でモードを渡すときも単位を担うのは
@@ -526,28 +551,31 @@ class FCEnvelopeInput(BaseModel):
         if kind is None:
             return data
 
-        def resolve(location: str, written: str) -> str:
+        def resolve(location: str, written: object) -> UnitForm:
             try:
-                return kind.resolve(written).text
+                return kind.resolve(written).form
             except UnsupportedUnitError as exc:
                 raise UnsupportedUnitError(f"{location}: {exc}") from exc
 
         resolved = dict(data)
         unit = resolved.get("coupling_unit")
-        if isinstance(unit, str):
+        if isinstance(unit, str | list):
             resolved["coupling_unit"] = resolve("coupling_unit", unit)
         modes = resolved.get("modes")
         if isinstance(modes, list):
             new_modes: list[object] = []
             for index, mode in enumerate(modes):
                 coupling = mode.get("coupling") if isinstance(mode, dict) else None
+                # 単位が添えてある形（最後の要素が名前の 2 要素か 3 要素の配列）だけを
+                # 置き換える。それ以外の形はフィールドの検証器が報告する。
                 if (
                     isinstance(coupling, list)
-                    and len(coupling) == 2
-                    and isinstance(coupling[1], str)
+                    and len(coupling) in (2, 3)
+                    and isinstance(coupling[-1], str)
                 ):
-                    unit_text = resolve(f"modes[{index}].coupling", coupling[1])
-                    mode = {**mode, "coupling": [coupling[0], unit_text]}
+                    number, written = _split_value(coupling)
+                    form = resolve(f"modes[{index}].coupling", written)
+                    mode = {**mode, "coupling": _join_value(number, form)}
                 new_modes.append(mode)
             resolved["modes"] = new_modes
         return resolved
@@ -579,7 +607,7 @@ class FCEnvelopeInput(BaseModel):
 
     @field_validator("frequency_unit", mode="before")
     @classmethod
-    def _check_frequency_unit(cls, value: object) -> str:
+    def _check_frequency_unit(cls, value: object) -> UnitForm:
         """単位を正式形にする（ADR-0076）。"""
         return _energy_unit(value)
 
@@ -592,7 +620,7 @@ class FCEnvelopeInput(BaseModel):
 
     @field_validator("coupling_unit", mode="before")
     @classmethod
-    def _check_coupling_unit(cls, value: object) -> str | None:
+    def _check_coupling_unit(cls, value: object) -> UnitForm | None:
         """単位の書き方だけを確かめる。流儀との噛み合わせは正準化で見る。
 
         名前の引き当てと正式形への置き換えは `_resolve_coupling_units` が済ませている

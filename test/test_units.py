@@ -282,7 +282,7 @@ def test_an_unknown_unit_on_a_value_is_rejected(input_payload):
 
 @pytest.mark.parametrize(
     "written",
-    [[], [150.0, "eV", 1.0], {"value": 150.0, "unit": "eV"}, "wide", True, [None, "eV"]],
+    [[], [150.0, 1.0, "eV", 1.0], {"value": 150.0, "unit": "eV"}, "wide", True, [None, "eV"]],
     ids=["empty", "too-long", "table", "not-a-number", "bool", "no-value"],
 )
 def test_a_malformed_value_names_the_ways_of_writing_one(input_payload, written):
@@ -309,17 +309,16 @@ def test_the_effective_settings_keep_the_way_the_value_was_written(input_payload
     )
 
 
-# --- 正式名・別名・倍率（ADR-0076） -------------------------------------------
+# --- 正式名・別名・倍率（ADR-0076, 0078） -------------------------------------
 
 
 @pytest.mark.parametrize(
     ("written", "expected"),
     [
         ("hartree", (None, "hartree")),
-        ("1e-4 hartree", ("1e-4", "hartree")),
-        ("10^-4 hartree", ("10^-4", "hartree")),
-        ("  2.5   eV ", ("2.5", "eV")),
-        ("+.5 eV", ("+.5", "eV")),
+        ([1e-4, "hartree"], (1e-4, "hartree")),
+        ((1e-4, "hartree"), (1e-4, "hartree")),
+        ([1000, "eV"], (1000.0, "eV")),
     ],
 )
 def test_the_scale_and_the_name_are_split(written, expected):
@@ -328,33 +327,46 @@ def test_the_scale_and_the_name_are_split(written, expected):
 
 @pytest.mark.parametrize(
     "written",
-    ["0 eV", "-1 eV", "nan eV", "inf eV", "1e999 eV", "10^-999 eV", "1 2 eV", "", "   ", None],
+    [
+        [0.0, "eV"],
+        [-1.0, "eV"],
+        [float("nan"), "eV"],
+        [float("inf"), "eV"],
+        ["1e-4", "eV"],
+        [True, "eV"],
+        [1e-4, 1.0],
+        [1e-4],
+        [1e-4, "eV", 1.0],
+        None,
+        1.0,
+        {"scale": 1e-4, "name": "eV"},
+    ],
 )
 def test_a_malformed_unit_is_rejected(written):
-    with pytest.raises(UnsupportedUnitError, match="<scale> <name>"):
+    with pytest.raises(UnsupportedUnitError, match=r'\[<scale>, "<name>"\]'):
         units.split_unit(written)
     with pytest.raises(UnsupportedUnitError, match="unsupported energy unit"):
         units.ENERGY_UNIT_KIND.resolve(written)
 
 
-def test_a_scale_glued_to_the_name_is_an_unknown_name():
-    """空白のない `1e-4a.u.` は名前として読まれ、受け付ける書き方が添えられる。"""
-    assert units.split_unit("1e-4a.u.") == (None, "1e-4a.u.")
-    with pytest.raises(UnsupportedUnitError, match=r'"<scale> <name>"'):
-        units.ENERGY_UNIT_KIND.resolve("1e-4a.u.")
+@pytest.mark.parametrize("written", ["10^-4 hartree", "1e-4 hartree", "1e-4a.u."])
+def test_a_scale_inside_the_name_is_not_parsed(written):
+    """倍率を文字列の中に書いても切り出さない。全体が 1 つの未知の名前になる（ADR-0078）。"""
+    assert units.split_unit(written) == (None, written)
+    with pytest.raises(UnsupportedUnitError, match=r'\[<scale>, "<name>"\]'):
+        units.ENERGY_UNIT_KIND.resolve(written)
 
 
 def test_a_scale_multiplies_the_factor():
     ev = units.energy_conversion_factor("eV")
-    assert units.energy_conversion_factor("10^-3 eV") == pytest.approx(1e-3 * ev, rel=1e-15)
-    assert units.energy_conversion_factor("1e-3 eV") == pytest.approx(1e-3 * ev, rel=1e-15)
-    assert units.energy_conversion_factor("2.5 eV") == pytest.approx(2.5 * ev, rel=1e-15)
+    assert units.energy_conversion_factor([1e-3, "eV"]) == pytest.approx(1e-3 * ev, rel=1e-15)
+    assert units.energy_conversion_factor([2.5, "eV"]) == pytest.approx(2.5 * ev, rel=1e-15)
 
 
 def test_a_u_is_hartree_in_an_energy_field():
-    resolved = units.ENERGY_UNIT_KIND.resolve("10^-4 a.u.")
+    resolved = units.ENERGY_UNIT_KIND.resolve([1e-4, "a.u."])
 
-    assert resolved.text == "10^-4 hartree"
+    assert resolved.form == (1e-4, "hartree")
     assert units.energy_conversion_factor("a.u.") == units.energy_conversion_factor("hartree")
 
 
@@ -362,25 +374,30 @@ def test_the_vcc_unit_is_the_hartree_factor_to_the_three_halves():
     """1 E_h/(a_0 sqrt(m_e)) = E_h^{3/2} h_bar^{-1/2}（ADR-0077）。"""
     resolved = units.VCC_UNIT_KIND.resolve("a.u.")
 
-    assert resolved.text == units.VCC_UNIT == "hartree/(bohr*sqrt(m_e))"
+    assert resolved.form == units.VCC_UNIT == "hartree/(bohr*sqrt(m_e))"
     assert resolved.factor == pytest.approx(
         units.energy_conversion_factor("hartree") ** 1.5, rel=1e-15
     )
 
 
-def _every_way_of_writing(kind: units.UnitKind) -> list[str]:
+def _every_way_of_writing(kind: units.UnitKind) -> list[object]:
     names = [*kind.factors, *kind.aliases]
-    return [f"{scale}{name}" for name in names for scale in ("", "10^-4 ", "1e-3 ", "2.5 ")]
+    return [name for name in names] + [
+        [scale, name] for name in names for scale in (1e-4, 1e-3, 2.5, 1000)
+    ]
 
 
-@pytest.mark.parametrize("kind", [units.ENERGY_UNIT_KIND, units.VCC_UNIT_KIND], ids=["energy", "vcc"])
+@pytest.mark.parametrize(
+    "kind", [units.ENERGY_UNIT_KIND, units.VCC_UNIT_KIND], ids=["energy", "vcc"]
+)
 def test_the_formal_form_reads_back_as_itself(kind):
     """正式形を読み直すと同じ正式形・同じ係数になる（冪等、ADR-0076）。"""
     for written in _every_way_of_writing(kind):
         once = kind.resolve(written)
-        twice = kind.resolve(once.text)
+        twice = kind.resolve(once.form)
         assert twice == once, written
-        assert all(alias not in once.text.split() for alias in kind.aliases), written
+        name = once.form if isinstance(once.form, str) else once.form[1]
+        assert name in kind.factors, written
 
 
 def test_sigma_in_a_u_is_sigma_in_hartree(input_payload):
@@ -395,15 +412,27 @@ def test_sigma_in_a_u_is_sigma_in_hartree(input_payload):
     assert from_au.to_broadening() == FCEnvelopeInput.from_obj(hartree).to_broadening()
 
 
+def test_a_value_may_carry_a_scale(input_payload):
+    """`[値, 倍率, "単位"]` の 3 要素で、倍率つきの単位を値に添えられること（ADR-0078）。"""
+    mev = _in_unit(150.0, "eV") * 1e3
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": [mev, 1e-3, "eV"]}
+
+    parsed = FCEnvelopeInput.from_obj(payload)
+
+    assert parsed.broadening.sigma.unit == (1e-3, "eV")
+    assert parsed.to_broadening().sigma == pytest.approx(150.0, rel=1e-13)
+
+
 def test_a_block_unit_may_carry_a_scale(input_payload):
-    """`grid.unit = "10^-3 eV"` の窓が meV で読まれること。"""
+    """`grid.unit = [0.001, "eV"]` の窓が meV で読まれること。"""
     mev = _in_unit(1.0, "eV") * 1e3  # 1 cm^-1 を meV で書いた数
     payload = copy.deepcopy(input_payload)
     payload["grid"] = {
         "e_min": -4500.0 * mev,
         "e_max": 1000.0 * mev,
         "points": {"de": 4.0 * mev},
-        "unit": "10^-3 eV",
+        "unit": [1e-3, "eV"],
     }
     grid = FCEnvelopeInput.from_obj(payload).to_grid()
 
@@ -412,15 +441,24 @@ def test_a_block_unit_may_carry_a_scale(input_payload):
     assert grid.de == pytest.approx(4.0, rel=1e-13)
 
 
+def test_a_misplaced_unit_element_is_rejected(input_payload):
+    """3 要素の値は [値, 倍率, "単位"] の順だけを受ける。"""
+    payload = copy.deepcopy(input_payload)
+    payload["broadening"] = {"sigma": [150.0, "eV", 1e-3]}
+
+    with pytest.raises(UnsupportedUnitError, match="scale"):
+        FCEnvelopeInput.from_obj(payload)
+
+
 def test_the_effective_settings_write_the_formal_form(input_payload):
     """別名で書いた入力の実効設定に別名は残らず、読み直すと同じ系・条件になる。"""
     payload = copy.deepcopy(input_payload)
     payload["frequency_unit"] = "a.u."
     payload["modes"] = [
         {"frequency": _in_unit(1200.0, "hartree"), "coupling": 0.5},
-        {"frequency": [_in_unit(450.0, "hartree") * 1e3, "10^-3 a.u."], "coupling": 0.8},
+        {"frequency": [_in_unit(450.0, "hartree") * 1e3, 1e-3, "a.u."], "coupling": 0.8},
     ]
-    payload["broadening"] = {"sigma": 150.0, "unit": "1e-0 cm^-1"}
+    payload["broadening"] = {"sigma": 150.0, "unit": [1, "cm^-1"]}
     parsed = FCEnvelopeInput.from_obj(payload)
 
     text = parsed.to_json()
@@ -428,9 +466,38 @@ def test_the_effective_settings_write_the_formal_form(input_payload):
 
     assert "a.u." not in text
     assert written["frequency_unit"] == "hartree"
-    assert written["modes"][1]["frequency"][1] == "10^-3 hartree"
-    assert written["broadening"]["unit"] == "1e-0 cm^-1"  # 倍率の字面は正規化しない
+    assert written["modes"][1]["frequency"][1:] == [1e-3, "hartree"]
+    assert written["broadening"]["unit"] == [1.0, "cm^-1"]
     reread = FCEnvelopeInput.from_json(text)
     assert reread == parsed
     assert reread.to_system() == parsed.to_system()
     assert reread.to_broadening() == parsed.to_broadening()
+
+
+def test_a_toml_input_may_write_the_scale_as_a_number(tmp_path):
+    """TOML の数の書き方（`1e-4` / `0.0001`）が、そのまま倍率として読まれること。"""
+    path = tmp_path / "input.toml"
+    path.write_text(
+        """
+schema_version = 3
+coupling_convention = "lambda"
+coupling_unit = [1e-3, "eV"]
+temperature = 0.0
+
+[[modes]]
+frequency = 1200.0
+coupling = 1.0
+
+[[modes]]
+frequency = 450.0
+coupling = [100.0, 0.0001, "eV"]
+""",
+        encoding="utf-8",
+    )
+    parsed = FCEnvelopeInput.from_path(path)
+    modes = parsed.to_system().modes
+    ev = units.energy_conversion_factor("eV")
+
+    assert parsed.coupling_unit == (1e-3, "eV")
+    assert modes[0].huang_rhys == pytest.approx(1e-3 * ev / 1200.0, rel=1e-14)
+    assert modes[1].huang_rhys == pytest.approx(1e-2 * ev / 450.0, rel=1e-14)

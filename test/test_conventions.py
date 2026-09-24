@@ -209,25 +209,25 @@ def test_lambda_reads_a_u_as_hartree():
 def test_the_same_alias_resolves_by_the_convention():
     """同じ `a.u.` でも、流儀 vcc の欄では V の正式名になる。"""
     parsed = FCEnvelopeInput.from_obj(
-        _payload("vcc", -0.3, coupling_unit="10^-4 a.u.")
+        _payload("vcc", -0.3, coupling_unit=[1e-4, "a.u."])
     )
-    assert parsed.coupling_unit == "10^-4 hartree/(bohr*sqrt(m_e))"
+    assert parsed.coupling_unit == (1e-4, "hartree/(bohr*sqrt(m_e))")
 
 
 def test_a_unit_on_the_mode_is_resolved_by_the_convention():
     """モードの値に添えた単位も、流儀が決める種類で正式形になる。"""
-    parsed = FCEnvelopeInput.from_obj(_payload("vcc", [-0.3, "10^-4 a.u."]))
+    parsed = FCEnvelopeInput.from_obj(_payload("vcc", [-0.3, 1e-4, "a.u."]))
 
-    assert parsed.modes[0].coupling.unit == "10^-4 hartree/(bohr*sqrt(m_e))"
+    assert parsed.modes[0].coupling.unit == (1e-4, "hartree/(bohr*sqrt(m_e))")
 
 
 def test_the_caller_s_dictionary_is_left_alone():
     """正式形への置き換えは写しに対して行い、渡した辞書は書き換えない。"""
-    payload = _payload("vcc", [-0.3, "10^-4 a.u."], coupling_unit="a.u.")
+    payload = _payload("vcc", [-0.3, 1e-4, "a.u."], coupling_unit="a.u.")
     FCEnvelopeInput.from_obj(payload)
 
     assert payload["coupling_unit"] == "a.u."
-    assert payload["modes"][0]["coupling"] == [-0.3, "10^-4 a.u."]
+    assert payload["modes"][0]["coupling"] == [-0.3, 1e-4, "a.u."]
 
 
 def test_an_alias_on_a_dimensionless_coupling_is_still_refused():
@@ -237,7 +237,7 @@ def test_an_alias_on_a_dimensionless_coupling_is_still_refused():
         parsed.to_system()
 
 
-@pytest.mark.parametrize("unit", ["1 2 a.u.", "0 a.u.", "-1 a.u."])
+@pytest.mark.parametrize("unit", [[0.0, "a.u."], [-1.0, "a.u."], ["1e-4", "a.u."]])
 def test_a_malformed_coupling_unit_is_refused_even_without_units(unit):
     """書き方の誤りは流儀によらず読んだ時点で報告される。"""
     with pytest.raises(UnsupportedUnitError, match="scale"):
@@ -257,7 +257,7 @@ def test_an_unknown_coupling_unit_names_its_location():
 
 #: 相手プログラムの出力の 1 モード（ADR-0077 の「確かめたこと」）。
 _OUTPUT_FREQUENCY = 500.0
-_OUTPUT_VCC = [-0.3, "10^-4 a.u."]
+_OUTPUT_VCC = [-0.3, 1e-4, "a.u."]
 
 
 def _vcc_payload(coupling: object, **extra: object) -> dict:
@@ -280,7 +280,7 @@ def test_vcc_in_the_formal_name_agrees_with_the_alias():
     """同じ値を正式名で書いても同じ S になる。"""
     from_alias = FCEnvelopeInput.from_obj(_vcc_payload(_OUTPUT_VCC))
     from_formal = FCEnvelopeInput.from_obj(
-        _vcc_payload(-0.3, coupling_unit="10^-4 hartree/(bohr*sqrt(m_e))")
+        _vcc_payload(-0.3, coupling_unit=[1e-4, "hartree/(bohr*sqrt(m_e))"])
     )
 
     assert from_formal.to_system() == from_alias.to_system()
@@ -288,8 +288,8 @@ def test_vcc_in_the_formal_name_agrees_with_the_alias():
 
 def test_the_sign_of_v_does_not_matter():
     """V の符号は S に効かない。"""
-    negative = FCEnvelopeInput.from_obj(_vcc_payload([-0.3, "10^-4 a.u."]))
-    positive = FCEnvelopeInput.from_obj(_vcc_payload([0.3, "10^-4 a.u."]))
+    negative = FCEnvelopeInput.from_obj(_vcc_payload([-0.3, 1e-4, "a.u."]))
+    positive = FCEnvelopeInput.from_obj(_vcc_payload([0.3, 1e-4, "a.u."]))
 
     assert negative.to_system() == positive.to_system()
 

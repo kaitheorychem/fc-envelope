@@ -134,8 +134,9 @@ INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキスト�
   / `SelectionSpec`。`EnergyGridSpec.points` が `GridPointsSpec`（`n` / `de` / `shift`）
 - `BroadeningSpec` と `EnergyGridSpec` は `_EnergySpec` を継承し、自分の `unit`（ブロックの
   **既定**の単位）と `.to_canonical(quantity)`（そのブロックの値を cm⁻¹ の数にする）を持つ
-- `Quantity(value, unit)` — 有次元の値。`150.0` / `[150.0]` / `[0.0186, "eV"]` の 3 つの
-  書き方がここへ畳まれる（ADR-0072）。`unit` が `None` なら既定の単位で読む。
+- `Quantity(value, unit)` — 有次元の値。`150.0` / `[150.0]` / `[0.0186, "eV"]` /
+  `[18.6, 0.001, "eV"]` の書き方がここへ畳まれる（ADR-0072, 0078）。`unit` は `UnitForm`
+  で、`None` なら既定の単位で読む。
   `.unit_or(default)` / `.in_canonical(default)` を持つ
 
 範囲の検査は値の型に任せ、値の型が送出したエラーにフィールドの位置（`modes[1]`、`grid` など）
@@ -148,10 +149,11 @@ INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキスト�
   `.coupling_to_canonical(unit)`（ADR-0033）
 - `G` / `DELTA` / `HUANG_RHYS` / `LAMBDA` / `VCC` と `COUPLING_CONVENTIONS`（名前 → 流儀）
 - `UnitKind(name, factors, aliases)` — 単位の種類（ADR-0076）。`.resolve(written)` が
-  `ResolvedUnit(text, factor)`（正式形と、倍率込みの換算係数）を返す。未知の名前や書き方の
+  `ResolvedUnit(form, factor)`（正式形と、倍率込みの換算係数）を返す。未知の名前や書き方の
   誤りは `UnsupportedUnitError`
 - `ENERGY_UNIT_KIND`（`ENERGY_UNITS` と別名 `ENERGY_UNIT_ALIASES`）/ `VCC_UNIT_KIND`
   （正式名 `VCC_UNIT` = `hartree/(bohr*sqrt(m_e))`、ADR-0077）
+- `UnitForm = str | tuple[float, str]` — 単位の書き方。名前だけか `(倍率, 名前)` の組（ADR-0078）
 - `split_unit(written)` — 倍率と名前の切り分け。単位の種類によらない書き方だけの検査
 - `ENERGY_UNITS`（正式名 → cm⁻¹ への換算係数）/ `energy_conversion_factor(unit)`
   （`ENERGY_UNIT_KIND.resolve(unit).factor`）/ `CANONICAL_ENERGY_UNIT`
@@ -163,7 +165,7 @@ INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキスト�
 V は `VCC_UNIT_KIND` である。V をエネルギーのべき指数で持たないのは、実在しない
 `eV^{3/2}` を受け付け、質量を含む実在の単位を表せないからである（ADR-0077）。
 
-単位の文字列は正式名・別名・倍率からなり、入力の検証を通った後は常に**正式形**である
+単位は正式名・別名・倍率からなり、入力の検証を通った後は常に**正式形**である
 （ADR-0076）。エネルギーの欄はフィールドの検証器が、coupling の欄は流儀が見える
 `FCEnvelopeInput` のモデルの検証器が正式形へ置き換える。
 
@@ -253,16 +255,16 @@ max_lines = 10000
 | フィールド | 型 | 制約 | 意味 |
 |---|---|---|---|
 | `schema_version` | int | `3` 固定 | 不一致は `SchemaVersionError`。古い版の互換層は置かない（ADR-0040, 0070） |
-| `frequency_unit` | str | エネルギーの単位の正式名か別名、倍率を前置できる | `modes[].frequency` の単位。既定 `"cm^-1"` |
+| `frequency_unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | `modes[].frequency` の単位。既定 `"cm^-1"` |
 | `coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` \| `"vcc"` | 既定 `"g"` |
-| `coupling_unit` | str \| null | 流儀の単位の種類の正式名か別名、倍率を前置できる | `modes[].coupling` の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
+| `coupling_unit` | str \| [倍率, str] \| null | 流儀の単位の種類の正式名か別名。倍率は組で書く | `modes[].coupling` の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
 | `modes[].frequency` | 有次元 | > 0（正準化後） | ε_α。既定の単位は `frequency_unit` |
 | `modes[].coupling` | 有次元 | 流儀による | 流儀に従った値。既定の単位は `coupling_unit` |
 | `temperature` | float | ≥ 0 | T [K]。0 は許可（n_α = 0）。単位の軸を持たない |
 | `broadening.sigma` | 有次元 | > 0 | σ。既定の単位は `broadening.unit` |
-| `broadening.unit` | str | エネルギーの単位の正式名か別名、倍率を前置できる | ブロックの既定。既定 `"cm^-1"` |
+| `broadening.unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | ブロックの既定。既定 `"cm^-1"` |
 | `grid.e_min` / `e_max` | 有次元 | `e_min` < `e_max` | 出力窓。既定の単位は `grid.unit` |
-| `grid.unit` | str | エネルギーの単位の正式名か別名、倍率を前置できる | ブロックの既定。既定 `"cm^-1"` |
+| `grid.unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | ブロックの既定。既定 `"cm^-1"` |
 | `grid.points` | object | `n` と `de` のどちらか一方だけ | 全域グリッドの取り方（ADR-0070） |
 | `grid.points.n` | int \| null | 2 の冪、≥ 2 | 全域グリッドの点数。ΔE = 2·e_half / n |
 | `grid.points.de` | 有次元 \| null | > 0 | 出力グリッド間隔。既定の単位は `grid.unit` |
@@ -274,8 +276,8 @@ max_lines = 10000
 上げていない（ADR-0053）。単位の実例は `docs/readme/examples/` にある（ADR-0056）。
 
 **有次元**の欄は、素の数値のほかに `[値, "単位"]` の組でも書ける（ADR-0072）。
-`sigma = 0.0186` / `sigma = [0.0186]` / `sigma = [0.0186, "eV"]` の 3 つが受け付ける
-すべてで、単位を添えなければ上の 4 つの単位フィールド（ブロックまたはトップレベルの
+`sigma = 0.0186` / `sigma = [0.0186]` / `sigma = [0.0186, "eV"]` と、倍率つきの
+`sigma = [18.6, 0.001, "eV"]`（ADR-0078）が受け付けるすべてで、単位を添えなければ上の 4 つの単位フィールド（ブロックまたはトップレベルの
 既定）で読む。添えた単位はその値にだけ効き、既定より優先される。無次元の値
 （`grid.points.n` / `shift` / `selection` の各つまみ / `temperature`）には書けない。
 組も**追加**なので `schema_version` は 3 のままである。
