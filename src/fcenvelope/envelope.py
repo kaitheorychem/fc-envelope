@@ -104,7 +104,7 @@ def compute_envelope(
         grid: エンベロープを標本する E 軸上の点列。
 
     Returns:
-        窓へ切り出した F(E) と、入力エコー・診断値・来歴を含む結果クラス。
+        窓へ切り出した F(E) と、計算条件・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
     # 節目はこの 1 組だけにする。モードや tau 点ごとの記録は取らない（ADR-0052）。
@@ -118,7 +118,7 @@ def compute_envelope(
         "envelope: %d points, N_fft=%d, dE=%.9g, full span=%.9g, "
         "area=%.9g, captured=%.6g",
         energy.size,
-        measured.n_fft,
+        grid.n_fft,
         grid.de,
         grid.full_span,
         measured.total_area,
@@ -185,7 +185,6 @@ def _transform(
 
     tau_max = math.pi / grid.de
     measured = Diagnostics(
-        n_fft=n_fft,
         d_tau=d_tau,
         tau_max=tau_max,
         # 名前はガウス型の名残。減衰因子そのもので測る形への一般化は ADR-0038（提案）。

@@ -20,8 +20,7 @@
 - 単位の別名と倍率。`"a.u."` はエネルギーの欄では `hartree`、V の欄では
   `hartree/(bohr*sqrt(m_e))` を指す。倍率は配列の要素として数で書き、単位の欄なら
   `[1e-3, "eV"]`、値に添えるなら `[18.6, 1e-3, "eV"]` とする。
-  実効設定には別名を正式名に置き換えた形で書き出す。既にある入力ファイルはそのまま
-  読めて、`schema_version` は 3 のままである。
+  実効設定には別名を正式名に置き換えた形で書き出す。
 
 ### 修正
 
@@ -30,10 +29,37 @@
 
 ### 変更
 
+- **入力ファイルの形が変わり、`schema_version` が 4 になった。** 版 3 の入力ファイルは
+  読めないので、次のように書き換える（ADR-0079）。
+  - トップレベルの `frequency_unit` / `coupling_convention` / `coupling_unit` を、新しい
+    `[modes]` ブロックへ移す。これらが効くのはモード表の列だけなので、表の側に置く。
+  - `[[modes]]` を `[[modes.rows]]` に書き換える。
+  - `modes = { path = "modes.csv" }` を、`[modes]` の中の `csv = { path = "modes.csv" }`
+    に書き換える。
+- **結果ファイルの `input`（入力エコー）が `conditions`（計算条件）に変わり、結果
+  ファイルの `schema_version` が 4 になった。** 入力ファイルの形は写さず、モードは
+  `{"frequency", "huang_rhys"}` で書き、流儀の欄は持たない。入力の書き方が今後
+  変わっても結果ファイルの形と版は変わらない。
+- **結果ファイルの単位を入力ファイルと同じ書き方にした。** 有次元の値は `[値, "単位"]`
+  の組（例 `"sigma": [150.0, "cm^-1"]`）、表は表のブロックに列の単位を書く
+  （`spectrum.energy_unit`、`lines.energy_unit`、`conditions.modes.frequency_unit`）。
+  ヘッダの `energy_unit` / `density_unit` はなくなった。`lines` は `rows` を持つ表になった
+  （ADR-0081）。
+- 線のモードの番号を 1 始まりにした。結果ファイルの `transitions[].mode` と `lines --top`
+  の表示（`#1:0->1`）が、モード表の行を上から 1, 2, … と数えた番号になる。Python では
+  `ModeTransition.mode_number` で読める（ADR-0080）。
+- 診断値から `n_fft` を外した。点数は `conditions.grid.n_fft`（Python では
+  `result.grid.n_fft`）だけにある（ADR-0080）。版 3 の結果ファイルは読めず、生成済みの
+  作図スクリプトは版 4 の結果ファイルを読まないので、`fcenvelope script` で作り直す
+  （ADR-0080）。
+- CSV から読むモード表に、列の並びと列ごとの単位を書けるようになった。
+  `csv = { path = "modes.csv", columns = [["frequency", "eV"], "coupling"] }` のように書き、
+  単位を添えない列は `[modes]` の既定の単位で読む。`columns` を省くと今までどおり
+  `frequency, coupling` の順で読む。CSV にヘッダがあり `columns` も書いたときは、両者の
+  並びが一致しなければ止まる。
 - `[broadening]` と `[grid]` を書かなくても入力ファイルが読めるようになった。この 2 つを
   読むのは `run` だけなので、`lines` しか使わない入力に使わないグリッドを書く必要はない。
-  `run` に渡して足りなければ、どのブロックが要るかを名指しして止まる。既にある入力
-  ファイルはそのまま読めて、`schema_version` は 3 のままである。
+  `run` に渡して足りなければ、どのブロックが要るかを名指しして止まる。
 
 ## 0.1.0 - 2026-09-20
 

@@ -20,11 +20,13 @@ runner = CliRunner()
 
 #: `lines` が読む位置だけを書いた入力。`broadening` も `grid` も無い。
 LINES_ONLY = """\
-schema_version = 3
-coupling_convention = "g"
+schema_version = 4
 temperature = 300.0
 
-[[modes]]
+[modes]
+coupling_convention = "g"
+
+[[modes.rows]]
 frequency = 1200.0
 coupling = 0.5
 

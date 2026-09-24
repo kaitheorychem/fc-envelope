@@ -226,7 +226,7 @@ def test_run_reads_modes_from_referenced_csv(tmp_path, input_payload):
     (data_dir / "modes.csv").write_text(
         "frequency,coupling\n1200.0,0.5\n450.0,0.8\n", encoding="utf-8"
     )
-    input_payload["modes"] = {"path": "modes.csv"}
+    input_payload["modes"] = {"coupling_convention": "g", "csv": {"path": "modes.csv"}}
     path = data_dir / "input.json"
     path.write_text(json.dumps(input_payload), encoding="utf-8")
     output = tmp_path / "result.json"
@@ -241,7 +241,7 @@ def test_run_reads_modes_from_referenced_csv(tmp_path, input_payload):
 
 def test_broken_modes_csv_exits_with_one(tmp_path, input_payload):
     (tmp_path / "modes.csv").write_text("frequency,coupling\n1200.0,oops\n", encoding="utf-8")
-    input_payload["modes"] = {"path": "modes.csv"}
+    input_payload["modes"] = {"coupling_convention": "g", "csv": {"path": "modes.csv"}}
     path = tmp_path / "input.json"
     path.write_text(json.dumps(input_payload), encoding="utf-8")
 
@@ -281,7 +281,7 @@ def test_script_subcommand_keeps_an_existing_file(tmp_path, input_file):
 
 
 def test_invalid_input_exits_with_one(tmp_path, input_payload):
-    input_payload["frequency_unit"] = "nm"
+    input_payload["modes"]["frequency_unit"] = "nm"
     path = tmp_path / "input.json"
     path.write_text(json.dumps(input_payload), encoding="utf-8")
 
@@ -349,7 +349,7 @@ def test_an_override_value_is_read_as_json(tmp_path, input_file):
             "lines", str(input_file), "-o", str(output), "--top", "0",
             "--override", "selection.max_quanta=null",
             "--override", "selection.max_lines=500",
-            "--override", "frequency_unit=cm^-1",
+            "--override", "broadening.unit=cm^-1",
         ],
     )
 
@@ -550,7 +550,7 @@ def test_run_writes_the_effective_settings(tmp_path, input_file):
     # 上書き後の値、既定値で埋まった項目、書いたとおりの単位・流儀。
     assert written["temperature"] == 77.0
     assert written["selection"]["min_weight"] == 0.0001
-    assert written["coupling_convention"] == "g"
+    assert written["modes"]["coupling_convention"] == "g"
     assert written["broadening"] == {"sigma": 150.0, "unit": "cm^-1"}
 
 
@@ -661,7 +661,7 @@ def test_the_effective_settings_inline_modes_read_from_csv(tmp_path, input_paylo
     (tmp_path / "modes.csv").write_text(
         "frequency,coupling\n1200.0,0.5\n", encoding="utf-8"
     )
-    input_payload["modes"] = {"path": "modes.csv"}
+    input_payload["modes"] = {"coupling_convention": "g", "csv": {"path": "modes.csv"}}
     path = tmp_path / "input.json"
     path.write_text(json.dumps(input_payload), encoding="utf-8")
 
@@ -671,7 +671,7 @@ def test_the_effective_settings_inline_modes_read_from_csv(tmp_path, input_paylo
     written = json.loads(
         (tmp_path / "input_envelope_config.json").read_text(encoding="utf-8")
     )
-    assert written["modes"] == [{"frequency": 1200.0, "coupling": 0.5}]
+    assert written["modes"]["rows"] == [{"frequency": 1200.0, "coupling": 0.5}]
 
 
 def test_missing_input_file_exits_with_one(tmp_path):
@@ -779,6 +779,7 @@ def test_lines_prints_the_strongest_transitions(tmp_path, input_file):
     assert "ZPL" in invocation.output
     assert "more" in invocation.output
     assert invocation.output.count("->") >= 1
+    assert "#0:" not in invocation.output  # モードの番号は 1 始まり
 
 
 def test_lines_top_zero_prints_no_table(tmp_path, input_file):

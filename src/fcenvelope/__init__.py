@@ -34,7 +34,7 @@ from .errors import (
     SchemaVersionError,
     UnsupportedUnitError,
 )
-from .inputs import FCEnvelopeInput, ModeSpec, Quantity
+from .inputs import FCEnvelopeInput, ModeSpec, ModesSpec, Quantity
 from .io import load_envelope, load_lines, save_envelope, save_lines
 from .lines import compute_fc_lines, fc_factor_matrix
 from .models import (
@@ -81,6 +81,7 @@ __all__ = [
     # 入力ファイルの型
     "FCEnvelopeInput",
     "ModeSpec",
+    "ModesSpec",
     "Quantity",
     # 単位と流儀
     "CouplingConvention",

@@ -93,10 +93,10 @@ def test_the_error_names_the_known_units():
 def test_the_default_frequency_unit_is_the_canonical_one(input_payload):
     """単位フィールドを省いた既存の入力が、そのまま cm^-1 として読まれること。"""
     payload = copy.deepcopy(input_payload)
-    del payload["frequency_unit"]
+    del payload["modes"]["frequency_unit"]
     parsed = FCEnvelopeInput.from_obj(payload)
 
-    assert parsed.frequency_unit == units.CANONICAL_ENERGY_UNIT
+    assert parsed.modes.frequency_unit == units.CANONICAL_ENERGY_UNIT
     assert parsed.to_system() == FCEnvelopeInput.from_obj(input_payload).to_system()
 
 
@@ -106,8 +106,8 @@ def test_the_same_system_written_in_another_unit(input_payload, unit):
     canonical = FCEnvelopeInput.from_obj(input_payload)
 
     payload = copy.deepcopy(input_payload)
-    payload["frequency_unit"] = unit
-    for mode in payload["modes"]:
+    payload["modes"]["frequency_unit"] = unit
+    for mode in payload["modes"]["rows"]:
         mode["frequency"] = _in_unit(mode["frequency"], unit)
     converted = FCEnvelopeInput.from_obj(payload)
 
@@ -120,8 +120,8 @@ def test_the_same_system_written_in_another_unit(input_payload, unit):
 def test_the_frequency_unit_does_not_leak_past_the_boundary(input_payload):
     """正準化の後に単位は残らない。結果は cm^-1 の値だけを持つ（ADR-0054）。"""
     payload = copy.deepcopy(input_payload)
-    payload["frequency_unit"] = "eV"
-    payload["modes"] = [{"frequency": _in_unit(1200.0, "eV"), "coupling": 0.5}]
+    payload["modes"]["frequency_unit"] = "eV"
+    payload["modes"]["rows"] = [{"frequency": _in_unit(1200.0, "eV"), "coupling": 0.5}]
 
     mode = FCEnvelopeInput.from_obj(payload).to_system().modes[0]
 
@@ -235,7 +235,7 @@ def test_the_block_unit_still_covers_the_values_written_bare(input_payload):
 def test_a_mode_may_carry_its_own_frequency_unit(input_payload):
     """モードごとに単位を書けること。書かないモードはトップレベルの既定で読む。"""
     payload = copy.deepcopy(input_payload)
-    payload["modes"] = [
+    payload["modes"]["rows"] = [
         {"frequency": [_in_unit(1200.0, "eV"), "eV"], "coupling": 0.5},
         {"frequency": 450.0, "coupling": 0.8},
     ]
@@ -251,8 +251,8 @@ def test_a_mode_may_carry_its_own_frequency_unit(input_payload):
 def test_a_coupling_unit_on_the_mode_satisfies_a_dimensioned_convention(input_payload):
     """有次元の流儀で、単位をトップレベルではなく値に添えても通ること。"""
     payload = copy.deepcopy(input_payload)
-    payload["coupling_convention"] = "lambda"
-    payload["modes"] = [{"frequency": 1200.0, "coupling": [_in_unit(300.0, "eV"), "eV"]}]
+    payload["modes"]["coupling_convention"] = "lambda"
+    payload["modes"]["rows"] = [{"frequency": 1200.0, "coupling": [_in_unit(300.0, "eV"), "eV"]}]
 
     mode = FCEnvelopeInput.from_obj(payload).to_system().modes[0]
 
@@ -262,13 +262,13 @@ def test_a_coupling_unit_on_the_mode_satisfies_a_dimensioned_convention(input_pa
 def test_a_unit_on_a_dimensionless_coupling_names_the_mode(input_payload):
     """無次元の流儀に単位を添えた誤りが、そのモードを名指しで報告されること。"""
     payload = copy.deepcopy(input_payload)
-    payload["modes"] = [
+    payload["modes"]["rows"] = [
         {"frequency": 1200.0, "coupling": 0.5},
         {"frequency": 450.0, "coupling": [0.8, "eV"]},
     ]
     parsed = FCEnvelopeInput.from_obj(payload)
 
-    with pytest.raises(InvalidInputError, match=r"modes\[1\]: .*dimensionless"):
+    with pytest.raises(InvalidInputError, match=r"modes\.rows\[1\]: .*dimensionless"):
         parsed.to_system()
 
 
@@ -453,8 +453,8 @@ def test_a_misplaced_unit_element_is_rejected(input_payload):
 def test_the_effective_settings_write_the_formal_form(input_payload):
     """別名で書いた入力の実効設定に別名は残らず、読み直すと同じ系・条件になる。"""
     payload = copy.deepcopy(input_payload)
-    payload["frequency_unit"] = "a.u."
-    payload["modes"] = [
+    payload["modes"]["frequency_unit"] = "a.u."
+    payload["modes"]["rows"] = [
         {"frequency": _in_unit(1200.0, "hartree"), "coupling": 0.5},
         {"frequency": [_in_unit(450.0, "hartree") * 1e3, 1e-3, "a.u."], "coupling": 0.8},
     ]
@@ -465,8 +465,8 @@ def test_the_effective_settings_write_the_formal_form(input_payload):
     written = json.loads(text)
 
     assert "a.u." not in text
-    assert written["frequency_unit"] == "hartree"
-    assert written["modes"][1]["frequency"][1:] == [1e-3, "hartree"]
+    assert written["modes"]["frequency_unit"] == "hartree"
+    assert written["modes"]["rows"][1]["frequency"][1:] == [1e-3, "hartree"]
     assert written["broadening"]["unit"] == [1.0, "cm^-1"]
     reread = FCEnvelopeInput.from_json(text)
     assert reread == parsed
@@ -479,16 +479,18 @@ def test_a_toml_input_may_write_the_scale_as_a_number(tmp_path):
     path = tmp_path / "input.toml"
     path.write_text(
         """
-schema_version = 3
-coupling_convention = "lambda"
-coupling_unit = [1e-3, "eV"]
+schema_version = 4
 temperature = 0.0
 
-[[modes]]
+[modes]
+coupling_convention = "lambda"
+coupling_unit = [1e-3, "eV"]
+
+[[modes.rows]]
 frequency = 1200.0
 coupling = 1.0
 
-[[modes]]
+[[modes.rows]]
 frequency = 450.0
 coupling = [100.0, 0.0001, "eV"]
 """,
@@ -498,6 +500,6 @@ coupling = [100.0, 0.0001, "eV"]
     modes = parsed.to_system().modes
     ev = units.energy_conversion_factor("eV")
 
-    assert parsed.coupling_unit == (1e-3, "eV")
+    assert parsed.modes.coupling_unit == (1e-3, "eV")
     assert modes[0].huang_rhys == pytest.approx(1e-3 * ev / 1200.0, rel=1e-14)
     assert modes[1].huang_rhys == pytest.approx(1e-2 * ev / 450.0, rel=1e-14)

@@ -4,8 +4,9 @@
 計算用の値の型に任せ、値の型が送出したエラーにフィールドの位置を添える
 （`docs/adr/0051-value-types-validate-their-own-invariants.md`）。
 
-単位の軸は項目ごとに独立している（ADR-0053）。トップレベルの `frequency_unit` は
-`modes[].frequency` だけに効き、sigma とグリッドは各ブロックの `unit` を持つ。
+単位の軸は項目ごとに独立している（ADR-0053）。単位の既定はそれを使うブロックが持ち、
+トップレベルには置かない。モード表は列ごとの既定（`modes.frequency_unit` /
+`modes.coupling_unit`）を、sigma とグリッドは各ブロックの `unit` を持つ（ADR-0079）。
 
 有次元の値は `[値, "単位"]` の組でも書け、そのときは添えた単位が既定より優先される
 （ADR-0072）。3 つの書き方を 1 つの形へ畳むのは `Quantity` である。
@@ -15,16 +16,17 @@
 値に添えるなら `[-0.3, 0.0001, "a.u."]`、ADR-0078）、そのまま残る。
 エネルギーの欄は欄そのものが種類を決めるのでフィールドの検証器で置き換える。
 coupling の欄は種類を流儀が決めるので、流儀の見えるモデルの検証器
-（`_resolve_coupling_units`）で置き換える。
+（`ModesSpec._read_rows`）で置き換える。
 
-トップレベルの `frequency_unit` / `coupling_convention` / `coupling_unit` は正準化の
-際に消費され、
-`to_system()` を通った後の表現は常に (frequency [cm^-1], huang_rhys) である。
+`[modes]` の `frequency_unit` / `coupling_convention` / `coupling_unit` は正準化の
+際に消費され、`to_system()` を通った後の表現は常に (frequency [cm^-1], huang_rhys) で
+ある。
 変換が起こるのはこのモジュールの中だけで（ADR-0054）、以降のコードは流儀も単位も
 知らない。
 
-`modes` はモードの配列を直接書くか、`{"path": "modes.csv"}` で CSV のモード表を
-参照する。参照はパース時に解決され、パース後は配列で書いた場合と区別がない。
+モード表の行は `[[modes.rows]]` に直接書くか、`csv = {path = "modes.csv", columns = ...}`
+で CSV の列の並びと単位を書いて読み込む（ADR-0079）。参照はパース時に解決され、パース
+後は行を直接書いた場合と区別がない。
 
 `run` だけが読むブロック（`broadening` / `grid`）と `lines` だけが読むブロック
 （`selection`）はどちらも省略でき、無いことが分かるのは読む側の `to_*` である
@@ -45,11 +47,11 @@ import io
 import json
 import logging
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Annotated, Final, Literal
+from typing import Annotated, Final, Literal, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -97,20 +99,23 @@ __all__ = [
     "MODES_CSV_COLUMNS",
     "SCHEMA_VERSION",
     "BroadeningSpec",
+    "CsvColumn",
     "EnergyGridSpec",
     "FCEnvelopeInput",
     "GridPointsSpec",
     "ModeSpec",
+    "ModesSpec",
     "Quantity",
     "SelectionSpec",
+    "read_csv_table",
     "read_mode_specs_csv",
     "template_text",
 ]
 
 #: 入力ファイルの版（`docs/adr/0040-schema-version-2-without-a-compatibility-layer.md`）。
-#: 古い版は互換層を置かずに拒否する。3 で `grid.de` が `grid.points` へ移った
-#: （ADR-0070）。
-SCHEMA_VERSION: Final = 3
+#: 古い版は互換層を置かずに拒否する。3 で `grid.de` が `grid.points` へ移り
+#: （ADR-0070）、4 でモード表が単位と流儀を持つ `[modes]` ブロックになった（ADR-0079）。
+SCHEMA_VERSION: Final = 4
 
 
 def _at(location: str, exc: InvalidInputError) -> InvalidInputError:
@@ -133,7 +138,7 @@ class Quantity:
 
     `150.0` / `[150.0]` / `[0.0186, "eV"]` / `[18.6, 0.001, "eV"]` の書き方がここへ
     畳まれる（ADR-0072, 0078）。`unit` が `None` なら、その値はブロック（または
-    トップレベル）の単位で読む。
+    モード表の列）の既定の単位で読む。
     """
 
     value: float
@@ -189,7 +194,7 @@ def _coupling_unit(written: object) -> UnitForm:
     """coupling の欄の単位の書き方だけを確かめ、そのまま保つ（ADR-0076）。
 
     この欄の単位の種類は流儀が決めるので、ここでは名前を引き当てない。有次元の流儀
-    なら `_resolve_coupling_units` がすでに正式形へ置き換えている。無次元の流儀に
+    なら `ModesSpec._read_rows` がすでに正式形へ置き換えている。無次元の流儀に
     添えた単位は `to_system` が報告する。
     """
     return unit_form(*split_unit(written))
@@ -283,11 +288,11 @@ class _EnergySpec(_Spec):
 
 
 class ModeSpec(_Spec):
-    """入力ファイル中の 1 モード。`coupling` の意味は流儀に依存する。
+    """モード表の 1 行。`coupling` の意味は表の流儀に依存する。
 
-    単位の既定はモードごとではなくトップレベルに置く。CSV でモードを渡すときも
-    既定を担うのは入力ファイルの側である（ADR-0019, 0053）。個々の値に組の形で
-    単位を添えることはできる（ADR-0072）が、CSV には数しか書けない。
+    単位の既定は行ごとではなく表（`ModesSpec`）が持つ。個々の値に組の形で単位を
+    添えることはでき（ADR-0072）、CSV から読んだ行では列に添えた単位がこの形で
+    各値に添えられる（ADR-0079）。
     """
 
     frequency: Dimensioned
@@ -348,27 +353,48 @@ class SelectionSpec(_Spec):
     max_quanta: int | None = _DEFAULT_SELECTION.max_quanta
 
 
-#: モード表 CSV の列。ヘッダを省略した場合はこの順に並んでいるものとする。
-MODES_CSV_COLUMNS = ("frequency", "coupling")
+#: CSV の 1 行から作る値の型。
+_Row = TypeVar("_Row")
 
 
-def read_mode_specs_csv(path: str | Path) -> list[ModeSpec]:
-    """モード表 CSV（RFC 4180）を読み込む。
+@dataclass(frozen=True, slots=True)
+class CsvColumn:
+    """CSV の 1 列。列名と、その列の値に添える単位（ADR-0079）。
 
-    列はちょうど `MODES_CSV_COLUMNS` の 2 列。ヘッダは省略でき、1 行目がこの列名の
-    組（順序は問わない）ならヘッダとして扱い、そうでなければ `frequency, coupling`
-    の順のデータ行として扱う。列名は数値にならないため、この判定は曖昧にならない。
-    RFC 4180 にないコメント行は受け付けず、空行は空のレコードとしてエラーにする。
-    `coupling` の流儀と単位は参照元の入力ファイルに従う。
+    `unit` が `None` の列の値は単位を添えずに渡るので、表のブロックの既定の単位で
+    読まれる。
+    """
 
-    見るのは構造と数値として読めるかまでで、値の範囲は検査しない（ADR-0051）。
+    name: str
+    unit: UnitForm | None = None
+
+
+def read_csv_table(
+    path: str | Path,
+    columns: Sequence[CsvColumn],
+    build: Callable[[dict[str, object]], _Row],
+    *,
+    explicit: bool = False,
+) -> list[_Row]:
+    """表の CSV（RFC 4180）を読み、各行を「列名 -> 値」の辞書にする（ADR-0020, 0079）。
+
+    列は `columns` の列をちょうど 1 回ずつ。ヘッダは省略でき、1 行目が列名の組
+    （順序は問わない）ならヘッダとして扱う。列名は数値にならないため、この判定は
+    曖昧にならない。ヘッダが無ければ `columns` の順に並んでいるものとする。
+    ヘッダがあるとき、`explicit`（列の並びを入力ファイルに書いた）なら並びが一致
+    しなければ誤り、そうでなければヘッダの並びで読む。
+
+    値は列の単位を添えた形（`[値, "単位"]`）にしてから `build` に渡す。CSV を読んだ
+    後は、行を直接書いた場合と区別がない。`build` の検証の誤りには `ファイル:行` を
+    添える。RFC 4180 にないコメント行は受け付けず、空行は空のレコードとしてエラーに
+    する。
     """
     p = Path(path)
     try:
         with p.open(encoding="utf-8-sig", newline="") as stream:
             text = stream.read()
     except (OSError, UnicodeDecodeError) as exc:
-        raise InvalidInputError(f"cannot read modes file {p}: {exc}") from exc
+        raise InvalidInputError(f"cannot read table file {p}: {exc}") from exc
 
     reader = csv.reader(io.StringIO(text, newline=""), strict=True)
     try:
@@ -377,34 +403,289 @@ def read_mode_specs_csv(path: str | Path) -> list[ModeSpec]:
         raise InvalidInputError(f"{p}:{reader.line_num}: malformed CSV: {exc}") from exc
 
     if not records:
-        raise InvalidInputError(f"{p}: modes file is empty")
+        raise InvalidInputError(f"{p}: table file is empty")
+    names = [column.name for column in columns]
     first = records[0][1]
-    has_header = len(first) == len(MODES_CSV_COLUMNS) and set(first) == set(MODES_CSV_COLUMNS)
-    columns = first if has_header else list(MODES_CSV_COLUMNS)
+    has_header = len(first) == len(names) and set(first) == set(names)
+    if has_header and explicit and first != names:
+        raise InvalidInputError(
+            f"{p}:{records[0][0]}: the header {first} does not match the columns "
+            f"{names} given in the input file (write them in the same order, or "
+            f"leave out one of them)"
+        )
+    order = first if has_header else names
+    units = {column.name: column.unit for column in columns}
     rows = records[1:] if has_header else records
     if not rows:
-        raise InvalidInputError(f"{p}: modes file has no mode rows")
+        raise InvalidInputError(f"{p}: table file has no data rows")
 
-    specs: list[ModeSpec] = []
+    table: list[_Row] = []
     for index, (lineno, fields) in enumerate(rows):
         location = f"{p}:{lineno}"
+        # 1 行目がヘッダにもデータ行にもならなかったときに添える案内
         hint = (
-            f" (a header, if present, must consist of exactly the columns "
-            f"{list(MODES_CSV_COLUMNS)})"
+            f" (a header, if present, must consist of exactly the columns {names})"
             if index == 0 and not has_header
             else ""
         )
-        if len(fields) != len(columns):
+        if len(fields) != len(order):
             blank = " (blank lines are not allowed)" if not fields else ""
             raise InvalidInputError(
-                f"{location}: expected {len(columns)} fields, got {len(fields)}{blank}{hint}"
+                f"{location}: expected {len(order)} fields, got {len(fields)}{blank}{hint}"
             )
+        record = {
+            name: _join_value(field, units[name])
+            for name, field in zip(order, fields, strict=True)
+        }
         try:
-            specs.append(ModeSpec.model_validate(dict(zip(columns, fields))))
+            table.append(build(record))
         except ValidationError as exc:
             raise InvalidInputError(f"{location}: {exc}{hint}") from exc
-    logger.info("read %d modes from %s", len(specs), p)
-    return specs
+    logger.info("read %d rows from %s", len(table), p)
+    return table
+
+
+#: モード表の列。列の並びを書かなければこの順に並んでいるものとする（ADR-0079）。
+MODES_CSV_COLUMNS = ("frequency", "coupling")
+
+
+def read_mode_specs_csv(
+    path: str | Path, columns: Sequence[CsvColumn] | None = None
+) -> list[ModeSpec]:
+    """モード表の CSV を読み込む。
+
+    `columns` は列の並びと単位で、省略すると `MODES_CSV_COLUMNS` の順・単位なしで
+    ある（ADR-0079）。単位を添えない列の値は `[modes]` の既定の単位で読まれる。
+    見るのは構造と数値として読めるかまでで、値の範囲は検査しない（ADR-0051）。
+    """
+    explicit = columns is not None
+    if columns is None:
+        columns = [CsvColumn(name) for name in MODES_CSV_COLUMNS]
+    return read_csv_table(path, columns, ModeSpec.model_validate, explicit=explicit)
+
+
+def _csv_columns(
+    written: object, units: dict[str, Callable[[object], UnitForm]]
+) -> list[CsvColumn]:
+    """入力ファイルに書かれた列の並びを `CsvColumn` の並びにする（ADR-0079）。
+
+    各要素は列名か、列名に単位を添えた組（`["coupling", "a.u."]` /
+    `["coupling", 1e-4, "a.u."]`）である。組の形は値に単位を添える形と同じで、値の
+    位置に列名が入る。`units` は列名から、その列の単位を正式形にする関数を引く表で、
+    この表の列をちょうど 1 回ずつ並べる。
+    """
+    location = "modes.csv.columns"
+    forms = '"<column>", ["<column>", "<unit>"] or ["<column>", <scale>, "<unit>"]'
+    if not isinstance(written, list):
+        raise InvalidInputError(f"{location}: expected a list of columns, got {written!r}")
+    columns: list[CsvColumn] = []
+    for entry in written:
+        name, unit = entry, None
+        if isinstance(entry, list) and 1 <= len(entry) <= 3:
+            name, unit = _split_value(entry)
+        if not isinstance(name, str) or name not in units:
+            raise InvalidInputError(
+                f"{location}: expected {forms} with a column among {list(units)}, "
+                f"got {entry!r}"
+            )
+        try:
+            form = None if unit is None else units[name](unit)
+        except (InvalidInputError, UnsupportedUnitError, ValueError) as exc:
+            raise type(exc)(f"{location}: {name}: {exc}") from exc
+        columns.append(CsvColumn(name, form))
+    names = [column.name for column in columns]
+    if sorted(names) != sorted(units):
+        raise InvalidInputError(
+            f"{location}: list each of the columns {list(units)} exactly once, got {names}"
+        )
+    return columns
+
+
+class ModesSpec(_Spec):
+    """モード表のブロック（`[modes]`、ADR-0079）。
+
+    表の既定、すなわち coupling の流儀と各列の既定の単位を持つ。単位の軸は列ごとに
+    独立している（ADR-0053）。行は `rows` に直接書くか、`csv` で CSV の列の並びと
+    単位を書いて読み込む。CSV の参照はパース時に解決され、パース後は `rows` に
+    直接書いた場合と区別がない。
+
+    単位は検証を通った時点で正式形になっている（ADR-0076）。frequency の列は列その
+    ものが種類を決めるのでフィールドの検証器で、coupling の列は種類を流儀が決めるので
+    流儀の見えるモデルの検証器（`_read_rows`）で置き換える。
+    """
+
+    coupling_convention: str = DEFAULT_COUPLING_CONVENTION.name
+    """流儀の**名前**。流儀そのものは `convention` から引く。
+
+    ファイルに現れるのは名前なので、pydantic のフィールドも名前のままにする。
+    こうしておくと `model_dump()` がそのまま入力ファイルの形に戻る（ADR-0050）。
+    """
+
+    frequency_unit: UnitForm = CANONICAL_ENERGY_UNIT
+    """frequency の列の既定の単位。"""
+
+    coupling_unit: UnitForm | None = None
+    """coupling の列の既定の単位。有次元の流儀でだけ書き、無次元の流儀では書いては
+    ならない。"""
+
+    rows: list[ModeSpec] = Field(min_length=1)
+
+    # pydantic の `mode="before"` の検証器は**検証前**の値を受ける。構造が分からない
+    # 位置なので `object` で取り、pydantic に渡し返すものだけを返す。
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_rows(cls, data: object, info: ValidationInfo) -> object:
+        """coupling の単位を正式形へ置き換え、`csv` を読んだ行に差し替える。
+
+        同じ `a.u.` でも、流儀 lambda なら `hartree`、vcc なら
+        `hartree/(bohr*sqrt(m_e))` になる（ADR-0076）。フィールドの検証器からは流儀が
+        見えないので、生の辞書の段階でここが置き換える。置き換えるのは形が分かる位置
+        だけで、それ以外は触らずに残す。構造の誤りはフィールドの検証器が、流儀の名前の
+        誤りは `_check_coupling_convention` が、無次元の流儀に添えた単位は `to_system`
+        が報告する。
+
+        `csv` の相対パスは検証コンテキストの `base_dir`（`from_path` では入力ファイルの
+        ディレクトリ）を基準に解決する。呼び出し側の辞書は書き換えず、写しを返す。
+        """
+        if not isinstance(data, dict):
+            return data
+        try:
+            kind = coupling_convention(
+                data.get("coupling_convention", DEFAULT_COUPLING_CONVENTION.name)
+            ).unit_kind
+        except InvalidInputError:
+            kind = None
+
+        def resolve(location: str, written: object) -> UnitForm:
+            if kind is None:
+                return _coupling_unit(written)
+            try:
+                return kind.resolve(written).form
+            except UnsupportedUnitError as exc:
+                raise UnsupportedUnitError(f"{location}: {exc}") from exc
+
+        resolved = dict(data)
+        unit = resolved.get("coupling_unit")
+        if kind is not None and isinstance(unit, str | list):
+            resolved["coupling_unit"] = resolve("modes.coupling_unit", unit)
+        rows = resolved.get("rows")
+        if kind is not None and isinstance(rows, list):
+            new_rows: list[object] = []
+            for index, row in enumerate(rows):
+                coupling = row.get("coupling") if isinstance(row, dict) else None
+                # 単位が添えてある形（最後の要素が名前の 2 要素か 3 要素の配列）だけを
+                # 置き換える。それ以外の形はフィールドの検証器が報告する。
+                if (
+                    isinstance(coupling, list)
+                    and len(coupling) in (2, 3)
+                    and isinstance(coupling[-1], str)
+                ):
+                    number, written = _split_value(coupling)
+                    form = resolve(f"modes.rows[{index}].coupling", written)
+                    row = {**row, "coupling": _join_value(number, form)}
+                new_rows.append(row)
+            resolved["rows"] = new_rows
+
+        if "csv" not in resolved:
+            if "rows" not in resolved:
+                raise InvalidInputError(_ROWS_OR_CSV)
+            return resolved
+        if "rows" in resolved:
+            raise InvalidInputError(f"{_ROWS_OR_CSV}, not both")
+        reference = resolved.pop("csv")
+        path = reference.get("path") if isinstance(reference, dict) else None
+        if (
+            not isinstance(reference, dict)
+            or not set(reference) <= {"path", "columns"}
+            or not isinstance(path, str)
+            or not path
+        ):
+            raise InvalidInputError(
+                'modes.csv: expected {path = "<modes>.csv"} with optional columns, '
+                f"got {reference!r}"
+            )
+        columns = None
+        if "columns" in reference:
+            columns = _csv_columns(
+                reference["columns"],
+                {
+                    "frequency": _energy_unit,
+                    "coupling": lambda written: resolve("coupling", written),
+                },
+            )
+        base_dir = Path((info.context or {}).get("base_dir") or ".")
+        resolved["rows"] = read_mode_specs_csv(base_dir / path, columns)
+        return resolved
+
+    @field_validator("frequency_unit", mode="before")
+    @classmethod
+    def _check_frequency_unit(cls, value: object) -> UnitForm:
+        """単位を正式形にする（ADR-0076）。"""
+        return _energy_unit(value)
+
+    @field_validator("coupling_convention", mode="before")
+    @classmethod
+    def _check_coupling_convention(cls, value: object) -> str:
+        """名前が既知の流儀を指すことを確かめる。保つのは名前のままである。"""
+        coupling_convention(value)  # 未知の名前・型はここで報告される
+        return str(value)
+
+    @field_validator("coupling_unit", mode="before")
+    @classmethod
+    def _check_coupling_unit(cls, value: object) -> UnitForm | None:
+        """単位の書き方だけを確かめる。流儀との噛み合わせは正準化で見る。
+
+        名前の引き当てと正式形への置き換えは `_read_rows` が済ませている（有次元の
+        流儀のとき）。省略（`None`）はここでは通す。単位が要るかどうかは流儀が決める
+        ことなので、流儀の分からないこの位置では判定できない。
+        """
+        if value is None:
+            return None
+        return _coupling_unit(value)
+
+    @property
+    def convention(self) -> CouplingConvention:
+        """`coupling_convention` の名前が指す流儀オブジェクト。"""
+        return coupling_convention(self.coupling_convention)
+
+    def to_system(self) -> VibrationalSystem:
+        """単位と流儀を消費して正準形の系を返す。"""
+        convention = self.convention
+        modes: list[VibrationalMode] = []
+        for index, spec in enumerate(self.rows):
+            # 軸は独立なので、frequency と coupling はそれぞれの単位から別々に正準単位
+            # へ直す（ADR-0053）。単位は値が自分で持っていればそれ、なければ表の既定
+            # である（ADR-0072, 0079）。coupling の係数は流儀の次元のぶんだけべきが乗る。
+            # 振動数は変換式より先に検証する。lambda と vcc の変換式は振動数で割るので、
+            # 0 だと `VibrationalMode` の検査に届く前に落ちる（ADR-0077）。
+            location = f"modes.rows[{index}]"
+            try:
+                frequency = validate_frequency(
+                    spec.frequency.in_canonical(self.frequency_unit)
+                )
+                coupling = spec.coupling.value * convention.coupling_to_canonical(
+                    spec.coupling.unit_or(self.coupling_unit)
+                )
+            except InvalidInputError as exc:
+                raise _at(location, exc) from exc
+            try:
+                modes.append(
+                    VibrationalMode(
+                        frequency=frequency,
+                        huang_rhys=convention.to_huang_rhys(coupling, frequency),
+                    )
+                )
+            except InvalidInputError as exc:
+                raise _at(location, exc) from exc
+        return VibrationalSystem(modes)
+
+
+#: `[modes]` に行をどう書くかの案内。どちらも無い・両方あるときに出す。
+_ROWS_OR_CSV: Final = (
+    "modes: give the rows either inline ([[modes.rows]]) "
+    'or from a CSV file (csv = {path = "<modes>.csv"})'
+)
 
 
 def _as_text(text: str | bytes) -> str:
@@ -489,24 +770,10 @@ class FCEnvelopeInput(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[3] = SCHEMA_VERSION
-    frequency_unit: UnitForm = CANONICAL_ENERGY_UNIT
-    coupling_convention: str = DEFAULT_COUPLING_CONVENTION.name
-    """流儀の**名前**。流儀そのものは `convention` から引く。
+    schema_version: Literal[4] = SCHEMA_VERSION
+    modes: ModesSpec
+    """モード表。単位と流儀は表が自分で持つ（ADR-0079）。"""
 
-    ファイルに現れるのは名前なので、pydantic のフィールドも名前のままにする。
-    こうしておくと `model_dump()` がそのまま入力ファイルの形に戻り、CLI の上書きが
-    同じ経路を通れる（ADR-0050）。
-    """
-
-    coupling_unit: UnitForm | None = None
-    """有次元の流儀の `coupling` の単位。無次元の流儀では書いてはならない。
-
-    位置はトップレベルで、モードごとではない。CSV でモードを渡すときも単位を担うのは
-    入力ファイルの側である（ADR-0019, 0053）。
-    """
-
-    modes: list[ModeSpec] = Field(min_length=1)
     temperature: float
 
     broadening: BroadeningSpec | None = None
@@ -522,67 +789,9 @@ class FCEnvelopeInput(BaseModel):
     分子によらない意味があるからである（ADR-0021, 0075）。
     """
 
-    # pydantic の `mode="before"` の検証器は**検証前**の値を受ける。構造が分からない
-    # 位置なので `object` で取り、pydantic に渡し返すものだけを返す。
-
-    @model_validator(mode="before")
-    @classmethod
-    def _resolve_coupling_units(cls, data: object) -> object:
-        """coupling の欄の単位を、流儀が決める単位の種類で正式形へ置き換える（ADR-0076）。
-
-        同じ `a.u.` でも、流儀 lambda なら `hartree`、vcc なら
-        `hartree/(bohr*sqrt(m_e))` になる。フィールドの検証器からは流儀が見えないので、
-        生の辞書の段階でここが置き換える。
-
-        置き換えるのは形が分かる位置だけで、それ以外は触らずに残す。構造の誤りは
-        フィールドの検証器が、流儀の名前の誤りは `_check_coupling_convention` が、
-        無次元の流儀に添えた単位は `to_system` が報告する。呼び出し側の辞書は
-        書き換えず、写しを返す。
-        """
-        if not isinstance(data, dict):
-            return data
-        try:
-            convention = coupling_convention(
-                data.get("coupling_convention", DEFAULT_COUPLING_CONVENTION.name)
-            )
-        except InvalidInputError:
-            return data
-        kind = convention.unit_kind
-        if kind is None:
-            return data
-
-        def resolve(location: str, written: object) -> UnitForm:
-            try:
-                return kind.resolve(written).form
-            except UnsupportedUnitError as exc:
-                raise UnsupportedUnitError(f"{location}: {exc}") from exc
-
-        resolved = dict(data)
-        unit = resolved.get("coupling_unit")
-        if isinstance(unit, str | list):
-            resolved["coupling_unit"] = resolve("coupling_unit", unit)
-        modes = resolved.get("modes")
-        if isinstance(modes, list):
-            new_modes: list[object] = []
-            for index, mode in enumerate(modes):
-                coupling = mode.get("coupling") if isinstance(mode, dict) else None
-                # 単位が添えてある形（最後の要素が名前の 2 要素か 3 要素の配列）だけを
-                # 置き換える。それ以外の形はフィールドの検証器が報告する。
-                if (
-                    isinstance(coupling, list)
-                    and len(coupling) in (2, 3)
-                    and isinstance(coupling[-1], str)
-                ):
-                    number, written = _split_value(coupling)
-                    form = resolve(f"modes[{index}].coupling", written)
-                    mode = {**mode, "coupling": _join_value(number, form)}
-                new_modes.append(mode)
-            resolved["modes"] = new_modes
-        return resolved
-
     @field_validator("schema_version", mode="before")
     @classmethod
-    def _check_schema_version(cls, value: object) -> Literal[3]:
+    def _check_schema_version(cls, value: object) -> Literal[4]:
         if value != SCHEMA_VERSION:
             raise SchemaVersionError(
                 f"unsupported schema_version {value!r} (this build supports {SCHEMA_VERSION})"
@@ -591,81 +800,18 @@ class FCEnvelopeInput(BaseModel):
 
     @field_validator("modes", mode="before")
     @classmethod
-    def _resolve_modes_file(cls, value: object, info: ValidationInfo) -> object:
-        """`{"path": ...}` を CSV から読んだモードの並びに置き換える。
-
-        相対パスは検証コンテキストの `base_dir`（`from_path` では入力ファイルの
-        ディレクトリ）を基準に解決する。
-        """
-        if not isinstance(value, dict):
-            return value
-        path = value.get("path")
-        if set(value) != {"path"} or not isinstance(path, str) or not path:
-            raise ValueError('modes must be a list of modes or {"path": "<modes>.csv"}')
-        base_dir = Path((info.context or {}).get("base_dir") or ".")
-        return read_mode_specs_csv(base_dir / path)
-
-    @field_validator("frequency_unit", mode="before")
-    @classmethod
-    def _check_frequency_unit(cls, value: object) -> UnitForm:
-        """単位を正式形にする（ADR-0076）。"""
-        return _energy_unit(value)
-
-    @field_validator("coupling_convention", mode="before")
-    @classmethod
-    def _check_coupling_convention(cls, value: object) -> str:
-        """名前が既知の流儀を指すことを確かめる。保つのは名前のままである。"""
-        coupling_convention(value)  # 未知の名前・型はここで報告される
-        return str(value)
-
-    @field_validator("coupling_unit", mode="before")
-    @classmethod
-    def _check_coupling_unit(cls, value: object) -> UnitForm | None:
-        """単位の書き方だけを確かめる。流儀との噛み合わせは正準化で見る。
-
-        名前の引き当てと正式形への置き換えは `_resolve_coupling_units` が済ませている
-        （有次元の流儀のとき）。省略（`None`）はここでは通す。単位が要るかどうかは
-        流儀が決めることなので、流儀の分からないこの位置では判定できない。
-        """
-        if value is None:
-            return None
-        return _coupling_unit(value)
-
-    @property
-    def convention(self) -> CouplingConvention:
-        """`coupling_convention` の名前が指す流儀オブジェクト。"""
-        return coupling_convention(self.coupling_convention)
+    def _check_modes_is_a_block(cls, value: object) -> object:
+        """版 3 までの `[[modes]]` の並びを、版 4 の書き方を添えて断る（ADR-0079）。"""
+        if isinstance(value, list):
+            raise InvalidInputError(
+                "modes: expected a [modes] block with [[modes.rows]] or csv, "
+                "got a list of modes (write the rows under [[modes.rows]])"
+            )
+        return value
 
     def to_system(self) -> VibrationalSystem:
         """単位と流儀を消費して正準形の系を返す。"""
-        convention = self.convention
-        modes: list[VibrationalMode] = []
-        for index, spec in enumerate(self.modes):
-            # 軸は独立なので、frequency と coupling はそれぞれの単位から別々に正準単位
-            # へ直す（ADR-0053）。単位はモードが自分で持っていればそれ、なければ
-            # トップレベルの既定である（ADR-0072）。coupling の係数は流儀の次元の
-            # ぶんだけべきが乗る。
-            # 振動数は変換式より先に検証する。lambda と vcc の変換式は振動数で割るので、
-            # 0 だと `VibrationalMode` の検査に届く前に落ちる（ADR-0077）。
-            try:
-                frequency = validate_frequency(
-                    spec.frequency.in_canonical(self.frequency_unit)
-                )
-                coupling = spec.coupling.value * convention.coupling_to_canonical(
-                    spec.coupling.unit_or(self.coupling_unit)
-                )
-            except InvalidInputError as exc:
-                raise _at(f"modes[{index}]", exc) from exc
-            try:
-                modes.append(
-                    VibrationalMode(
-                        frequency=frequency,
-                        huang_rhys=convention.to_huang_rhys(coupling, frequency),
-                    )
-                )
-            except InvalidInputError as exc:
-                raise _at(f"modes[{index}]", exc) from exc
-        return VibrationalSystem(modes)
+        return self.modes.to_system()
 
     def to_broadening(self) -> Broadening:
         """単位を消費して線形状を計算用の値にする。
@@ -735,7 +881,7 @@ class FCEnvelopeInput(BaseModel):
         書き出すのは正準化**前**の姿、すなわち入力ファイルと同じ単位・流儀の値である。
         省略された項目は既定値で埋まり、`{"path": ...}` で渡したモードは行に展開されて
         埋め込まれる。この文字列をそのまま入力ファイルとして与えれば、同じ計算が再現
-        できる。結果ファイルの入力エコーが正準形なのとは狙いが違う（ADR-0010, 0065）。
+        できる。結果ファイルの計算条件が正準形なのとは狙いが違う（ADR-0065, 0080）。
 
         有次元の値は書いたままの姿で出る。素の数値で書けば素の数値、組で書けば組で
         ある（ADR-0072）。単位フィールドは既定値で埋まって必ず書かれるので、どちらで

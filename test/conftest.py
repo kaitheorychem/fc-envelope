@@ -90,13 +90,15 @@ def input_payload() -> dict:
     が確かめているので、書式に関わらないテストは JSON のままでよい。
     """
     return {
-        "schema_version": 3,
-        "frequency_unit": "cm^-1",
-        "coupling_convention": "g",
-        "modes": [
-            {"frequency": 1200.0, "coupling": 0.5},
-            {"frequency": 450.0, "coupling": 0.8},
-        ],
+        "schema_version": 4,
+        "modes": {
+            "frequency_unit": "cm^-1",
+            "coupling_convention": "g",
+            "rows": [
+                {"frequency": 1200.0, "coupling": 0.5},
+                {"frequency": 450.0, "coupling": 0.8},
+            ],
+        },
         "temperature": 300.0,
         "broadening": {"sigma": 150.0},
         "grid": {"e_min": -4500.0, "e_max": 1000.0, "points": {"de": 4.0}},

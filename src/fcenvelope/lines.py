@@ -238,7 +238,7 @@ def compute_fc_lines(
             梯子を自動で伸ばす（上限 `MAX_QUANTA_PER_MODE`）。
 
     Returns:
-        線の列と、入力エコー・診断値・来歴を含む結果クラス。
+        線の列と、計算条件・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
     # 節目はこの 1 組だけにする。モードごと・線ごとの記録は取らない（ADR-0052）。

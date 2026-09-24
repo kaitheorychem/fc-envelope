@@ -36,7 +36,7 @@ def test_valid_payload_parses(input_payload):
 def test_unsupported_frequency_unit(input_payload):
     """換算表にない単位は受けない。波長は表に載せていない（ADR-0054）。"""
     payload = copy.deepcopy(input_payload)
-    payload["frequency_unit"] = "nm"
+    payload["modes"]["frequency_unit"] = "nm"
     with pytest.raises(UnsupportedUnitError):
         FCEnvelopeInput.from_obj(payload)
 
@@ -50,7 +50,7 @@ def test_schema_version_mismatch(input_payload):
 
 def test_empty_modes(input_payload):
     payload = copy.deepcopy(input_payload)
-    payload["modes"] = []
+    payload["modes"]["rows"] = []
     with pytest.raises(InvalidInputError):
         FCEnvelopeInput.from_obj(payload)
 
@@ -66,18 +66,18 @@ def test_empty_modes(input_payload):
 def test_invalid_mode_values(input_payload, convention, field, value):
     """範囲の検査は値の型が行い、エラーにフィールドの位置が付く（ADR-0051）。"""
     payload = copy.deepcopy(input_payload)
-    payload["coupling_convention"] = convention
-    payload["modes"][0][field] = value
+    payload["modes"]["coupling_convention"] = convention
+    payload["modes"]["rows"][0][field] = value
     parsed = FCEnvelopeInput.from_obj(payload)
-    with pytest.raises(InvalidInputError, match=r"modes\[0\]"):
+    with pytest.raises(InvalidInputError, match=r"modes\.rows\[0\]"):
         parsed.to_system()
 
 
 def test_negative_g_is_accepted_because_its_sign_is_meaningless(input_payload):
     """S = g^2 なので g の符号は FC 因子に効かない（ADR-0003）。"""
     payload = copy.deepcopy(input_payload)
-    payload["coupling_convention"] = "g"
-    payload["modes"][0]["coupling"] = -0.5
+    payload["modes"]["coupling_convention"] = "g"
+    payload["modes"]["rows"][0]["coupling"] = -0.5
     assert FCEnvelopeInput.from_obj(payload).to_system().modes[0].huang_rhys == 0.25
 
 
@@ -157,7 +157,7 @@ def test_non_string_convention_is_an_input_error(input_payload, convention):
     本パッケージが送出する例外はすべて `FCEnvelopeError` の派生である（ADR-0013）。
     """
     payload = copy.deepcopy(input_payload)
-    payload["coupling_convention"] = convention
+    payload["modes"]["coupling_convention"] = convention
     with pytest.raises(InvalidInputError, match="coupling_convention"):
         FCEnvelopeInput.from_obj(payload)
 
@@ -189,4 +189,4 @@ def test_models_are_frozen(input_payload):
 
 def test_from_json_accepts_text(input_payload):
     parsed = FCEnvelopeInput.from_json(json.dumps(input_payload))
-    assert len(parsed.modes) == 2
+    assert len(parsed.modes.rows) == 2

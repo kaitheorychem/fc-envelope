@@ -21,16 +21,18 @@ runner = CliRunner()
 
 #: `conftest.input_payload` と同じ内容を TOML で書いたもの。
 TOML_INPUT = """\
-schema_version = 3
-frequency_unit = "cm^-1"
-coupling_convention = "g"
+schema_version = 4
 temperature = 300.0
 
-[[modes]]
+[modes]
+frequency_unit = "cm^-1"
+coupling_convention = "g"
+
+[[modes.rows]]
 frequency = 1200.0
 coupling = 0.5
 
-[[modes]]
+[[modes.rows]]
 frequency = 450.0
 coupling = 0.8
 
@@ -56,7 +58,7 @@ def toml_file(tmp_path):
 def test_from_toml_reads_text():
     parsed = FCEnvelopeInput.from_toml(TOML_INPUT)
 
-    assert [mode.frequency.value for mode in parsed.modes] == [1200.0, 450.0]
+    assert [mode.frequency.value for mode in parsed.modes.rows] == [1200.0, 450.0]
     assert parsed.to_system().modes[0].huang_rhys == 0.25
 
 
@@ -83,32 +85,32 @@ def test_toml_comments_are_allowed(tmp_path):
         encoding="utf-8",
     )
 
-    assert FCEnvelopeInput.from_path(path).modes[0].coupling.value == 0.5
+    assert FCEnvelopeInput.from_path(path).modes.rows[0].coupling.value == 0.5
 
 
 def test_modes_can_reference_a_csv_relative_to_the_toml_file(tmp_path):
-    """CSV 参照の基準は書式によらず入力ファイルの位置（ADR-0019, 0069）。"""
+    """CSV 参照の基準は書式によらず入力ファイルの位置（ADR-0019, 0069, 0079）。"""
     (tmp_path / "modes.csv").write_text(
         "frequency,coupling\n1200.0,0.5\n450.0,0.8\n", encoding="utf-8"
     )
     path = tmp_path / "input.toml"
     body = TOML_INPUT.replace(
-        """[[modes]]
+        """
+[[modes.rows]]
 frequency = 1200.0
 coupling = 0.5
 
-[[modes]]
+[[modes.rows]]
 frequency = 450.0
 coupling = 0.8
-
 """,
-        'modes = { path = "modes.csv" }\n\n',
+        'csv = { path = "modes.csv" }\n',
     )
     path.write_text(body, encoding="utf-8")
 
     parsed = FCEnvelopeInput.from_path(path)
 
-    assert [mode.frequency.value for mode in parsed.modes] == [1200.0, 450.0]
+    assert [mode.frequency.value for mode in parsed.modes.rows] == [1200.0, 450.0]
 
 
 def test_malformed_toml_is_reported_as_an_input_error():
@@ -133,7 +135,7 @@ def test_an_unknown_extension_stops_before_reading(tmp_path):
 def test_a_toml_file_still_carries_the_schema_version(tmp_path):
     """版の検査は書式の手前ではなく入力ファイルの型にある。"""
     path = tmp_path / "input.toml"
-    path.write_text(TOML_INPUT.replace("schema_version = 3", "schema_version = 1"), encoding="utf-8")
+    path.write_text(TOML_INPUT.replace("schema_version = 4", "schema_version = 1"), encoding="utf-8")
 
     with pytest.raises(SchemaVersionError):
         FCEnvelopeInput.from_path(path)

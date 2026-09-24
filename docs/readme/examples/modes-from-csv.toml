@@ -1,0 +1,21 @@
+# モード表を CSV から読む例（ADR-0079）。CSV には数だけを書き、列の並びと単位は
+# ここに書く。振動数は eV の列、coupling は単位を添えないので [modes] の流儀 g で読む。
+# 物理系は basic.toml と同じ（1200 / 450 cm^-1 を eV で書いたもの）。
+#   uv run fcenvelope run docs/readme/examples/modes-from-csv.toml -o result.json
+
+schema_version = 4
+temperature = 300.0
+
+[modes]
+coupling_convention = "g"
+csv = { path = "modes.csv", columns = [["frequency", "eV"], "coupling"] }
+
+[broadening]
+sigma = 150.0
+
+[grid]
+e_min = -4500.0
+e_max = 1000.0
+
+[grid.points]
+de = 4.0

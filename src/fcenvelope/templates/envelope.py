@@ -162,8 +162,8 @@ def main() -> None:
         fig.savefig(output, dpi=DPI, metadata={
             "Software": f"fcenvelope {data['fcenvelope_version']}",
             "Source": f"{source.name} ({data['created_at']})",
-            "Description": f"T = {data['input']['temperature']:g} K, "
-                           f"sigma = {data['input']['broadening']['sigma']:g} cm^-1",
+            "Description": f"T = {data['conditions']['temperature']:g} K, "
+                           f"sigma = {data['conditions']['broadening']['sigma'][0]:g} cm^-1",
         })
         print(f"wrote {output}")
     if SHOW if SHOW is not None else sys.stdout.isatty():

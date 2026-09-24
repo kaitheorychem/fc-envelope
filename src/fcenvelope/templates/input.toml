@@ -7,19 +7,24 @@
 # ここから下は 3 つに分かれる。両方が読む設定、run だけが読む [broadening] / [grid]、
 # lines だけが読む [selection] である。読まないほうのブロックは消してもよい。
 
-schema_version = 3          # 入力ファイルの版。3 固定
-frequency_unit = "cm^-1"    # modes[].frequency の既定の単位
-coupling_convention = "g"   # coupling の流儀。g / delta / huang_rhys / lambda / vcc
-# coupling_unit = "cm^-1"   # 有次元の流儀（lambda / vcc）のときだけ書く
+schema_version = 4          # 入力ファイルの版。4 固定
 temperature = 300.0         # 温度 T [K]。0 でもよい
 
-# 1 モード = 1 つの [[modes]]。並び順は結果に効かない。
-# 行数が多いなら modes = { path = "modes.csv" } で frequency, coupling の 2 列の CSV を指せる。
-[[modes]]
+# モード表。単位と流儀は表が持ち、ここに書いた単位は表の列にだけ効く。
+[modes]
+coupling_convention = "g"   # coupling の列の流儀。g / delta / huang_rhys / lambda / vcc
+frequency_unit = "cm^-1"    # frequency の列の既定の単位
+# coupling_unit = "cm^-1"   # coupling の列の既定の単位。有次元の流儀（lambda / vcc）のときだけ書く
+# 行を CSV から読むなら [[modes.rows]] の代わりに次の 1 行。パスはこのファイルからの相対。
+# 列に単位を添えるとその列はその単位で読む。columns を省けば frequency, coupling の順。
+# csv = { path = "modes.csv", columns = ["frequency", ["coupling", "cm^-1"]] }
+
+# 1 モード = 1 つの [[modes.rows]]。並び順は結果に効かない。
+[[modes.rows]]
 frequency = 1200.0          # 振動数 ε
 coupling = 0.5              # 流儀に従った結合の値（g なら S = g^2）
 
-[[modes]]
+[[modes.rows]]
 frequency = 450.0
 coupling = 0.8
 

@@ -36,9 +36,12 @@ def result(multi_mode):
     )
 
 
-def test_input_and_result_files_share_one_schema_version():
-    """`io` は `inputs` に依存しない（ADR-0041）ので版の一致はここで確かめる。"""
-    assert SCHEMA_VERSION == inputs_module.SCHEMA_VERSION
+def test_the_result_file_counts_its_version_on_its_own():
+    """結果ファイルは入力ファイルの形を写さないので、版も別に数える（ADR-0080）。
+
+    `io` は `inputs` に依存しない（ADR-0041）ので、両者の関係はここで確かめる。
+    """
+    assert (SCHEMA_VERSION, inputs_module.SCHEMA_VERSION) == (4, 4)
 
 
 def test_round_trip_is_exact(result, tmp_path):
@@ -65,13 +68,15 @@ def test_save_load_save_leaves_the_file_byte_identical(result, tmp_path):
     assert first.read_bytes() == second.read_bytes()
 
 
-def test_written_input_echo_is_canonical(tmp_path):
-    """入力エコーは常に huang_rhys 流儀で書き出される。"""
+def test_written_conditions_hold_the_huang_rhys_factor(tmp_path):
+    """計算条件のモードは流儀によらず振動数と S で書き出される（ADR-0080）。"""
     parsed = FCEnvelopeInput.from_obj(
         {
-            "schema_version": 3,
-            "coupling_convention": "g",
-            "modes": [{"frequency": 1200.0, "coupling": 0.5}],
+            "schema_version": 4,
+            "modes": {
+                "coupling_convention": "g",
+                "rows": [{"frequency": 1200.0, "coupling": 0.5}],
+            },
             "temperature": 300.0,
             "broadening": {"sigma": 150.0},
             "grid": {"e_min": -4000.0, "e_max": 1000.0, "points": {"de": 5.0}},
@@ -90,21 +95,40 @@ def test_written_input_echo_is_canonical(tmp_path):
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["kind"] == "fcenvelope.envelope"
-    assert payload["input"]["coupling_convention"] == "huang_rhys"
-    assert payload["input"]["frequency_unit"] == "cm^-1"
-    assert payload["input"]["modes"] == [{"frequency": 1200.0, "coupling": 0.25}]
-    assert payload["input"]["temperature"] == 300.0
-    assert payload["input"]["broadening"] == {"sigma": 150.0}
-    assert payload["input"]["grid"] == {
-        "e_min": -4000.0,
-        "e_max": 1000.0,
-        "de": 5.0,
+    assert payload["conditions"]["modes"] == {
+        "frequency_unit": "cm^-1",
+        "rows": [{"frequency": 1200.0, "huang_rhys": 0.25}],
+    }
+    assert payload["conditions"]["temperature"] == 300.0
+    assert payload["conditions"]["broadening"] == {"sigma": [150.0, "cm^-1"]}
+    assert payload["conditions"]["grid"] == {
+        "e_min": [-4000.0, "cm^-1"],
+        "e_max": [1000.0, "cm^-1"],
+        "de": [5.0, "cm^-1"],
         "n_fft": 2048,
     }
-    assert payload["energy_unit"] == "cm^-1"
-    assert payload["density_unit"] == "1/cm^-1"
-    assert payload["derived"]["reorganization_energy"] == 300.0
+    assert payload["spectrum"]["energy_unit"] == "cm^-1"
+    assert payload["spectrum"]["density_unit"] == "1/cm^-1"
+    assert payload["derived"]["reorganization_energy"] == [300.0, "cm^-1"]
+    assert payload["diagnostics"]["d_tau"][1] == "cm"
+    assert "energy_unit" not in payload  # 単位は値か表の側に書く（ADR-0081）
     assert payload["created_at"].endswith("Z")
+
+
+def test_conditions_do_not_carry_the_input_file_vocabulary(result, lines_result, tmp_path):
+    """単位と流儀の欄を持たないので、入力ファイルの書き方が変わっても形は変わらない（ADR-0080）。"""
+    for name, save, value in (
+        ("envelope.json", save_envelope, result),
+        ("lines.json", save_lines, lines_result),
+    ):
+        path = tmp_path / name
+        save(value, path)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert "input" not in payload
+        conditions = payload["conditions"]
+        assert not {"frequency_unit", "coupling_convention", "coupling_unit"} & set(conditions)
+        rows = conditions["modes"]["rows"]
+        assert all(set(mode) == {"frequency", "huang_rhys"} for mode in rows)
 
 
 def test_spectrum_arrays_match_the_result(result, tmp_path):
@@ -137,11 +161,32 @@ def test_schema_version_mismatch(result, tmp_path):
         load_envelope(path)
 
 
-def test_unsupported_energy_unit(result, tmp_path):
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        lambda p: p["conditions"]["broadening"].update(sigma=[150.0, "eV"]),
+        lambda p: p["conditions"]["grid"].update(de=[5.0, "eV"]),
+        lambda p: p["conditions"]["modes"].update(frequency_unit="eV"),
+        lambda p: p["spectrum"].update(energy_unit="eV"),
+        lambda p: p["spectrum"].update(density_unit="1/eV"),
+        lambda p: p["diagnostics"].update(d_tau=[p["diagnostics"]["d_tau"][0], "fs"]),
+    ],
+    ids=["sigma", "grid.de", "modes", "spectrum.energy", "spectrum.density", "d_tau"],
+)
+def test_unsupported_unit(result, tmp_path, corrupt):
+    """単位は書いた値や表の側で確かめ、正準単位以外は受けない（ADR-0081）。"""
     path = tmp_path / "result.json"
     save_envelope(result, path)
-    _corrupt(path, lambda p: p.update(energy_unit="eV"))
+    _corrupt(path, corrupt)
     with pytest.raises(UnsupportedUnitError):
+        load_envelope(path)
+
+
+def test_a_bare_number_where_a_pair_belongs_is_rejected(result, tmp_path):
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    _corrupt(path, lambda p: p["conditions"]["broadening"].update(sigma=150.0))
+    with pytest.raises(InvalidInputError, match="conditions.broadening.sigma"):
         load_envelope(path)
 
 
@@ -166,7 +211,10 @@ def test_derived_is_written_but_skipped_when_loading(result, tmp_path):
     path = tmp_path / "result.json"
     save_envelope(result, path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["derived"]["reorganization_energy"] == result.system.reorganization_energy
+    assert payload["derived"]["reorganization_energy"] == [
+        result.system.reorganization_energy,
+        "cm^-1",
+    ]
 
     _corrupt(path, lambda p: p.pop("derived"))
     restored = load_envelope(path)
@@ -230,17 +278,18 @@ def test_fc_lines_payload_shape(lines_result, tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["kind"] == "fcenvelope.fc_lines"
-    assert payload["schema_version"] == 3
-    assert payload["energy_unit"] == "cm^-1"
-    assert payload["input"]["coupling_convention"] == "huang_rhys"
-    assert payload["input"]["temperature"] == 300.0
-    assert payload["input"]["selection"] == {
+    assert payload["schema_version"] == 4
+    assert payload["conditions"]["modes"]["rows"][0].keys() == {"frequency", "huang_rhys"}
+    assert payload["conditions"]["temperature"] == 300.0
+    assert payload["conditions"]["selection"] == {
         "min_weight": 1e-4,
         "max_lines": 10000,
         "max_quanta": None,
     }
-    assert len(payload["lines"]) == lines_result.diagnostics.n_lines
-    first = payload["lines"][0]
+    assert payload["lines"]["energy_unit"] == "cm^-1"
+    assert payload["diagnostics"]["mean_energy"][1] == "cm^-1"
+    assert len(payload["lines"]["rows"]) == lines_result.diagnostics.n_lines
+    first = payload["lines"]["rows"][0]
     assert set(first) == {"energy", "fc_factor", "weight", "transitions"}
     assert first["energy"] == lines_result.lines[0].energy
 
@@ -282,21 +331,25 @@ def test_fc_lines_schema_version_mismatch(lines_result, tmp_path):
 def test_fc_lines_unsupported_energy_unit(lines_result, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p.update(energy_unit="eV"))
+    _corrupt(path, lambda p: p["lines"].update(energy_unit="eV"))
     with pytest.raises(UnsupportedUnitError):
         load_lines(path)
 
 
-def test_fc_lines_non_canonical_echo_is_rejected(lines_result, tmp_path):
-    """エコーは常に huang_rhys 流儀。他の流儀は曖昧なので受け付けない。"""
+def test_fc_lines_mode_without_the_huang_rhys_factor_is_rejected(lines_result, tmp_path):
+    """モードは S を `huang_rhys` の名前で持つ。別の名前の値は流儀が曖昧なので受けない。"""
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p["input"].update(coupling_convention="g"))
+    def rename(payload):
+        mode = payload["conditions"]["modes"]["rows"][0]
+        mode["coupling"] = mode.pop("huang_rhys")
+
+    _corrupt(path, rename)
     with pytest.raises(InvalidInputError):
         load_lines(path)
 
 
-@pytest.mark.parametrize("section", ["lines", "diagnostics", "input"])
+@pytest.mark.parametrize("section", ["lines", "diagnostics", "conditions"])
 def test_fc_lines_missing_section(lines_result, tmp_path, section):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
@@ -308,8 +361,8 @@ def test_fc_lines_missing_section(lines_result, tmp_path, section):
 def test_fc_lines_missing_selection_echo(lines_result, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p["input"].pop("selection"))
-    with pytest.raises(InvalidInputError, match="input.selection"):
+    _corrupt(path, lambda p: p["conditions"].pop("selection"))
+    with pytest.raises(InvalidInputError, match="conditions.selection"):
         load_lines(path)
 
 
@@ -327,15 +380,58 @@ def test_out_of_range_echo_is_rejected_with_its_location(lines_result, tmp_path)
     """結果ファイル側でも範囲は値の型が見る（ADR-0051）。"""
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p["input"]["selection"].update(min_weight=0.0))
-    with pytest.raises(InvalidInputError, match="input.selection"):
+    _corrupt(path, lambda p: p["conditions"]["selection"].update(min_weight=0.0))
+    with pytest.raises(InvalidInputError, match="conditions.selection"):
         load_lines(path)
+
+
+def test_fc_lines_number_modes_from_one(lines_result, tmp_path):
+    """結果ファイルのモードの番号は、モード表の行の並びで 1 から数える。"""
+    path = tmp_path / "lines.json"
+    save_lines(lines_result, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    written = [
+        (transition["mode"], transition["initial"], transition["final"])
+        for row in payload["lines"]["rows"]
+        for transition in row["transitions"]
+    ]
+    expected = [
+        (transition.mode_index + 1, transition.initial, transition.final)
+        for line in lines_result.lines
+        for transition in line.transitions
+    ]
+    assert written == expected
+    assert min(mode for mode, _, _ in written) == 1
+    assert load_lines(path) == lines_result
+
+
+@pytest.mark.parametrize("mode", [0, 99])
+def test_fc_lines_mode_number_out_of_range(lines_result, tmp_path, mode):
+    path = tmp_path / "lines.json"
+    save_lines(lines_result, path)
+    _corrupt(
+        path,
+        lambda p: p["lines"]["rows"][1].update(
+            transitions=[{"mode": mode, "initial": 0, "final": 1}]
+        ),
+    )
+    with pytest.raises(InvalidInputError, match="out of range"):
+        load_lines(path)
+
+
+def test_diagnostics_do_not_repeat_the_grid_size(result, tmp_path):
+    """点数は `conditions.grid.n_fft` だけに書く。"""
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert "n_fft" not in payload["diagnostics"]
+    assert payload["conditions"]["grid"]["n_fft"] == result.grid.n_fft
 
 
 def test_fc_lines_malformed_transition(lines_result, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p["lines"][1].update(transitions=[{"mode": 0}]))
+    _corrupt(path, lambda p: p["lines"]["rows"][1].update(transitions=[{"mode": 0}]))
     with pytest.raises(InvalidInputError):
         load_lines(path)
 
@@ -349,14 +445,14 @@ _CORRUPTIONS = {
     "kind": [None, 1, "x", [], {}, True],
     "diagnostics.messages": [None, 1, "x", {}, True, [1], ["ok", 2]],
     "spectrum.density": [None, 1, "x", {}, True, ["x"], [None]],
-    "input.grid.de": [None, "x", [], {}, True, [1, 2]],
+    "conditions.grid.de": [None, "x", [], {}, True, [1, 2]],
 }
 
 _SETTERS = {
     "kind": lambda p, v: p.update(kind=v),
     "diagnostics.messages": lambda p, v: p["diagnostics"].update(messages=v),
     "spectrum.density": lambda p, v: p["spectrum"].update(density=v),
-    "input.grid.de": lambda p, v: p["input"]["grid"].update(de=v),
+    "conditions.grid.de": lambda p, v: p["conditions"]["grid"].update(de=v),
 }
 
 
@@ -385,6 +481,6 @@ def test_corrupt_envelope_file_raises_a_package_error(result, tmp_path, label, m
 def test_corrupt_selection_echo_raises_a_package_error(lines_result, tmp_path, bad):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p["input"]["selection"].update(max_lines=bad))
+    _corrupt(path, lambda p: p["conditions"]["selection"].update(max_lines=bad))
     with pytest.raises(FCEnvelopeError):
         load_any(path)

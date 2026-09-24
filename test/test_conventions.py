@@ -20,11 +20,13 @@ from fcenvelope.errors import InvalidInputError, UnsupportedUnitError
 
 def _payload(convention: str, coupling: float, **extra: object) -> dict:
     return {
-        "schema_version": 3,
-        "frequency_unit": "cm^-1",
-        "coupling_convention": convention,
-        **extra,
-        "modes": [{"frequency": 1200.0, "coupling": coupling}],
+        "schema_version": 4,
+        "modes": {
+            "frequency_unit": "cm^-1",
+            "coupling_convention": convention,
+            **extra,
+            "rows": [{"frequency": 1200.0, "coupling": coupling}],
+        },
         "temperature": 300.0,
         "broadening": {"sigma": 150.0},
         "grid": {"e_min": -4000.0, "e_max": 1000.0, "points": {"de": 5.0}},
@@ -124,9 +126,9 @@ def test_delta_is_dimensionless():
 
 def test_default_convention_is_g():
     payload = _payload("g", 0.5)
-    del payload["coupling_convention"]
+    del payload["modes"]["coupling_convention"]
     parsed = FCEnvelopeInput.from_obj(payload)
-    assert parsed.convention is units.G
+    assert parsed.modes.convention is units.G
     assert parsed.to_system().modes[0].huang_rhys == 0.25
 
 
@@ -190,7 +192,7 @@ def test_an_unknown_coupling_unit_is_rejected():
 def test_the_coupling_unit_is_omitted_by_default():
     """単位を書いていない既存の入力は、無次元の流儀として読まれ続ける。"""
     parsed = FCEnvelopeInput.from_obj(_payload("g", 0.5))
-    assert parsed.coupling_unit is None
+    assert parsed.modes.coupling_unit is None
     assert parsed.to_system().modes[0].huang_rhys == 0.25
 
 
@@ -201,7 +203,7 @@ def test_lambda_reads_a_u_as_hartree():
     """流儀 lambda の欄では `a.u.` はエネルギーの `hartree` になる。"""
     parsed = FCEnvelopeInput.from_obj(_payload("lambda", 1e-3, coupling_unit="a.u."))
 
-    assert parsed.coupling_unit == "hartree"
+    assert parsed.modes.coupling_unit == "hartree"
     same = FCEnvelopeInput.from_obj(_payload("lambda", 1e-3, coupling_unit="hartree"))
     assert parsed.to_system() == same.to_system()
 
@@ -211,14 +213,14 @@ def test_the_same_alias_resolves_by_the_convention():
     parsed = FCEnvelopeInput.from_obj(
         _payload("vcc", -0.3, coupling_unit=[1e-4, "a.u."])
     )
-    assert parsed.coupling_unit == (1e-4, "hartree/(bohr*sqrt(m_e))")
+    assert parsed.modes.coupling_unit == (1e-4, "hartree/(bohr*sqrt(m_e))")
 
 
 def test_a_unit_on_the_mode_is_resolved_by_the_convention():
     """モードの値に添えた単位も、流儀が決める種類で正式形になる。"""
     parsed = FCEnvelopeInput.from_obj(_payload("vcc", [-0.3, 1e-4, "a.u."]))
 
-    assert parsed.modes[0].coupling.unit == (1e-4, "hartree/(bohr*sqrt(m_e))")
+    assert parsed.modes.rows[0].coupling.unit == (1e-4, "hartree/(bohr*sqrt(m_e))")
 
 
 def test_the_caller_s_dictionary_is_left_alone():
@@ -226,8 +228,8 @@ def test_the_caller_s_dictionary_is_left_alone():
     payload = _payload("vcc", [-0.3, 1e-4, "a.u."], coupling_unit="a.u.")
     FCEnvelopeInput.from_obj(payload)
 
-    assert payload["coupling_unit"] == "a.u."
-    assert payload["modes"][0]["coupling"] == [-0.3, 1e-4, "a.u."]
+    assert payload["modes"]["coupling_unit"] == "a.u."
+    assert payload["modes"]["rows"][0]["coupling"] == [-0.3, 1e-4, "a.u."]
 
 
 def test_an_alias_on_a_dimensionless_coupling_is_still_refused():
@@ -248,7 +250,7 @@ def test_an_unknown_coupling_unit_names_its_location():
     """流儀が引き当てられない単位は、書かれた位置を添えて報告される。"""
     with pytest.raises(UnsupportedUnitError, match=r"coupling_unit: .*vibronic"):
         FCEnvelopeInput.from_obj(_payload("vcc", -0.3, coupling_unit="eV"))
-    with pytest.raises(UnsupportedUnitError, match=r"modes\[0\]\.coupling: "):
+    with pytest.raises(UnsupportedUnitError, match=r"modes\.rows\[0\]\.coupling: "):
         FCEnvelopeInput.from_obj(_payload("vcc", [-0.3, "eV"]))
 
 
@@ -262,7 +264,7 @@ _OUTPUT_VCC = [-0.3, 1e-4, "a.u."]
 
 def _vcc_payload(coupling: object, **extra: object) -> dict:
     payload = _payload("vcc", 0.0, **extra)
-    payload["modes"] = [{"frequency": _OUTPUT_FREQUENCY, "coupling": coupling}]
+    payload["modes"]["rows"] = [{"frequency": _OUTPUT_FREQUENCY, "coupling": coupling}]
     return payload
 
 
@@ -331,11 +333,11 @@ def test_a_non_positive_frequency_is_reported_before_the_conversion(
 ):
     """振動数で割る流儀でも、0 や負の振動数はモードの位置を添えた誤りになる。"""
     payload = _payload(convention, 0.0)
-    payload["modes"] = [
+    payload["modes"]["rows"] = [
         {"frequency": 1200.0, "coupling": coupling},
         {"frequency": frequency, "coupling": coupling},
     ]
     parsed = FCEnvelopeInput.from_obj(payload)
 
-    with pytest.raises(InvalidInputError, match=r"modes\[1\]: frequency must be positive"):
+    with pytest.raises(InvalidInputError, match=r"modes\.rows\[1\]: frequency must be positive"):
         parsed.to_system()

@@ -125,8 +125,8 @@ def image_for(source: Path) -> Path:
 
 def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> None:
     """離散 FC 因子を底辺 0 の棒として描く。図の中身はここだけ。"""
-    energy = [line["energy"] * X_SCALE for line in data["lines"]]
-    weight = [line["weight"] for line in data["lines"]]
+    energy = [line["energy"] * X_SCALE for line in data["lines"]["rows"]]
+    weight = [line["weight"] for line in data["lines"]["rows"]]
 
     ax.vlines(energy, 0.0, weight, colors=color, linewidth=LINEWIDTH, label=label)
     ax.axvline(0.0, **GUIDE)             # E = 0 は ZPL
@@ -162,8 +162,8 @@ def main() -> None:
         fig.savefig(output, dpi=DPI, metadata={
             "Software": f"fcenvelope {data['fcenvelope_version']}",
             "Source": f"{source.name} ({data['created_at']})",
-            "Description": f"T = {data['input']['temperature']:g} K, "
-                           f"{len(data['lines'])} lines",
+            "Description": f"T = {data['conditions']['temperature']:g} K, "
+                           f"{len(data['lines']['rows'])} lines",
         })
         print(f"wrote {output}")
     if SHOW if SHOW is not None else sys.stdout.isatty():

@@ -1,7 +1,7 @@
 """結果クラス。純粋なデータ容器であり、I/O も描画も行わない。
 
 エンベロープ F(E)（`EnvelopeResult`）と離散 FC 因子（`LinesResult`）の
-2 系統があり、どちらも入力エコー・診断値・来歴を自身に抱える。
+2 系統があり、どちらも計算条件・診断値・来歴を自身に抱える。
 """
 
 from __future__ import annotations
@@ -45,9 +45,6 @@ class Provenance:
 class Diagnostics:
     """数値品質の診断値。出力ファイルだけを見て信頼可否を判定するための情報。"""
 
-    n_fft: int
-    """FFT 点数 N。"""
-
     d_tau: float
     """tau グリッド間隔 [cm]。"""
 
@@ -86,16 +83,16 @@ class EnvelopeResult:
     """
 
     system: VibrationalSystem
-    """入力エコー（正準形）。"""
+    """計算条件（正準形）。"""
 
     temperature: float
     """T [K]。系とは別の、測定の条件（ADR-0046）。"""
 
     broadening: Broadening
-    """入力エコー。線形状。"""
+    """計算条件。線形状。"""
 
     grid: EnergyGrid
-    """入力エコー。エネルギーグリッド。"""
+    """計算条件。エネルギーグリッド。"""
 
     energy: np.ndarray
     """(M,) float64, cm^-1, 単調増加。E = 0 が ZPL。"""
@@ -115,13 +112,22 @@ class ModeTransition:
     """1 モードの振動量子数の変化 n_alpha -> m_alpha。"""
 
     mode_index: int
-    """`LinesResult.system.modes` における位置。"""
+    """`LinesResult.system.modes` における位置（0 始まり）。"""
 
     initial: int
     """始状態の振動量子数 n_alpha。"""
 
     final: int
     """終状態の振動量子数 m_alpha。"""
+
+    @property
+    def mode_number(self) -> int:
+        """人に見せるモードの番号。モード表の行の並びで 1 から数える。
+
+        結果ファイルと端末の表示はこの番号を使う。`mode_index` は Python の並びの位置で、
+        結果ファイルには書かない。
+        """
+        return self.mode_index + 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,13 +187,13 @@ class LinesResult:
     """
 
     system: VibrationalSystem
-    """入力エコー（正準形）。"""
+    """計算条件（正準形）。"""
 
     temperature: float
     """T [K]。始状態の熱占有に効く。"""
 
     selection: Selection
-    """入力エコー。どの線を保持するかのつまみ。"""
+    """計算条件。どの線を保持するかのつまみ。"""
 
     lines: tuple[FCLine, ...]
     """保持した線。主要なものから順に並ぶ。"""

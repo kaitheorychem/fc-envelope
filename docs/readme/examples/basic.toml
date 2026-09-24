@@ -1,17 +1,20 @@
 # usage.md「入力ファイル」の例。そのまま動く。
 #   uv run fcenvelope run docs/readme/examples/basic.toml -o result.json
 
-schema_version = 3
-frequency_unit = "cm^-1"
-coupling_convention = "g"   # coupling は無次元化 VCC の g。S = g^2
+schema_version = 4
 temperature = 300.0         # K
 
-# 1 モード = 1 つの [[modes]]。並び順は結果に効かない。
-[[modes]]
+# モード表。単位と流儀はこの表の列にだけ効く。
+[modes]
+frequency_unit = "cm^-1"
+coupling_convention = "g"   # coupling は無次元化 VCC の g。S = g^2
+
+# 1 モード = 1 つの [[modes.rows]]。並び順は結果に効かない。
+[[modes.rows]]
 frequency = 1200.0
 coupling = 0.5
 
-[[modes]]
+[[modes.rows]]
 frequency = 450.0
 coupling = 0.8
 
