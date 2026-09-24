@@ -1,7 +1,7 @@
 """結果クラス。純粋なデータ容器であり、I/O も描画も行わない。
 
 エンベロープ F(E)（`EnvelopeResult`）と離散 FC 因子（`LinesResult`）の
-2 系統があり、どちらも入力エコー・診断値・来歴を自身に抱える。
+2 系統があり、どちらも計算条件・診断値・来歴を自身に抱える。
 """
 
 from __future__ import annotations
@@ -86,16 +86,16 @@ class EnvelopeResult:
     """
 
     system: VibrationalSystem
-    """入力エコー（正準形）。"""
+    """計算条件（正準形）。"""
 
     temperature: float
     """T [K]。系とは別の、測定の条件（ADR-0046）。"""
 
     broadening: Broadening
-    """入力エコー。線形状。"""
+    """計算条件。線形状。"""
 
     grid: EnergyGrid
-    """入力エコー。エネルギーグリッド。"""
+    """計算条件。エネルギーグリッド。"""
 
     energy: np.ndarray
     """(M,) float64, cm^-1, 単調増加。E = 0 が ZPL。"""
@@ -181,13 +181,13 @@ class LinesResult:
     """
 
     system: VibrationalSystem
-    """入力エコー（正準形）。"""
+    """計算条件（正準形）。"""
 
     temperature: float
     """T [K]。始状態の熱占有に効く。"""
 
     selection: Selection
-    """入力エコー。どの線を保持するかのつまみ。"""
+    """計算条件。どの線を保持するかのつまみ。"""
 
     lines: tuple[FCLine, ...]
     """保持した線。主要なものから順に並ぶ。"""

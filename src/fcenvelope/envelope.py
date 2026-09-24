@@ -104,7 +104,7 @@ def compute_envelope(
         grid: エンベロープを標本する E 軸上の点列。
 
     Returns:
-        窓へ切り出した F(E) と、入力エコー・診断値・来歴を含む結果クラス。
+        窓へ切り出した F(E) と、計算条件・診断値・来歴を含む結果クラス。
     """
     validate_temperature(temperature)
     # 節目はこの 1 組だけにする。モードや tau 点ごとの記録は取らない（ADR-0052）。

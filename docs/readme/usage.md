@@ -825,7 +825,7 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 
 ## 結果の中身
 
-`EnvelopeResult` は配列（`energy` / `density`）に加えて、入力エコー（`system` /
+`EnvelopeResult` は配列（`energy` / `density`）に加えて、計算条件（`system` /
 `temperature` / `broadening` / `grid`）・診断値・来歴（`provenance`）を持つ。
 `save_envelope` はこれらをすべて 1 つの JSON に書くため、そのファイルだけから
 `load_envelope` で完全に復元でき、後から信頼可否も判定できる。

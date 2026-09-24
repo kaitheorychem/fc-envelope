@@ -1,9 +1,10 @@
 """結果クラスの永続化。単一 JSON を round-trip の正準形式とする。
 
 エンベロープ F(E)（`kind` = `"fcenvelope.envelope"`）と離散 FC 因子
-（`kind` = `"fcenvelope.fc_lines"`）の 2 種類を扱う。どちらも入力エコーは常に
-正準形（`coupling_convention` = `"huang_rhys"`）で書き出す。これにより
-読み込み側に流儀の曖昧さが残らない。
+（`kind` = `"fcenvelope.fc_lines"`）の 2 種類を扱う。どちらも計算に使った系と
+条件（`conditions`）を結果ファイル側の固定の形で持ち、入力ファイルの形には合わせない
+（ADR-0080）。モードは振動数と Huang-Rhys 因子 S で書くので、読み込み側に流儀の
+曖昧さが残らない。
 """
 
 from __future__ import annotations
@@ -70,17 +71,15 @@ logger = logging.getLogger(__name__)
 ENVELOPE_KIND = "fcenvelope.envelope"
 LINES_KIND = "fcenvelope.fc_lines"
 
-#: 結果ファイルの版。入力エコーは入力ファイルと同じ形で書くので、入力ファイルの版
-#: （`inputs.SCHEMA_VERSION`）と同じ番号を共有する（ADR-0079）。`io` は `inputs` に
-#: 依存しないので（ADR-0041）ここに別に持つ。両者が一致していることはテストで確かめる。
+#: 結果ファイルの版。入力ファイルの版（`inputs.SCHEMA_VERSION`）とは別に数える。
+#: 結果ファイルは入力ファイルの形を写さないので（ADR-0080）、入力の書き方が変わっても
+#: この版は上がらない。上がるのは結果ファイルそのものの形が変わるときだけである。
 SCHEMA_VERSION = 4
 
 #: 結果ファイルの形式の知識。計算側は常に cm^-1 しか扱わないので、単位は結果クラス
-#: ではなく io が持つ（ADR-0047）。入力エコーは常に正準形なので流儀も固定である。
+#: ではなく io が持つ（ADR-0047）。モードの振動数も `energy_unit` で書く。
 CANONICAL_ENERGY_UNIT = "cm^-1"
 CANONICAL_DENSITY_UNIT = "1/cm^-1"
-CANONICAL_FREQUENCY_UNIT = "cm^-1"
-CANONICAL_COUPLING_CONVENTION = "huang_rhys"
 
 #: 診断値の型 -> JSON からの変換。dataclass の型注釈から引く。受け取るのは検証前の
 #: JSON の値なので入力側だけが `JsonValue` で、返すのは診断値の型そのものである。
@@ -168,7 +167,7 @@ def envelope_to_dict(result: EnvelopeResult) -> JsonObject:
     """結果クラスを出力 JSON の構造（§8.2）へ写す。"""
     return {
         **_header_to_dict(ENVELOPE_KIND, result.provenance),
-        "input": {
+        "conditions": {
             **_system_to_dict(result.system),
             "temperature": result.temperature,
             "broadening": {"sigma": result.broadening.sigma},
@@ -257,29 +256,6 @@ def _float_array(data: JsonValue, path: str) -> np.ndarray:
         raise InvalidInputError(f"{path!r} must be a list of numbers: {exc}") from exc
 
 
-def _check_echo_header(echo: JsonValue) -> None:
-    """入力エコーのモード表が正準形（cm^-1・huang_rhys）であることを確かめる。"""
-    if not isinstance(echo, dict):
-        raise InvalidInputError(f"'input' must be a JSON object, got {type(echo).__name__}")
-    table = _require(echo, "modes", "input.modes")
-    if not isinstance(table, dict):
-        raise InvalidInputError(
-            f"input.modes must be a JSON object, got {type(table).__name__}"
-        )
-    frequency_unit = table.get("frequency_unit", CANONICAL_FREQUENCY_UNIT)
-    if frequency_unit != CANONICAL_FREQUENCY_UNIT:
-        raise UnsupportedUnitError(
-            f"unsupported input.modes.frequency_unit {frequency_unit!r} "
-            f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
-        )
-    convention = table.get("coupling_convention", CANONICAL_COUPLING_CONVENTION)
-    if convention != CANONICAL_COUPLING_CONVENTION:
-        raise InvalidInputError(
-            f"input.modes.coupling_convention must be "
-            f"{CANONICAL_COUPLING_CONVENTION!r} (got {convention!r})"
-        )
-
-
 def _header_to_dict(kind: str, provenance: Provenance) -> JsonObject:
     """どの結果ファイルにも共通する先頭部分。1 箇所で書く（ADR-0036）。"""
     return {
@@ -314,17 +290,14 @@ def _check_header(data: JsonValue, kind: str) -> None:
 
 
 def _system_to_dict(system: VibrationalSystem) -> JsonObject:
-    """系を入力エコーの構造へ写す。エコーは常に正準形（ADR-0010）で、モード表は
-    入力ファイルの `[modes]` と同じ形（ADR-0079）。"""
+    """系を計算条件の構造へ写す。結果ファイル側の固定の形で、入力ファイルの形には
+    合わせない（ADR-0080）。単位はヘッダの `energy_unit` に従い、coupling は
+    キー名どおり Huang-Rhys 因子 S である。"""
     return {
-        "modes": {
-            "frequency_unit": CANONICAL_FREQUENCY_UNIT,
-            "coupling_convention": CANONICAL_COUPLING_CONVENTION,
-            "rows": [
-                {"frequency": mode.frequency, "coupling": mode.huang_rhys}
-                for mode in system.modes
-            ],
-        },
+        "modes": [
+            {"frequency": mode.frequency, "huang_rhys": mode.huang_rhys}
+            for mode in system.modes
+        ],
     }
 
 
@@ -340,27 +313,29 @@ def _provenance_from_dict(data: JsonValue) -> Provenance:
     )
 
 
-def _system_from_echo(echo: JsonValue) -> VibrationalSystem:
-    """入力エコーのモードから正準形の系を組み立てる。"""
-    return _build(VibrationalSystem, "input.modes.rows", modes=_modes_from_echo(echo))
+def _system_from_conditions(conditions: JsonValue) -> VibrationalSystem:
+    """計算条件のモードから系を組み立てる。"""
+    return _build(
+        VibrationalSystem, "conditions.modes", modes=_modes_from_conditions(conditions)
+    )
 
 
-def _modes_from_echo(echo: JsonValue) -> tuple[VibrationalMode, ...]:
-    """入力エコーの各モードを正準形の値の型にする。"""
-    specs = _require(_require(echo, "modes", "input.modes"), "rows", "input.modes.rows")
+def _modes_from_conditions(conditions: JsonValue) -> tuple[VibrationalMode, ...]:
+    """計算条件の各モードを値の型にする。"""
+    specs = _require(conditions, "modes", "conditions.modes")
     if not isinstance(specs, list):
         raise InvalidInputError(
-            f"input.modes.rows must be a list, got {type(specs).__name__}"
+            f"conditions.modes must be a list, got {type(specs).__name__}"
         )
     modes: list[VibrationalMode] = []
     for index, spec in enumerate(specs):
-        location = f"input.modes.rows[{index}]"
+        location = f"conditions.modes[{index}]"
         modes.append(
             _build(
                 VibrationalMode,
                 location,
                 frequency=_require_float(spec, "frequency", f"{location}.frequency"),
-                huang_rhys=_require_float(spec, "coupling", f"{location}.coupling"),
+                huang_rhys=_require_float(spec, "huang_rhys", f"{location}.huang_rhys"),
             )
         )
     return tuple(modes)
@@ -370,23 +345,22 @@ def envelope_from_dict(data: JsonValue) -> EnvelopeResult:
     """出力 JSON の構造から結果クラスを復元する。"""
     _check_header(data, ENVELOPE_KIND)
 
-    echo = _require(data, "input", "input")
-    _check_echo_header(echo)
-    system = _system_from_echo(echo)
-    broadening_echo = _require(echo, "broadening", "input.broadening")
+    conditions = _require(data, "conditions", "conditions")
+    system = _system_from_conditions(conditions)
+    broadening_conditions = _require(conditions, "broadening", "conditions.broadening")
     broadening = _build(
         Broadening,
-        "input.broadening",
-        sigma=_require_float(broadening_echo, "sigma", "input.broadening.sigma"),
+        "conditions.broadening",
+        sigma=_require_float(broadening_conditions, "sigma", "conditions.broadening.sigma"),
     )
-    grid_echo = _require(echo, "grid", "input.grid")
+    grid_conditions = _require(conditions, "grid", "conditions.grid")
     grid = _build(
         EnergyGrid,
-        "input.grid",
-        e_min=_require_float(grid_echo, "e_min", "input.grid.e_min"),
-        e_max=_require_float(grid_echo, "e_max", "input.grid.e_max"),
-        de=_require_float(grid_echo, "de", "input.grid.de"),
-        n_fft=_require_int(grid_echo, "n_fft", "input.grid.n_fft"),
+        "conditions.grid",
+        e_min=_require_float(grid_conditions, "e_min", "conditions.grid.e_min"),
+        e_max=_require_float(grid_conditions, "e_max", "conditions.grid.e_max"),
+        de=_require_float(grid_conditions, "de", "conditions.grid.de"),
+        n_fft=_require_int(grid_conditions, "n_fft", "conditions.grid.n_fft"),
     )
 
     diagnostics = _diagnostics_from_dict(
@@ -406,7 +380,7 @@ def envelope_from_dict(data: JsonValue) -> EnvelopeResult:
 
     return EnvelopeResult(
         system=system,
-        temperature=_require_float(echo, "temperature", "input.temperature"),
+        temperature=_require_float(conditions, "temperature", "conditions.temperature"),
         broadening=broadening,
         grid=grid,
         energy=energy,
@@ -438,7 +412,7 @@ def lines_to_dict(result: LinesResult) -> JsonObject:
     """離散 FC 因子の結果クラスを出力 JSON の構造へ写す。"""
     return {
         **_header_to_dict(LINES_KIND, result.provenance),
-        "input": {
+        "conditions": {
             **_system_to_dict(result.system),
             "temperature": result.temperature,
             "selection": {
@@ -493,23 +467,22 @@ def lines_from_dict(data: JsonValue) -> LinesResult:
     """出力 JSON の構造から離散 FC 因子の結果クラスを復元する。"""
     _check_header(data, LINES_KIND)
 
-    echo = _require(data, "input", "input")
-    _check_echo_header(echo)
-    system = _system_from_echo(echo)
+    conditions = _require(data, "conditions", "conditions")
+    system = _system_from_conditions(conditions)
 
     diagnostics = _diagnostics_from_dict(
         FCLineDiagnostics, _require(data, "diagnostics", "diagnostics")
     )
 
-    selection_echo = _require(echo, "selection", "input.selection")
+    selection_conditions = _require(conditions, "selection", "conditions.selection")
     selection = _build(
         Selection,
-        "input.selection",
-        min_weight=_require_float(selection_echo, "min_weight", "input.selection.min_weight"),
+        "conditions.selection",
+        min_weight=_require_float(selection_conditions, "min_weight", "conditions.selection.min_weight"),
         max_lines=_require_int(
-            selection_echo, "max_lines", "input.selection.max_lines"
+            selection_conditions, "max_lines", "conditions.selection.max_lines"
         ),
-        max_quanta=_optional_int(selection_echo.get("max_quanta")),
+        max_quanta=_optional_int(selection_conditions.get("max_quanta")),
     )
     lines_data = _require(data, "lines", "lines")
     if not isinstance(lines_data, list):
@@ -531,7 +504,7 @@ def lines_from_dict(data: JsonValue) -> LinesResult:
 
     return LinesResult(
         system=system,
-        temperature=_require_float(echo, "temperature", "input.temperature"),
+        temperature=_require_float(conditions, "temperature", "conditions.temperature"),
         selection=selection,
         lines=lines,
         diagnostics=diagnostics,

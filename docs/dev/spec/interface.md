@@ -326,12 +326,8 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
   "created_at": "2026-09-17T03:21:44Z",
   "energy_unit": "cm^-1",
   "density_unit": "1/cm^-1",
-  "input": {
-    "modes": {
-      "frequency_unit": "cm^-1",
-      "coupling_convention": "huang_rhys",
-      "rows": [{ "frequency": 1200.0, "coupling": 0.25 }]
-    },
+  "conditions": {
+    "modes": [{ "frequency": 1200.0, "huang_rhys": 0.25 }],
     "temperature": 300.0,
     "broadening": { "sigma": 150.0 },
     "grid": { "e_min": -4500.0, "e_max": 1000.0, "de": 4.0, "n_fft": 4096 }
@@ -361,12 +357,8 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
   "fcenvelope_version": "0.1.0",
   "created_at": "2026-09-17T01:23:45Z",
   "energy_unit": "cm^-1",
-  "input": {
-    "modes": {
-      "frequency_unit": "cm^-1",
-      "coupling_convention": "huang_rhys",
-      "rows": [{ "frequency": 1200.0, "coupling": 0.25 }]
-    },
+  "conditions": {
+    "modes": [{ "frequency": 1200.0, "huang_rhys": 0.25 }],
     "temperature": 300.0,
     "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
   },
@@ -380,14 +372,13 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
 }
 ```
 
-どちらの出力も入力エコーのモード表は入力ファイルの `[modes]` と同じ形で、値は常に正準形
-（`frequency_unit` = `"cm^-1"`、`coupling_convention` = `"huang_rhys"`）で書く。それ以外は
-読み込み時に reject する。`derived` は系から一意に決まる控えなので、書き出しはするが読み込み
+どちらの出力も計算条件（`conditions`）は結果ファイル側の固定の形で、入力ファイルの形は
+写さない（ADR-0080）。モードは振動数（`energy_unit`）と Huang-Rhys 因子 S（`huang_rhys`）で
+書き、単位・流儀の欄は持たない。`grid` は解決済みの全域グリッドである。`derived` は系から一意に決まる控えなので、書き出しはするが読み込み
 時は読み飛ばす（ADR-0047）。`load → save` でファイルは変化しない（ADR-0008）。
 
-結果ファイルの `schema_version` は入力ファイルと同じ 4 である。入力エコーが入力ファイルと
-同じ形なので、両者は版の番号を共有する（ADR-0079）。`io` は `inputs` に依存しないため
-（ADR-0041）定数は別に持ち、一致はテストで確かめる。
+結果ファイルの `schema_version` は 4 で、入力ファイルの版とは別に数える。入力の書き方が
+変わっても上げない（ADR-0080）。`io` は `inputs` に依存しないため（ADR-0041）定数は別に持つ。
 
 ## CLI
 
@@ -452,7 +443,7 @@ fcenvelope --version
 ファイルと同じ単位・流儀**の値で、省略した項目は既定値で埋まり、`{"path": ...}` で渡した
 モードは行に展開される。これを入力として与えれば同じ計算が再現できる。
 
-結果ファイルの入力エコーが常に正準形なのとは狙いが違う（ADR-0010）。エコーは結果を読む側が
+結果ファイルの計算条件が常に正準形なのとは狙いが違う（ADR-0080）。計算条件は結果を読む側が
 流儀と単位を気にせずに済むためのもの、実効設定は手元の入力ファイルと突き合わせ、再実行する
 ためのものである。`--config FILE` で場所を変え、`--no-config` で書かせない。
 
