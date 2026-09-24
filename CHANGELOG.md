@@ -41,9 +41,9 @@
   `{"frequency", "huang_rhys"}` で書き、流儀の欄は持たない。入力の書き方が今後
   変わっても結果ファイルの形と版は変わらない。
 - **結果ファイルの単位を入力ファイルと同じ書き方にした。** 有次元の値は `[値, "単位"]`
-  の組（例 `"sigma": [150.0, "cm^-1"]`）、表は表のブロックに列の単位を書く
-  （`spectrum.energy_unit`、`lines.energy_unit`、`conditions.modes.frequency_unit`）。
-  ヘッダの `energy_unit` / `density_unit` はなくなった。`lines` は `rows` を持つ表になった
+  の組（例 `"sigma": [150.0, "cm^-1"]`）で書く。表（`conditions.modes` / `spectrum` /
+  `lines`）は入力の CSV と同じく `columns`（`[["energy", "cm^-1"], ["density", "1/cm^-1"]]`）と
+  `rows`（行ごとの値の並び）で書く。ヘッダの `energy_unit` / `density_unit` はなくなった
   （ADR-0081）。
 - 線のモードの番号を 1 始まりにした。結果ファイルの `transitions[].mode` と `lines --top`
   の表示（`#1:0->1`）が、モード表の行を上から 1, 2, … と数えた番号になる。Python では

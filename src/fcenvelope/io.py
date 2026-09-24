@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,12 +77,28 @@ LINES_KIND = "fcenvelope.fc_lines"
 SCHEMA_VERSION = 4
 
 #: 結果ファイルの形式の知識。計算側は常に cm^-1 しか扱わないので、単位は結果クラス
-#: ではなく io が持つ（ADR-0047）。有次元の値は `[値, "単位"]` の組、表の列は表の
-#: ブロックの `<列名>_unit` で単位を書く（入力ファイルと同じ書き方、ADR-0081）。
+#: ではなく io が持つ（ADR-0047）。有次元の値は `[値, "単位"]` の組、表は `columns` に
+#: `[列名, "単位"]` を並べる（入力ファイルの値と CSV の列と同じ書き方、ADR-0081）。
 #: 読み込みはこの単位だけを受け、ほかの単位は `UnsupportedUnitError` で止める。
 CANONICAL_ENERGY_UNIT = "cm^-1"
 CANONICAL_DENSITY_UNIT = "1/cm^-1"
 CANONICAL_TAU_UNIT = "cm"
+
+_Column = tuple[str, str | None]
+"""表の列。列名と、その列の値の単位（無次元なら None）。"""
+
+#: 結果ファイルの表の列。書き出す並びもこの順である（ADR-0081）。
+_MODE_COLUMNS: tuple[_Column, ...] = (("frequency", CANONICAL_ENERGY_UNIT), ("huang_rhys", None))
+_SPECTRUM_COLUMNS: tuple[_Column, ...] = (
+    ("energy", CANONICAL_ENERGY_UNIT),
+    ("density", CANONICAL_DENSITY_UNIT),
+)
+_LINE_COLUMNS: tuple[_Column, ...] = (
+    ("energy", CANONICAL_ENERGY_UNIT),
+    ("fc_factor", None),
+    ("weight", None),
+    ("transitions", None),
+)
 
 #: 単位を持つ診断値。ここにないものは無次元（点数・割合・比・真偽）で、素の数で書く。
 _DIAGNOSTIC_UNITS: dict[str, str] = {
@@ -191,12 +207,9 @@ def envelope_to_dict(result: EnvelopeResult) -> JsonObject:
         },
         "derived": _derived_to_dict(result.system),
         "diagnostics": _diagnostics_to_dict(result.diagnostics),
-        "spectrum": {
-            "energy_unit": CANONICAL_ENERGY_UNIT,
-            "density_unit": CANONICAL_DENSITY_UNIT,
-            "energy": result.energy.tolist(),
-            "density": result.density.tolist(),
-        },
+        "spectrum": _table_to_dict(
+            _SPECTRUM_COLUMNS, zip(result.energy.tolist(), result.density.tolist())
+        ),
     }
 
 
@@ -209,8 +222,48 @@ def _write_json(payload: JsonObject, path: str | Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with stage(logger, f"write {target}"):
         with target.open("w", encoding="utf-8") as stream:
-            json.dump(payload, stream, ensure_ascii=False, indent=2)
+            stream.write(_format_json(payload))
             stream.write("\n")
+
+
+def _inline(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
+
+
+def _is_flat(value: object) -> bool:
+    """1 行に収める並びか。数・文字列と、それだけの並び（`[値, "単位"]` や `columns`）。"""
+    if isinstance(value, list):
+        return all(not isinstance(item, (dict, list)) or _is_flat(item) for item in value)
+    return not isinstance(value, dict)
+
+
+def _format_json(value: object, depth: int = 0, key: str | None = None) -> str:
+    """JSON を人が覗いて読める形で書く。
+
+    入れ子は字下げし、`[値, "単位"]` のような平たい並びは 1 行に、表の `rows` は 1 行ずつ
+    書く（CSV を開いたときと同じ見え方にする）。値の書き方は `json` そのままなので、
+    浮動小数点の round-trip は変わらない（ADR-0008）。
+    """
+    pad, inner = "  " * depth, "  " * (depth + 1)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = (
+            f"{inner}{_inline(name)}: {_format_json(item, depth + 1, name)}"
+            for name, item in value.items()
+        )
+        return "{\n" + ",\n".join(items) + f"\n{pad}}}"
+    if isinstance(value, list):
+        if key == "rows" and value:
+            return "[\n" + ",\n".join(f"{inner}{_inline(row)}" for row in value) + f"\n{pad}]"
+        if _is_flat(value):
+            return _inline(value)
+        return (
+            "[\n"
+            + ",\n".join(f"{inner}{_format_json(item, depth + 1)}" for item in value)
+            + f"\n{pad}]"
+        )
+    return _inline(value)
 
 
 def save_envelope(result: EnvelopeResult, path: str | Path) -> None:
@@ -265,17 +318,64 @@ def _require_quantity(data: JsonValue, key: str, path: str, unit: str) -> float:
     return _as_float(_without_unit(_require(data, key, path), unit, path), path)
 
 
-def _require_column_unit(table: JsonValue, column: str, path: str, unit: str) -> None:
-    """表のブロックに書かれた列の単位（`<列名>_unit`）を確かめる。"""
-    key = f"{column}_unit"
-    _check_unit(_require(table, key, f"{path}.{key}"), unit, f"{path}.{key}")
+def _table_to_dict(columns: Sequence[_Column], rows: Iterable[Sequence[object]]) -> JsonObject:
+    """表を `columns` と `rows` の形へ写す。列は入力の CSV の `columns` と同じ書き方で、
+    有次元の列は `[列名, "単位"]`、無次元の列は列名だけ（ADR-0081）。"""
+    return {
+        "columns": [name if unit is None else [name, unit] for name, unit in columns],
+        "rows": [list(row) for row in rows],
+    }
 
 
-def _require_rows(table: JsonValue, path: str) -> list[JsonValue]:
+def _read_table(
+    data: JsonValue, key: str, path: str, columns: Sequence[_Column]
+) -> list[dict[str, JsonValue]]:
+    """`columns` と `rows` の表を読み、各行を「列名 -> 値」の辞書にする。
+
+    列の並びは問わないが、`columns` の列をちょうど 1 回ずつ並べ、有次元の列には正準単位を
+    添えていなければならない。結果ファイルには既定の単位がないので、単位は省けない。
+    """
+    table = _require(data, key, path)
+    written = _require(table, "columns", f"{path}.columns")
+    if not isinstance(written, list):
+        raise InvalidInputError(f"{path}.columns must be a list, got {type(written).__name__}")
+    names: list[str] = []
+    units: dict[str, JsonValue] = {}
+    for index, spec in enumerate(written):
+        if isinstance(spec, str):
+            name, unit = spec, None
+        elif isinstance(spec, list) and len(spec) == 2 and isinstance(spec[0], str):
+            name, unit = spec
+        else:
+            raise InvalidInputError(
+                f'{path}.columns[{index}] must be a name or a [name, "unit"] pair (got {spec!r})'
+            )
+        names.append(name)
+        units[name] = unit
+    expected = dict(columns)
+    if len(set(names)) != len(names) or set(names) != set(expected):
+        raise InvalidInputError(
+            f"{path}.columns must list {list(expected)} once each (got {names})"
+        )
+    for name, unit in expected.items():
+        location = f"{path}.columns[{names.index(name)}]"
+        if unit is None:
+            if units[name] is not None:
+                raise InvalidInputError(f"{location}: {name!r} is dimensionless and takes no unit")
+        else:
+            _check_unit(units[name], unit, location)
+
     rows = _require(table, "rows", f"{path}.rows")
     if not isinstance(rows, list):
         raise InvalidInputError(f"{path}.rows must be a list, got {type(rows).__name__}")
-    return rows
+    read: list[dict[str, JsonValue]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) != len(names):
+            raise InvalidInputError(
+                f"{path}.rows[{index}] must be a list of {len(names)} values (got {row!r})"
+            )
+        read.append(dict(zip(names, row)))
+    return read
 
 
 def _require_int(data: JsonValue, key: str, path: str) -> int:
@@ -304,7 +404,10 @@ def _build(factory: Callable[..., _T], location: str, **kwargs: object) -> _T:
 
 def _float_array(data: JsonValue, path: str) -> np.ndarray:
     """数値の並びを float64 の 1 次元配列にする。"""
-    if not isinstance(data, list):
+    # null は float64 にすると黙って NaN になり、真偽値は 0 / 1 になるので、先に弾く。
+    if not isinstance(data, list) or not all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) for value in data
+    ):
         raise InvalidInputError(f"{path!r} must be a list of numbers")
     try:
         return np.asarray(data, dtype=np.float64)
@@ -340,16 +443,12 @@ def _check_header(data: JsonValue, kind: str) -> None:
 
 def _system_to_dict(system: VibrationalSystem) -> JsonObject:
     """系を計算条件の構造へ写す。結果ファイル側の固定の形で、入力ファイルの形には
-    合わせない（ADR-0080）。モード表の列の単位は表のブロックに書き、coupling は
+    合わせない（ADR-0080）。モード表は `columns` と `rows` の表で書き、coupling は
     キー名どおり Huang-Rhys 因子 S である（無次元）。"""
     return {
-        "modes": {
-            "frequency_unit": CANONICAL_ENERGY_UNIT,
-            "rows": [
-                {"frequency": mode.frequency, "huang_rhys": mode.huang_rhys}
-                for mode in system.modes
-            ],
-        },
+        "modes": _table_to_dict(
+            _MODE_COLUMNS, ((mode.frequency, mode.huang_rhys) for mode in system.modes)
+        ),
     }
 
 
@@ -374,10 +473,9 @@ def _system_from_conditions(conditions: JsonValue) -> VibrationalSystem:
 
 def _modes_from_conditions(conditions: JsonValue) -> tuple[VibrationalMode, ...]:
     """計算条件のモード表の各行を値の型にする。"""
-    table = _require(conditions, "modes", "conditions.modes")
-    _require_column_unit(table, "frequency", "conditions.modes", CANONICAL_ENERGY_UNIT)
+    rows = _read_table(conditions, "modes", "conditions.modes", _MODE_COLUMNS)
     modes: list[VibrationalMode] = []
-    for index, spec in enumerate(_require_rows(table, "conditions.modes")):
+    for index, spec in enumerate(rows):
         location = f"conditions.modes.rows[{index}]"
         modes.append(
             _build(
@@ -423,15 +521,9 @@ def envelope_from_dict(data: JsonValue) -> EnvelopeResult:
 
     diagnostics = _diagnostics_from_dict(Diagnostics, _require(data, "diagnostics", "diagnostics"))
 
-    spectrum = _require(data, "spectrum", "spectrum")
-    _require_column_unit(spectrum, "energy", "spectrum", CANONICAL_ENERGY_UNIT)
-    _require_column_unit(spectrum, "density", "spectrum", CANONICAL_DENSITY_UNIT)
-    energy = _float_array(_require(spectrum, "energy", "spectrum.energy"), "spectrum.energy")
-    density = _float_array(_require(spectrum, "density", "spectrum.density"), "spectrum.density")
-    if energy.shape != density.shape:
-        raise InvalidInputError(
-            f"spectrum.energy and spectrum.density length mismatch: {energy.size} vs {density.size}"
-        )
+    spectrum = _read_table(data, "spectrum", "spectrum", _SPECTRUM_COLUMNS)
+    energy = _float_array([row["energy"] for row in spectrum], "spectrum energy column")
+    density = _float_array([row["density"] for row in spectrum], "spectrum density column")
 
     # `derived` は系から一意に決まる控えなので読み飛ばす（ADR-0047）。
 
@@ -480,14 +572,14 @@ def lines_to_dict(result: LinesResult) -> JsonObject:
         },
         "derived": _derived_to_dict(result.system),
         "diagnostics": _diagnostics_to_dict(result.diagnostics),
-        "lines": {
-            "energy_unit": CANONICAL_ENERGY_UNIT,
-            "rows": [
-                {
-                    "energy": line.energy,
-                    "fc_factor": line.fc_factor,
-                    "weight": line.weight,
-                    "transitions": [
+        "lines": _table_to_dict(
+            _LINE_COLUMNS,
+            (
+                (
+                    line.energy,
+                    line.fc_factor,
+                    line.weight,
+                    [
                         {
                             "mode": transition.mode_number,
                             "initial": transition.initial,
@@ -495,10 +587,10 @@ def lines_to_dict(result: LinesResult) -> JsonObject:
                         }
                         for transition in line.transitions
                     ],
-                }
+                )
                 for line in result.lines
-            ],
-        },
+            ),
+        ),
     }
 
 
@@ -554,18 +646,14 @@ def lines_from_dict(data: JsonValue) -> LinesResult:
         max_lines=_require_int(selection_conditions, "max_lines", "conditions.selection.max_lines"),
         max_quanta=_optional_int(selection_conditions.get("max_quanta")),
     )
-    lines_table = _require(data, "lines", "lines")
-    _require_column_unit(lines_table, "energy", "lines", CANONICAL_ENERGY_UNIT)
-    lines_data = _require_rows(lines_table, "lines")
+    lines_data = _read_table(data, "lines", "lines", _LINE_COLUMNS)
     try:
         lines = tuple(
             FCLine(
                 energy=float(item["energy"]),
                 fc_factor=float(item["fc_factor"]),
                 weight=float(item["weight"]),
-                transitions=_parse_transitions(
-                    item.get("transitions", []), index, len(system.modes)
-                ),
+                transitions=_parse_transitions(item["transitions"], index, len(system.modes)),
             )
             for index, item in enumerate(lines_data)
         )

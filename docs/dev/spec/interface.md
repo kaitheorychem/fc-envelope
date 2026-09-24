@@ -328,8 +328,8 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
   "created_at": "2026-09-17T03:21:44Z",
   "conditions": {
     "modes": {
-      "frequency_unit": "cm^-1",
-      "rows": [{ "frequency": 1200.0, "huang_rhys": 0.25 }]
+      "columns": [["frequency", "cm^-1"], "huang_rhys"],
+      "rows": [[1200.0, 0.25]]
     },
     "temperature": 300.0,
     "broadening": { "sigma": [150.0, "cm^-1"] },
@@ -348,10 +348,8 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
     "messages": []
   },
   "spectrum": {
-    "energy_unit": "cm^-1",
-    "density_unit": "1/cm^-1",
-    "energy": [-4500.0, -4496.0, "..."],
-    "density": [4.6e-8, 4.4e-8, "..."]
+    "columns": [["energy", "cm^-1"], ["density", "1/cm^-1"]],
+    "rows": [[-4500.0, 4.6e-8], [-4496.0, 4.4e-8], "..."]
   }
 }
 ```
@@ -366,8 +364,8 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
   "created_at": "2026-09-17T01:23:45Z",
   "conditions": {
     "modes": {
-      "frequency_unit": "cm^-1",
-      "rows": [{ "frequency": 1200.0, "huang_rhys": 0.25 }]
+      "columns": [["frequency", "cm^-1"], "huang_rhys"],
+      "rows": [[1200.0, 0.25]]
     },
     "temperature": 300.0,
     "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
@@ -377,11 +375,10 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
     "n_lines": 58, "captured_weight": 0.997, "mean_energy": [-583.5, "cm^-1"], "...": "..."
   },
   "lines": {
-    "energy_unit": "cm^-1",
+    "columns": [["energy", "cm^-1"], "fc_factor", "weight", "transitions"],
     "rows": [
-      { "energy": 0.0, "fc_factor": 0.41, "weight": 0.36, "transitions": [] },
-      { "energy": -1200.0, "fc_factor": 0.19, "weight": 0.17,
-        "transitions": [{ "mode": 1, "initial": 0, "final": 1 }] }
+      [0.0, 0.41, 0.36, []],
+      [-1200.0, 0.19, 0.17, [{ "mode": 1, "initial": 0, "final": 1 }]]
     ]
   }
 }
@@ -392,7 +389,8 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
 持たない。`grid` は解決済みの全域グリッドである。
 
 単位は入力ファイルと同じ書き方で書く（ADR-0081）。有次元の値 1 つは `[値, "単位"]` の組、
-表（`conditions.modes` / `spectrum` / `lines`）は表のブロックに `<列名>_unit` を書く。無次元の
+表（`conditions.modes` / `spectrum` / `lines`）は `columns`（列名か `[列名, "単位"]`）と `rows`
+（1 行ごとの値の並び）で書き、入力の CSV の `columns` と同じ形である。有次元の列は単位を省けない。無次元の
 値と温度（K）は素の数である。書き出す単位は常に正準単位（`cm^-1`、密度 `1/cm^-1`、τ `cm`）で、
 読み込みはそれ以外の単位を `UnsupportedUnitError` で止める。
 

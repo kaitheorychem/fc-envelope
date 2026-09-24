@@ -23,7 +23,7 @@ from fcenvelope import (
 )
 from fcenvelope import inputs as inputs_module
 from fcenvelope.errors import FCEnvelopeError, InvalidInputError
-from fcenvelope.io import SCHEMA_VERSION, load_any
+from fcenvelope.io import SCHEMA_VERSION, envelope_to_dict, load_any
 
 
 @pytest.fixture
@@ -96,8 +96,8 @@ def test_written_conditions_hold_the_huang_rhys_factor(tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["kind"] == "fcenvelope.envelope"
     assert payload["conditions"]["modes"] == {
-        "frequency_unit": "cm^-1",
-        "rows": [{"frequency": 1200.0, "huang_rhys": 0.25}],
+        "columns": [["frequency", "cm^-1"], "huang_rhys"],
+        "rows": [[1200.0, 0.25]],
     }
     assert payload["conditions"]["temperature"] == 300.0
     assert payload["conditions"]["broadening"] == {"sigma": [150.0, "cm^-1"]}
@@ -107,8 +107,7 @@ def test_written_conditions_hold_the_huang_rhys_factor(tmp_path):
         "de": [5.0, "cm^-1"],
         "n_fft": 2048,
     }
-    assert payload["spectrum"]["energy_unit"] == "cm^-1"
-    assert payload["spectrum"]["density_unit"] == "1/cm^-1"
+    assert payload["spectrum"]["columns"] == [["energy", "cm^-1"], ["density", "1/cm^-1"]]
     assert payload["derived"]["reorganization_energy"] == [300.0, "cm^-1"]
     assert payload["diagnostics"]["d_tau"][1] == "cm"
     assert "energy_unit" not in payload  # 単位は値か表の側に書く（ADR-0081）
@@ -127,8 +126,7 @@ def test_conditions_do_not_carry_the_input_file_vocabulary(result, lines_result,
         assert "input" not in payload
         conditions = payload["conditions"]
         assert not {"frequency_unit", "coupling_convention", "coupling_unit"} & set(conditions)
-        rows = conditions["modes"]["rows"]
-        assert all(set(mode) == {"frequency", "huang_rhys"} for mode in rows)
+        assert conditions["modes"]["columns"] == [["frequency", "cm^-1"], "huang_rhys"]
 
 
 def test_spectrum_arrays_match_the_result(result, tmp_path):
@@ -136,9 +134,60 @@ def test_spectrum_arrays_match_the_result(result, tmp_path):
     save_envelope(result, path)
     payload = json.loads(path.read_text(encoding="utf-8"))
 
-    assert len(payload["spectrum"]["energy"]) == result.energy.size
-    assert payload["spectrum"]["energy"][0] == result.energy[0]
-    assert payload["spectrum"]["density"][-1] == result.density[-1]
+    rows = payload["spectrum"]["rows"]
+    assert len(rows) == result.energy.size
+    assert rows[0] == [result.energy[0], result.density[0]]
+    assert rows[-1] == [result.energy[-1], result.density[-1]]
+
+
+def test_table_columns_are_read_by_name_not_position(result, tmp_path):
+    """列は名前で読むので、`columns` と各行の並びを揃えて入れ替えても同じ結果になる。"""
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+
+    def swap(payload):
+        spectrum = payload["spectrum"]
+        spectrum["columns"].reverse()
+        for row in spectrum["rows"]:
+            row.reverse()
+
+    _corrupt(path, swap)
+    np.testing.assert_array_equal(load_envelope(path).energy, result.energy)
+
+
+@pytest.mark.parametrize(
+    ("columns", "match"),
+    [
+        (["energy", ["density", "1/cm^-1"]], "unsupported unit"),  # 既定の単位はない
+        ([["energy", "cm^-1"], ["density", "1/cm^-1"], "extra"], "once each"),
+        ([["energy", "cm^-1"], ["energy", "cm^-1"]], "once each"),
+    ],
+)
+def test_table_columns_must_name_each_column_with_its_unit(result, tmp_path, columns, match):
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    _corrupt(path, lambda p: p["spectrum"].update(columns=columns))
+    with pytest.raises(FCEnvelopeError, match=match):
+        load_envelope(path)
+
+
+def test_a_dimensionless_column_takes_no_unit(lines_result, tmp_path):
+    path = tmp_path / "lines.json"
+    save_lines(lines_result, path)
+    _corrupt(path, lambda p: p["lines"]["columns"].__setitem__(2, ["weight", "cm^-1"]))
+    with pytest.raises(InvalidInputError, match="dimensionless"):
+        load_lines(path)
+
+
+def test_table_rows_are_written_one_per_line(result, tmp_path):
+    """表は CSV を開いたときと同じく 1 行 1 行に、`[値, "単位"]` は 1 行に書く。"""
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    text = path.read_text(encoding="utf-8")
+    assert '"columns": [["energy", "cm^-1"], ["density", "1/cm^-1"]]' in text
+    assert f"[{float(result.energy[0])!r}, {float(result.density[0])!r}]," in text
+    assert '"sigma": [150.0, "cm^-1"]' in text
+    assert json.loads(text) == envelope_to_dict(result)
 
 
 def test_nested_output_directory_is_created(result, tmp_path):
@@ -166,9 +215,9 @@ def test_schema_version_mismatch(result, tmp_path):
     [
         lambda p: p["conditions"]["broadening"].update(sigma=[150.0, "eV"]),
         lambda p: p["conditions"]["grid"].update(de=[5.0, "eV"]),
-        lambda p: p["conditions"]["modes"].update(frequency_unit="eV"),
-        lambda p: p["spectrum"].update(energy_unit="eV"),
-        lambda p: p["spectrum"].update(density_unit="1/eV"),
+        lambda p: p["conditions"]["modes"]["columns"][0].__setitem__(1, "eV"),
+        lambda p: p["spectrum"]["columns"][0].__setitem__(1, "eV"),
+        lambda p: p["spectrum"]["columns"][1].__setitem__(1, "1/eV"),
         lambda p: p["diagnostics"].update(d_tau=[p["diagnostics"]["d_tau"][0], "fs"]),
     ],
     ids=["sigma", "grid.de", "modes", "spectrum.energy", "spectrum.density", "d_tau"],
@@ -279,19 +328,28 @@ def test_fc_lines_payload_shape(lines_result, tmp_path):
 
     assert payload["kind"] == "fcenvelope.fc_lines"
     assert payload["schema_version"] == 4
-    assert payload["conditions"]["modes"]["rows"][0].keys() == {"frequency", "huang_rhys"}
+    assert payload["conditions"]["modes"]["columns"] == [["frequency", "cm^-1"], "huang_rhys"]
     assert payload["conditions"]["temperature"] == 300.0
     assert payload["conditions"]["selection"] == {
         "min_weight": 1e-4,
         "max_lines": 10000,
         "max_quanta": None,
     }
-    assert payload["lines"]["energy_unit"] == "cm^-1"
+    assert payload["lines"]["columns"] == [
+        ["energy", "cm^-1"],
+        "fc_factor",
+        "weight",
+        "transitions",
+    ]
     assert payload["diagnostics"]["mean_energy"][1] == "cm^-1"
     assert len(payload["lines"]["rows"]) == lines_result.diagnostics.n_lines
     first = payload["lines"]["rows"][0]
-    assert set(first) == {"energy", "fc_factor", "weight", "transitions"}
-    assert first["energy"] == lines_result.lines[0].energy
+    assert first[:3] == [
+        lines_result.lines[0].energy,
+        lines_result.lines[0].fc_factor,
+        lines_result.lines[0].weight,
+    ]
+    assert isinstance(first[3], list)
 
 
 def test_fc_lines_reject_the_envelope_kind(result, tmp_path):
@@ -331,7 +389,7 @@ def test_fc_lines_schema_version_mismatch(lines_result, tmp_path):
 def test_fc_lines_unsupported_energy_unit(lines_result, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p["lines"].update(energy_unit="eV"))
+    _corrupt(path, lambda p: p["lines"]["columns"][0].__setitem__(1, "eV"))
     with pytest.raises(UnsupportedUnitError):
         load_lines(path)
 
@@ -341,8 +399,7 @@ def test_fc_lines_mode_without_the_huang_rhys_factor_is_rejected(lines_result, t
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
     def rename(payload):
-        mode = payload["conditions"]["modes"]["rows"][0]
-        mode["coupling"] = mode.pop("huang_rhys")
+        payload["conditions"]["modes"]["columns"][1] = "coupling"
 
     _corrupt(path, rename)
     with pytest.raises(InvalidInputError):
@@ -393,7 +450,7 @@ def test_fc_lines_number_modes_from_one(lines_result, tmp_path):
     written = [
         (transition["mode"], transition["initial"], transition["final"])
         for row in payload["lines"]["rows"]
-        for transition in row["transitions"]
+        for transition in row[3]
     ]
     expected = [
         (transition.mode_index + 1, transition.initial, transition.final)
@@ -411,8 +468,8 @@ def test_fc_lines_mode_number_out_of_range(lines_result, tmp_path, mode):
     save_lines(lines_result, path)
     _corrupt(
         path,
-        lambda p: p["lines"]["rows"][1].update(
-            transitions=[{"mode": mode, "initial": 0, "final": 1}]
+        lambda p: p["lines"]["rows"][1].__setitem__(
+            3, [{"mode": mode, "initial": 0, "final": 1}]
         ),
     )
     with pytest.raises(InvalidInputError, match="out of range"):
@@ -431,7 +488,7 @@ def test_diagnostics_do_not_repeat_the_grid_size(result, tmp_path):
 def test_fc_lines_malformed_transition(lines_result, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p["lines"]["rows"][1].update(transitions=[{"mode": 0}]))
+    _corrupt(path, lambda p: p["lines"]["rows"][1].__setitem__(3, [{"mode": 0}]))
     with pytest.raises(InvalidInputError):
         load_lines(path)
 
@@ -444,14 +501,16 @@ def test_fc_lines_malformed_transition(lines_result, tmp_path):
 _CORRUPTIONS = {
     "kind": [None, 1, "x", [], {}, True],
     "diagnostics.messages": [None, 1, "x", {}, True, [1], ["ok", 2]],
-    "spectrum.density": [None, 1, "x", {}, True, ["x"], [None]],
+    "spectrum.rows[0]": [None, 1, "x", {}, True, ["x"], [None, None], [1.0, 2.0, 3.0]],
+    "spectrum.columns": [None, "x", [], [["energy", "cm^-1"]], [1, 2], [["energy"], "density"]],
     "conditions.grid.de": [None, "x", [], {}, True, [1, 2]],
 }
 
 _SETTERS = {
     "kind": lambda p, v: p.update(kind=v),
     "diagnostics.messages": lambda p, v: p["diagnostics"].update(messages=v),
-    "spectrum.density": lambda p, v: p["spectrum"].update(density=v),
+    "spectrum.rows[0]": lambda p, v: p["spectrum"]["rows"].__setitem__(0, v),
+    "spectrum.columns": lambda p, v: p["spectrum"].update(columns=v),
     "conditions.grid.de": lambda p, v: p["conditions"]["grid"].update(de=v),
 }
 

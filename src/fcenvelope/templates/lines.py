@@ -76,6 +76,17 @@ def load(path: Path | str, kind: str) -> dict:
     return data
 
 
+def column(table: dict, name: str) -> list:
+    """結果ファイルの表から 1 列を取り出す。
+
+    表は `columns`（列名か `[列名, "単位"]`）と `rows`（行ごとの値の並び）で書かれている。
+    入力ファイルで CSV の列を書くのと同じ形である。単位は計算と同じ cm^-1 系で固定。
+    """
+    names = [spec if isinstance(spec, str) else spec[0] for spec in table["columns"]]
+    index = names.index(name)
+    return [row[index] for row in table["rows"]]
+
+
 def terminal_pixel_width() -> int | None:
     """端末の窓の画素幅。返さない端末もあるので、その場合は None。"""
     try:
@@ -125,8 +136,8 @@ def image_for(source: Path) -> Path:
 
 def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> None:
     """離散 FC 因子を底辺 0 の棒として描く。図の中身はここだけ。"""
-    energy = [line["energy"] * X_SCALE for line in data["lines"]["rows"]]
-    weight = [line["weight"] for line in data["lines"]["rows"]]
+    energy = [e * X_SCALE for e in column(data["lines"], "energy")]
+    weight = column(data["lines"], "weight")
 
     ax.vlines(energy, 0.0, weight, colors=color, linewidth=LINEWIDTH, label=label)
     ax.axvline(0.0, **GUIDE)             # E = 0 は ZPL

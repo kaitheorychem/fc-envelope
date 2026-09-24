@@ -82,6 +82,17 @@ def load(path: Path | str, kind: str) -> dict:
     return data
 
 
+def column(table: dict, name: str) -> list:
+    """結果ファイルの表から 1 列を取り出す。
+
+    表は `columns`（列名か `[列名, "単位"]`）と `rows`（行ごとの値の並び）で書かれている。
+    入力ファイルで CSV の列を書くのと同じ形である。単位は計算と同じ cm^-1 系で固定。
+    """
+    names = [spec if isinstance(spec, str) else spec[0] for spec in table["columns"]]
+    index = names.index(name)
+    return [row[index] for row in table["rows"]]
+
+
 def terminal_pixel_width() -> int | None:
     """端末の窓の画素幅。返さない端末もあるので、その場合は None。"""
     try:
@@ -140,7 +151,7 @@ def stick_heights(envelope: dict, lines: dict) -> list[float]:
     """
     sigma = envelope["conditions"]["broadening"]["sigma"][0]    # [値, "cm^-1"]
     peak = 1.0 / (sigma * math.sqrt(2.0 * math.pi))
-    return [line["weight"] * peak * MAGNIFY / X_SCALE for line in lines["lines"]["rows"]]
+    return [w * peak * MAGNIFY / X_SCALE for w in column(lines["lines"], "weight")]
 
 
 def check(envelope: dict, lines: dict) -> None:
@@ -154,8 +165,9 @@ def check(envelope: dict, lines: dict) -> None:
             file=sys.stderr,
         )
 
-    low, high = envelope["spectrum"]["energy"][0], envelope["spectrum"]["energy"][-1]
-    dropped = sum(1 for line in lines["lines"]["rows"] if not low <= line["energy"] <= high)
+    energy = column(envelope["spectrum"], "energy")
+    low, high = energy[0], energy[-1]
+    dropped = sum(1 for e in column(lines["lines"], "energy") if not low <= e <= high)
     if dropped:
         print(
             f"warning: {dropped} of {len(lines['lines']['rows'])} lines fall outside "
@@ -166,8 +178,8 @@ def check(envelope: dict, lines: dict) -> None:
 
 def draw(ax, envelope: dict, lines: dict) -> None:
     """F(E) と離散 FC 因子を 1 枚の軸に重ねる。図の中身はここだけ。"""
-    energy = [e * X_SCALE for e in envelope["spectrum"]["energy"]]
-    density = [d / X_SCALE for d in envelope["spectrum"]["density"]]
+    energy = [e * X_SCALE for e in column(envelope["spectrum"], "energy")]
+    density = [d / X_SCALE for d in column(envelope["spectrum"], "density")]
 
     lines_label = LINES_LABEL
     if lines_label is not None and MAGNIFY != 1.0:
@@ -175,7 +187,7 @@ def draw(ax, envelope: dict, lines: dict) -> None:
 
     ax.plot(energy, density, color=ENVELOPE_COLOR, linewidth=LINEWIDTH,
             label=ENVELOPE_LABEL, zorder=2.2)
-    ax.vlines([line["energy"] * X_SCALE for line in lines["lines"]["rows"]], 0.0,
+    ax.vlines([e * X_SCALE for e in column(lines["lines"], "energy")], 0.0,
               stick_heights(envelope, lines), colors=LINES_COLOR,
               linewidth=LINEWIDTH, label=lines_label, zorder=2.1)
     ax.axvline(0.0, **GUIDE)             # E = 0 は ZPL
