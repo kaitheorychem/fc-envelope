@@ -10,6 +10,12 @@
 有次元の値は `[値, "単位"]` の組でも書け、そのときは添えた単位が既定より優先される
 （ADR-0072）。3 つの書き方を 1 つの形へ畳むのは `Quantity` である。
 
+単位の文字列は検証を通った時点で**正式形**になっている（ADR-0076）。別名（`a.u.`）は
+欄の単位の種類が決める正式名へ置き換わり、倍率（`10^-4`）は字面のまま前に残る。
+エネルギーの欄は欄そのものが種類を決めるのでフィールドの検証器で置き換える。
+coupling の欄は種類を流儀が決めるので、流儀の見えるモデルの検証器
+（`_resolve_coupling_units`）で置き換える。
+
 トップレベルの `frequency_unit` / `coupling_convention` / `coupling_unit` は正準化の
 際に消費され、
 `to_system()` を通った後の表現は常に (frequency [cm^-1], huang_rhys) である。
@@ -56,7 +62,7 @@ from pydantic import (
     model_validator,
 )
 
-from .errors import InvalidInputError, SchemaVersionError
+from .errors import InvalidInputError, SchemaVersionError, UnsupportedUnitError
 from .logs import stage
 from .models import (
     Broadening,
@@ -64,14 +70,16 @@ from .models import (
     Selection,
     VibrationalMode,
     VibrationalSystem,
+    validate_frequency,
     validate_temperature,
 )
 from .units import (
     CANONICAL_ENERGY_UNIT,
     DEFAULT_COUPLING_CONVENTION,
+    ENERGY_UNIT_KIND,
     CouplingConvention,
     coupling_convention,
-    energy_conversion_factor,
+    split_unit,
 )
 
 #: つまみの既定値の唯一の出どころ（ADR-0050）。`Selection` は slots 付きの
@@ -132,33 +140,57 @@ class Quantity:
         return self.unit if self.unit is not None else default
 
     def in_canonical(self, default: str) -> float:
-        """既定の単位を補って正準単位（cm^-1）の数にする。"""
-        return self.value * energy_conversion_factor(self.unit_or(default))
+        """既定の単位を補って正準単位（cm^-1）の数にする。
+
+        エネルギーの値のためのもので、coupling の換算は流儀が行う。保存されている
+        単位は正式形で、正式形は冪等に読めるので、ここは別名も倍率も意識しない。
+        """
+        return self.value * ENERGY_UNIT_KIND.resolve(self.unit_or(default)).factor
 
 
 #: 有次元の値として受け付ける書き方。誤りの報告にそのまま載せる。
 _QUANTITY_FORMS: Final = 'a number, [value] or [value, "unit"]'
 
 
-def _to_quantity(written: object) -> object:
-    """入力ファイルに書かれた有次元の値を `Quantity` にする（ADR-0072）。
+def _energy_unit(written: object) -> str:
+    """エネルギーの欄の単位を正式形にする（ADR-0076）。未知の単位・型はここで報告される。"""
+    return ENERGY_UNIT_KIND.resolve(written).text
 
-    受けるのは検証前のファイルの値なので `object` で取る。単位が換算表にあることは
-    ここで確かめ、保つのは名前のままである。単位と流儀の噛み合わせは正準化で見る。
+
+def _coupling_unit(written: object) -> str:
+    """coupling の欄の単位の書き方だけを確かめ、字面のまま保つ（ADR-0076）。
+
+    この欄の単位の種類は流儀が決めるので、ここでは名前を引き当てない。有次元の流儀
+    なら `_resolve_coupling_units` がすでに正式形へ置き換えている。無次元の流儀に
+    添えた単位は `to_system` が報告する。
     """
-    if isinstance(written, Quantity):
-        return written
-    if isinstance(written, list):
-        if not 1 <= len(written) <= 2:
-            raise ValueError(f"expected {_QUANTITY_FORMS}, got {written!r}")
-        number = written[0]
-        unit = written[1] if len(written) == 2 else None
-    else:
-        number, unit = written, None
-    if unit is not None:
-        energy_conversion_factor(unit)  # 未知の単位・型はここで報告される
-        unit = str(unit)
-    return Quantity(value=_to_number(number), unit=unit)
+    split_unit(written)
+    return str(written)
+
+
+def _quantity_with(check_unit: Callable[[object], str]) -> Callable[[object], object]:
+    """単位の扱い方を決めて、書かれた有次元の値を `Quantity` にする関数を作る。"""
+
+    def to_quantity(written: object) -> object:
+        """入力ファイルに書かれた有次元の値を `Quantity` にする（ADR-0072）。
+
+        受けるのは検証前のファイルの値なので `object` で取る。単位と流儀の噛み合わせは
+        正準化で見る。
+        """
+        if isinstance(written, Quantity):
+            return written
+        if isinstance(written, list):
+            if not 1 <= len(written) <= 2:
+                raise ValueError(f"expected {_QUANTITY_FORMS}, got {written!r}")
+            number = written[0]
+            unit = written[1] if len(written) == 2 else None
+        else:
+            number, unit = written, None
+        if unit is not None:
+            unit = check_unit(unit)
+        return Quantity(value=_to_number(number), unit=unit)
+
+    return to_quantity
 
 
 def _to_number(written: object) -> float:
@@ -178,9 +210,20 @@ def _as_written(quantity: Quantity) -> float | list[object]:
     return [quantity.value, quantity.unit]
 
 
-#: 有次元の値のフィールド。3 つの書き方を `Quantity` へ畳み、書き出しでは元の姿へ戻す。
+#: エネルギーの値のフィールド。3 つの書き方を `Quantity` へ畳み、書き出しでは元の姿へ
+#: 戻す。添えた単位は正式形になる。
 Dimensioned = Annotated[
-    Quantity, BeforeValidator(_to_quantity), PlainSerializer(_as_written)
+    Quantity,
+    BeforeValidator(_quantity_with(_energy_unit)),
+    PlainSerializer(_as_written),
+]
+
+#: coupling の値のフィールド。畳み方は `Dimensioned` と同じだが、単位は書き方だけを
+#: 確かめて字面のまま保つ。種類を決める流儀がこの位置からは見えないためである。
+DimensionedCoupling = Annotated[
+    Quantity,
+    BeforeValidator(_quantity_with(_coupling_unit)),
+    PlainSerializer(_as_written),
 ]
 
 
@@ -206,9 +249,8 @@ class _EnergySpec(_Spec):
     @field_validator("unit", mode="before")
     @classmethod
     def _check_unit(cls, value: object) -> str:
-        """単位が換算表にあることを確かめる。保つのは名前のままである。"""
-        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
-        return str(value)
+        """単位を正式形にする（ADR-0076）。"""
+        return _energy_unit(value)
 
     def to_canonical(self, quantity: Quantity) -> float:
         """このブロックの値を cm^-1 の数にする。単位はブロックの `unit` で補う。"""
@@ -224,7 +266,7 @@ class ModeSpec(_Spec):
     """
 
     frequency: Dimensioned
-    coupling: Dimensioned
+    coupling: DimensionedCoupling
 
 
 class BroadeningSpec(_EnergySpec):
@@ -458,6 +500,58 @@ class FCEnvelopeInput(BaseModel):
     # pydantic の `mode="before"` の検証器は**検証前**の値を受ける。構造が分からない
     # 位置なので `object` で取り、pydantic に渡し返すものだけを返す。
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_coupling_units(cls, data: object) -> object:
+        """coupling の欄の単位を、流儀が決める単位の種類で正式形へ置き換える（ADR-0076）。
+
+        同じ `a.u.` でも、流儀 lambda なら `hartree`、vcc なら
+        `hartree/(bohr*sqrt(m_e))` になる。フィールドの検証器からは流儀が見えないので、
+        生の辞書の段階でここが置き換える。
+
+        置き換えるのは形が分かる位置だけで、それ以外は触らずに残す。構造の誤りは
+        フィールドの検証器が、流儀の名前の誤りは `_check_coupling_convention` が、
+        無次元の流儀に添えた単位は `to_system` が報告する。呼び出し側の辞書は
+        書き換えず、写しを返す。
+        """
+        if not isinstance(data, dict):
+            return data
+        try:
+            convention = coupling_convention(
+                data.get("coupling_convention", DEFAULT_COUPLING_CONVENTION.name)
+            )
+        except InvalidInputError:
+            return data
+        kind = convention.unit_kind
+        if kind is None:
+            return data
+
+        def resolve(location: str, written: str) -> str:
+            try:
+                return kind.resolve(written).text
+            except UnsupportedUnitError as exc:
+                raise UnsupportedUnitError(f"{location}: {exc}") from exc
+
+        resolved = dict(data)
+        unit = resolved.get("coupling_unit")
+        if isinstance(unit, str):
+            resolved["coupling_unit"] = resolve("coupling_unit", unit)
+        modes = resolved.get("modes")
+        if isinstance(modes, list):
+            new_modes: list[object] = []
+            for index, mode in enumerate(modes):
+                coupling = mode.get("coupling") if isinstance(mode, dict) else None
+                if (
+                    isinstance(coupling, list)
+                    and len(coupling) == 2
+                    and isinstance(coupling[1], str)
+                ):
+                    unit_text = resolve(f"modes[{index}].coupling", coupling[1])
+                    mode = {**mode, "coupling": [coupling[0], unit_text]}
+                new_modes.append(mode)
+            resolved["modes"] = new_modes
+        return resolved
+
     @field_validator("schema_version", mode="before")
     @classmethod
     def _check_schema_version(cls, value: object) -> Literal[3]:
@@ -486,9 +580,8 @@ class FCEnvelopeInput(BaseModel):
     @field_validator("frequency_unit", mode="before")
     @classmethod
     def _check_frequency_unit(cls, value: object) -> str:
-        """単位が換算表にあることを確かめる。保つのは名前のままである。"""
-        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
-        return str(value)
+        """単位を正式形にする（ADR-0076）。"""
+        return _energy_unit(value)
 
     @field_validator("coupling_convention", mode="before")
     @classmethod
@@ -500,15 +593,15 @@ class FCEnvelopeInput(BaseModel):
     @field_validator("coupling_unit", mode="before")
     @classmethod
     def _check_coupling_unit(cls, value: object) -> str | None:
-        """単位が換算表にあることを確かめる。流儀との噛み合わせは正準化で見る。
+        """単位の書き方だけを確かめる。流儀との噛み合わせは正準化で見る。
 
-        省略（`None`）はここでは通す。単位が要るかどうかは流儀が決めることなので、
-        流儀の分からないこの位置では判定できない。
+        名前の引き当てと正式形への置き換えは `_resolve_coupling_units` が済ませている
+        （有次元の流儀のとき）。省略（`None`）はここでは通す。単位が要るかどうかは
+        流儀が決めることなので、流儀の分からないこの位置では判定できない。
         """
         if value is None:
             return None
-        energy_conversion_factor(value)  # 未知の単位・型はここで報告される
-        return str(value)
+        return _coupling_unit(value)
 
     @property
     def convention(self) -> CouplingConvention:
@@ -524,8 +617,12 @@ class FCEnvelopeInput(BaseModel):
             # へ直す（ADR-0053）。単位はモードが自分で持っていればそれ、なければ
             # トップレベルの既定である（ADR-0072）。coupling の係数は流儀の次元の
             # ぶんだけべきが乗る。
+            # 振動数は変換式より先に検証する。lambda と vcc の変換式は振動数で割るので、
+            # 0 だと `VibrationalMode` の検査に届く前に落ちる（ADR-0077）。
             try:
-                frequency = spec.frequency.in_canonical(self.frequency_unit)
+                frequency = validate_frequency(
+                    spec.frequency.in_canonical(self.frequency_unit)
+                )
                 coupling = spec.coupling.value * convention.coupling_to_canonical(
                     spec.coupling.unit_or(self.coupling_unit)
                 )

@@ -27,6 +27,7 @@ __all__ = [
     "Selection",
     "VibrationalMode",
     "VibrationalSystem",
+    "validate_frequency",
     "validate_temperature",
 ]
 
@@ -45,6 +46,18 @@ def validate_temperature(temperature: float) -> float:
     return temperature
 
 
+def validate_frequency(frequency: float) -> float:
+    """振動数 eps [cm^-1] の不変条件 eps > 0 を検証して返す。
+
+    `VibrationalMode` の検査はこれを使う。入力の正準化も、振動数で割る流儀の変換式
+    （lambda / vcc）を呼ぶ前にこれを呼ぶ（ADR-0077）。そうしないと 0 の振動数が
+    `ZeroDivisionError` として落ちる。制約はこの 1 箇所にだけ書く（ADR-0051）。
+    """
+    if not frequency > 0.0:
+        raise InvalidInputError(f"frequency must be positive (got {frequency})")
+    return frequency
+
+
 @dataclass(frozen=True, slots=True)
 class VibrationalMode:
     """基底状態の調和ポテンシャルにおける 1 つの基準振動。正準形。"""
@@ -56,10 +69,7 @@ class VibrationalMode:
     """S_alpha（無次元）。"""
 
     def __post_init__(self) -> None:
-        if not self.frequency > 0.0:
-            raise InvalidInputError(
-                f"frequency must be positive (got {self.frequency})"
-            )
+        validate_frequency(self.frequency)
         if not self.huang_rhys >= 0.0:
             raise InvalidInputError(
                 f"huang_rhys must be non-negative (got {self.huang_rhys})"
