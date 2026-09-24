@@ -149,7 +149,8 @@ git describe --tags           # v0.1.0
 
 入力ファイルと結果ファイルの `schema_version` は**これとは別の数**である。形式が
 変わらないまま版だけが進むことも、形式だけが上がることもある。入力ファイルと結果
-ファイルの `schema_version` どうしも別々に上がる（今は入力が 4、結果が 3）。
+ファイルの `schema_version` は同じ番号を共有する。結果ファイルに埋め込む入力エコーが
+入力ファイルと同じ形で書かれるためである（今はどちらも 4）。
 
 版ごとに何が変わったかは [CHANGELOG.md](CHANGELOG.md)、リリースの手順は
 [docs/dev/release.md](docs/dev/release.md)、そう決めた理由は

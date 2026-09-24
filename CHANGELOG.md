@@ -30,12 +30,17 @@
 ### 変更
 
 - **入力ファイルの形が変わり、`schema_version` が 4 になった。** 版 3 の入力ファイルは
-  読めないので、次のように書き換える（ADR-0079）。結果ファイルの形と版（3）は変わらない。
+  読めないので、次のように書き換える（ADR-0079）。
   - トップレベルの `frequency_unit` / `coupling_convention` / `coupling_unit` を、新しい
     `[modes]` ブロックへ移す。これらが効くのはモード表の列だけなので、表の側に置く。
   - `[[modes]]` を `[[modes.rows]]` に書き換える。
   - `modes = { path = "modes.csv" }` を、`[modes]` の中の `csv = { path = "modes.csv" }`
     に書き換える。
+- **結果ファイルの入力エコーも同じ形になり、結果ファイルの `schema_version` も 4 に
+  なった。** エコーのモード表は `input.modes` の下に `frequency_unit` /
+  `coupling_convention` / `rows` を持ち、そのまま版 4 の入力の `[modes]` として読める。
+  版 3 の結果ファイルは読めず、版 3 の結果ファイル用に生成済みの作図スクリプトは版 4 の
+  結果ファイルを読まないので、`fcenvelope script` で作り直す（ADR-0079）。
 - CSV から読むモード表に、列の並びと列ごとの単位を書けるようになった。
   `csv = { path = "modes.csv", columns = [["frequency", "eV"], "coupling"] }` のように書き、
   単位を添えない列は `[modes]` の既定の単位で読む。`columns` を省くと今までどおり

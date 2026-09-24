@@ -320,16 +320,18 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "kind": "fcenvelope.envelope",
   "fcenvelope_version": "0.1.0",
   "created_at": "2026-09-17T03:21:44Z",
   "energy_unit": "cm^-1",
   "density_unit": "1/cm^-1",
   "input": {
-    "frequency_unit": "cm^-1",
-    "coupling_convention": "huang_rhys",
-    "modes": [{ "frequency": 1200.0, "coupling": 0.25 }],
+    "modes": {
+      "frequency_unit": "cm^-1",
+      "coupling_convention": "huang_rhys",
+      "rows": [{ "frequency": 1200.0, "coupling": 0.25 }]
+    },
     "temperature": 300.0,
     "broadening": { "sigma": 150.0 },
     "grid": { "e_min": -4500.0, "e_max": 1000.0, "de": 4.0, "n_fft": 4096 }
@@ -354,15 +356,17 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "kind": "fcenvelope.fc_lines",
   "fcenvelope_version": "0.1.0",
   "created_at": "2026-09-17T01:23:45Z",
   "energy_unit": "cm^-1",
   "input": {
-    "frequency_unit": "cm^-1",
-    "coupling_convention": "huang_rhys",
-    "modes": [{ "frequency": 1200.0, "coupling": 0.25 }],
+    "modes": {
+      "frequency_unit": "cm^-1",
+      "coupling_convention": "huang_rhys",
+      "rows": [{ "frequency": 1200.0, "coupling": 0.25 }]
+    },
     "temperature": 300.0,
     "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
   },
@@ -376,13 +380,14 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
 }
 ```
 
-どちらの出力も入力エコーは常に正準形（`coupling_convention` = `"huang_rhys"`）で、それ以外は
+どちらの出力も入力エコーのモード表は入力ファイルの `[modes]` と同じ形で、値は常に正準形
+（`frequency_unit` = `"cm^-1"`、`coupling_convention` = `"huang_rhys"`）で書く。それ以外は
 読み込み時に reject する。`derived` は系から一意に決まる控えなので、書き出しはするが読み込み
 時は読み飛ばす（ADR-0047）。`load → save` でファイルは変化しない（ADR-0008）。
 
-結果ファイルの `schema_version` は 3 で、入力ファイル（4）とは別に数える（ADR-0079）。
-入力エコーは正準形で既定の単位を持たないので、モード表の形の変更を受けていない。`io` は
-`inputs` に依存しないため（ADR-0041）定数は別に持つ。
+結果ファイルの `schema_version` は入力ファイルと同じ 4 である。入力エコーが入力ファイルと
+同じ形なので、両者は版の番号を共有する（ADR-0079）。`io` は `inputs` に依存しないため
+（ADR-0041）定数は別に持ち、一致はテストで確かめる。
 
 ## CLI
 

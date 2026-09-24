@@ -70,10 +70,10 @@ logger = logging.getLogger(__name__)
 ENVELOPE_KIND = "fcenvelope.envelope"
 LINES_KIND = "fcenvelope.fc_lines"
 
-#: 結果ファイルの版。版 3 までは入力ファイルの版（`inputs.SCHEMA_VERSION`）と同じ
-#: 番号を共有していたが、入力ファイルだけが 4 へ上がった（ADR-0079）。入力エコーは
-#: 正準形で既定の単位を持たないので、モード表の形の変更を受けない。
-SCHEMA_VERSION = 3
+#: 結果ファイルの版。入力エコーは入力ファイルと同じ形で書くので、入力ファイルの版
+#: （`inputs.SCHEMA_VERSION`）と同じ番号を共有する（ADR-0079）。`io` は `inputs` に
+#: 依存しないので（ADR-0041）ここに別に持つ。両者が一致していることはテストで確かめる。
+SCHEMA_VERSION = 4
 
 #: 結果ファイルの形式の知識。計算側は常に cm^-1 しか扱わないので、単位は結果クラス
 #: ではなく io が持つ（ADR-0047）。入力エコーは常に正準形なので流儀も固定である。
@@ -258,19 +258,24 @@ def _float_array(data: JsonValue, path: str) -> np.ndarray:
 
 
 def _check_echo_header(echo: JsonValue) -> None:
-    """入力エコーが正準形（cm^-1・huang_rhys）であることを確かめる。"""
+    """入力エコーのモード表が正準形（cm^-1・huang_rhys）であることを確かめる。"""
     if not isinstance(echo, dict):
         raise InvalidInputError(f"'input' must be a JSON object, got {type(echo).__name__}")
-    frequency_unit = echo.get("frequency_unit", CANONICAL_FREQUENCY_UNIT)
+    table = _require(echo, "modes", "input.modes")
+    if not isinstance(table, dict):
+        raise InvalidInputError(
+            f"input.modes must be a JSON object, got {type(table).__name__}"
+        )
+    frequency_unit = table.get("frequency_unit", CANONICAL_FREQUENCY_UNIT)
     if frequency_unit != CANONICAL_FREQUENCY_UNIT:
         raise UnsupportedUnitError(
-            f"unsupported frequency_unit {frequency_unit!r} "
+            f"unsupported input.modes.frequency_unit {frequency_unit!r} "
             f"(only {CANONICAL_FREQUENCY_UNIT!r} is supported)"
         )
-    convention = echo.get("coupling_convention", CANONICAL_COUPLING_CONVENTION)
+    convention = table.get("coupling_convention", CANONICAL_COUPLING_CONVENTION)
     if convention != CANONICAL_COUPLING_CONVENTION:
         raise InvalidInputError(
-            f"input.coupling_convention must be "
+            f"input.modes.coupling_convention must be "
             f"{CANONICAL_COUPLING_CONVENTION!r} (got {convention!r})"
         )
 
@@ -309,14 +314,17 @@ def _check_header(data: JsonValue, kind: str) -> None:
 
 
 def _system_to_dict(system: VibrationalSystem) -> JsonObject:
-    """系を入力エコーの構造へ写す。エコーは常に正準形（ADR-0010）。"""
+    """系を入力エコーの構造へ写す。エコーは常に正準形（ADR-0010）で、モード表は
+    入力ファイルの `[modes]` と同じ形（ADR-0079）。"""
     return {
-        "frequency_unit": CANONICAL_FREQUENCY_UNIT,
-        "coupling_convention": CANONICAL_COUPLING_CONVENTION,
-        "modes": [
-            {"frequency": mode.frequency, "coupling": mode.huang_rhys}
-            for mode in system.modes
-        ],
+        "modes": {
+            "frequency_unit": CANONICAL_FREQUENCY_UNIT,
+            "coupling_convention": CANONICAL_COUPLING_CONVENTION,
+            "rows": [
+                {"frequency": mode.frequency, "coupling": mode.huang_rhys}
+                for mode in system.modes
+            ],
+        },
     }
 
 
@@ -334,17 +342,19 @@ def _provenance_from_dict(data: JsonValue) -> Provenance:
 
 def _system_from_echo(echo: JsonValue) -> VibrationalSystem:
     """入力エコーのモードから正準形の系を組み立てる。"""
-    return _build(VibrationalSystem, "input.modes", modes=_modes_from_echo(echo))
+    return _build(VibrationalSystem, "input.modes.rows", modes=_modes_from_echo(echo))
 
 
 def _modes_from_echo(echo: JsonValue) -> tuple[VibrationalMode, ...]:
     """入力エコーの各モードを正準形の値の型にする。"""
-    specs = _require(echo, "modes", "input.modes")
+    specs = _require(_require(echo, "modes", "input.modes"), "rows", "input.modes.rows")
     if not isinstance(specs, list):
-        raise InvalidInputError(f"input.modes must be a list, got {type(specs).__name__}")
+        raise InvalidInputError(
+            f"input.modes.rows must be a list, got {type(specs).__name__}"
+        )
     modes: list[VibrationalMode] = []
     for index, spec in enumerate(specs):
-        location = f"input.modes[{index}]"
+        location = f"input.modes.rows[{index}]"
         modes.append(
             _build(
                 VibrationalMode,

@@ -36,12 +36,12 @@ def result(multi_mode):
     )
 
 
-def test_the_result_file_keeps_its_version_when_the_input_file_moves_on():
-    """入力ファイルだけが版 4 へ上がり、結果ファイルは版 3 のまま（ADR-0079）。
+def test_input_and_result_files_share_one_schema_version():
+    """エコーは入力ファイルと同じ形なので版も共有する（ADR-0079）。
 
-    `io` は `inputs` に依存しない（ADR-0041）ので、両者の関係はここで確かめる。
+    `io` は `inputs` に依存しない（ADR-0041）ので版の一致はここで確かめる。
     """
-    assert (SCHEMA_VERSION, inputs_module.SCHEMA_VERSION) == (3, 4)
+    assert SCHEMA_VERSION == inputs_module.SCHEMA_VERSION
 
 
 def test_round_trip_is_exact(result, tmp_path):
@@ -95,9 +95,11 @@ def test_written_input_echo_is_canonical(tmp_path):
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["kind"] == "fcenvelope.envelope"
-    assert payload["input"]["coupling_convention"] == "huang_rhys"
-    assert payload["input"]["frequency_unit"] == "cm^-1"
-    assert payload["input"]["modes"] == [{"frequency": 1200.0, "coupling": 0.25}]
+    assert payload["input"]["modes"] == {
+        "frequency_unit": "cm^-1",
+        "coupling_convention": "huang_rhys",
+        "rows": [{"frequency": 1200.0, "coupling": 0.25}],
+    }
     assert payload["input"]["temperature"] == 300.0
     assert payload["input"]["broadening"] == {"sigma": 150.0}
     assert payload["input"]["grid"] == {
@@ -110,6 +112,22 @@ def test_written_input_echo_is_canonical(tmp_path):
     assert payload["density_unit"] == "1/cm^-1"
     assert payload["derived"]["reorganization_energy"] == 300.0
     assert payload["created_at"].endswith("Z")
+
+
+def test_echoed_mode_table_reads_back_as_an_input_mode_table(result, tmp_path):
+    """エコーのモード表は入力ファイルの `[modes]` と同じ形で、そのまま読める（ADR-0079）。"""
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    echo = json.loads(path.read_text(encoding="utf-8"))["input"]
+
+    reread = FCEnvelopeInput.from_obj(
+        {
+            "schema_version": inputs_module.SCHEMA_VERSION,
+            "modes": echo["modes"],
+            "temperature": echo["temperature"],
+        }
+    )
+    assert reread.to_system().modes == result.system.modes
 
 
 def test_spectrum_arrays_match_the_result(result, tmp_path):
@@ -235,9 +253,9 @@ def test_fc_lines_payload_shape(lines_result, tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["kind"] == "fcenvelope.fc_lines"
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["energy_unit"] == "cm^-1"
-    assert payload["input"]["coupling_convention"] == "huang_rhys"
+    assert payload["input"]["modes"]["coupling_convention"] == "huang_rhys"
     assert payload["input"]["temperature"] == 300.0
     assert payload["input"]["selection"] == {
         "min_weight": 1e-4,
@@ -296,7 +314,7 @@ def test_fc_lines_non_canonical_echo_is_rejected(lines_result, tmp_path):
     """エコーは常に huang_rhys 流儀。他の流儀は曖昧なので受け付けない。"""
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)
-    _corrupt(path, lambda p: p["input"].update(coupling_convention="g"))
+    _corrupt(path, lambda p: p["input"]["modes"].update(coupling_convention="g"))
     with pytest.raises(InvalidInputError):
         load_lines(path)
 
