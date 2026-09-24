@@ -118,7 +118,7 @@ def compute_envelope(
         "envelope: %d points, N_fft=%d, dE=%.9g, full span=%.9g, "
         "area=%.9g, captured=%.6g",
         energy.size,
-        measured.n_fft,
+        grid.n_fft,
         grid.de,
         grid.full_span,
         measured.total_area,
@@ -185,7 +185,6 @@ def _transform(
 
     tau_max = math.pi / grid.de
     measured = Diagnostics(
-        n_fft=n_fft,
         d_tau=d_tau,
         tau_max=tau_max,
         # 名前はガウス型の名残。減衰因子そのもので測る形への一般化は ADR-0038（提案）。

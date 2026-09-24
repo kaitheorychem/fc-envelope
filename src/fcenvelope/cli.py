@@ -332,7 +332,7 @@ def _report_envelope(result: EnvelopeResult, output: Path, *, top: int = 0) -> N
     diagnostics = result.diagnostics
     typer.echo(
         f"wrote {output} "
-        f"({result.energy.size} points, N={diagnostics.n_fft}, "
+        f"({result.energy.size} points, N={result.grid.n_fft}, "
         f"area={diagnostics.total_area:.9g}, "
         f"captured={diagnostics.window_captured_fraction:.6g})"
     )
@@ -551,11 +551,11 @@ def template(
 
 
 def _transition_label(line: FCLine) -> str:
-    """`#0:0->1, #2:1->0` の形。すべて 0 なら ZPL。"""
+    """`#1:0->1, #3:1->0` の形。モードの番号は 1 始まり。すべて 0 なら ZPL。"""
     if not line.transitions:
         return "ZPL"
     return ", ".join(
-        f"#{transition.mode_index}:{transition.initial}->{transition.final}"
+        f"#{transition.mode_number}:{transition.initial}->{transition.final}"
         for transition in line.transitions
     )
 

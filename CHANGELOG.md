@@ -44,7 +44,12 @@
   の組（例 `"sigma": [150.0, "cm^-1"]`）、表は表のブロックに列の単位を書く
   （`spectrum.energy_unit`、`lines.energy_unit`、`conditions.modes.frequency_unit`）。
   ヘッダの `energy_unit` / `density_unit` はなくなった。`lines` は `rows` を持つ表になった
-  （ADR-0081）。版 3 の結果ファイルは読めず、生成済みの
+  （ADR-0081）。
+- 線のモードの番号を 1 始まりにした。結果ファイルの `transitions[].mode` と `lines --top`
+  の表示（`#1:0->1`）が、モード表の行を上から 1, 2, … と数えた番号になる。Python では
+  `ModeTransition.mode_number` で読める（ADR-0080）。
+- 診断値から `n_fft` を外した。点数は `conditions.grid.n_fft`（Python では
+  `result.grid.n_fft`）だけにある（ADR-0080）。版 3 の結果ファイルは読めず、生成済みの
   作図スクリプトは版 4 の結果ファイルを読まないので、`fcenvelope script` で作り直す
   （ADR-0080）。
 - CSV から読むモード表に、列の並びと列ごとの単位を書けるようになった。

@@ -489,7 +489,7 @@ def lines_to_dict(result: LinesResult) -> JsonObject:
                     "weight": line.weight,
                     "transitions": [
                         {
-                            "mode": transition.mode_index,
+                            "mode": transition.mode_number,
                             "initial": transition.initial,
                             "final": transition.final,
                         }
@@ -507,13 +507,16 @@ def save_lines(result: LinesResult, path: str | Path) -> None:
     _write_json(lines_to_dict(result), path)
 
 
-def _parse_transitions(data: JsonValue, index: int) -> tuple[ModeTransition, ...]:
+def _parse_transitions(
+    data: JsonValue, index: int, n_modes: int
+) -> tuple[ModeTransition, ...]:
+    """線の遷移を読む。`mode` はモード表の行の番号で、1 から数える。"""
     if not isinstance(data, list):
         raise InvalidInputError(f"lines.rows[{index}].transitions must be a list")
     try:
-        return tuple(
+        transitions = tuple(
             ModeTransition(
-                mode_index=int(item["mode"]),
+                mode_index=int(item["mode"]) - 1,
                 initial=int(item["initial"]),
                 final=int(item["final"]),
             )
@@ -521,6 +524,13 @@ def _parse_transitions(data: JsonValue, index: int) -> tuple[ModeTransition, ...
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise InvalidInputError(f"lines.rows[{index}]: malformed transition: {exc}") from exc
+    for transition in transitions:
+        if not 1 <= transition.mode_number <= n_modes:
+            raise InvalidInputError(
+                f"lines.rows[{index}]: mode {transition.mode_number} is out of range "
+                f"(modes are numbered 1 to {n_modes})"
+            )
+    return transitions
 
 
 def lines_from_dict(data: JsonValue) -> LinesResult:
@@ -553,7 +563,9 @@ def lines_from_dict(data: JsonValue) -> LinesResult:
                 energy=float(item["energy"]),
                 fc_factor=float(item["fc_factor"]),
                 weight=float(item["weight"]),
-                transitions=_parse_transitions(item.get("transitions", []), index),
+                transitions=_parse_transitions(
+                    item.get("transitions", []), index, len(system.modes)
+                ),
             )
             for index, item in enumerate(lines_data)
         )

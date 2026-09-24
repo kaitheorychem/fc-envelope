@@ -45,9 +45,6 @@ class Provenance:
 class Diagnostics:
     """数値品質の診断値。出力ファイルだけを見て信頼可否を判定するための情報。"""
 
-    n_fft: int
-    """FFT 点数 N。"""
-
     d_tau: float
     """tau グリッド間隔 [cm]。"""
 
@@ -115,13 +112,22 @@ class ModeTransition:
     """1 モードの振動量子数の変化 n_alpha -> m_alpha。"""
 
     mode_index: int
-    """`LinesResult.system.modes` における位置。"""
+    """`LinesResult.system.modes` における位置（0 始まり）。"""
 
     initial: int
     """始状態の振動量子数 n_alpha。"""
 
     final: int
     """終状態の振動量子数 m_alpha。"""
+
+    @property
+    def mode_number(self) -> int:
+        """人に見せるモードの番号。モード表の行の並びで 1 から数える。
+
+        結果ファイルと端末の表示はこの番号を使う。`mode_index` は Python の並びの位置で、
+        結果ファイルには書かない。
+        """
+        return self.mode_index + 1
 
 
 @dataclass(frozen=True, slots=True)

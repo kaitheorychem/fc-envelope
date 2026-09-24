@@ -181,7 +181,9 @@ coupling と frequency の単位が揃うことは前提にできないので、
 - `EnvelopeResult(system, temperature, broadening, grid, energy, density, diagnostics, provenance)`
 - `LinesResult(system, temperature, selection, lines, diagnostics, provenance)`
 - `FCLine(energy, fc_factor, weight, transitions)`
-- `ModeTransition(mode_index, initial, final)` — 1 モードの n_α → m_α
+- `ModeTransition(mode_index, initial, final)` — 1 モードの n_α → m_α。`mode_index` は
+  `system.modes` の位置（0 始まり）で、`.mode_number` が人に見せる番号（1 始まり）。結果
+  ファイルと端末の表示は番号を使う
 - `Diagnostics` / `FCLineDiagnostics` — 数値品質の診断値
 - `Result = EnvelopeResult | LinesResult` / `AnyDiagnostics = Diagnostics | FCLineDiagnostics`
   — 種類によらず扱う関数が使う別名
@@ -338,7 +340,7 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
   },
   "derived": { "reorganization_energy": [300.0, "cm^-1"] },
   "diagnostics": {
-    "n_fft": 4096, "d_tau": [3.83e-4, "cm"], "tau_max": [0.785, "cm"],
+    "d_tau": [3.83e-4, "cm"], "tau_max": [0.785, "cm"],
     "sigma_tau_max": 117.8, "total_area": 0.9999999998,
     "window_captured_fraction": 0.9993,
     "edge_intensity_ratio": 4.9e-9,
@@ -378,7 +380,7 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
     "energy_unit": "cm^-1",
     "rows": [
       { "energy": 0.0, "fc_factor": 0.41, "weight": 0.36, "transitions": [] },
-      { "energy": -450.0, "fc_factor": 0.26, "weight": 0.23,
+      { "energy": -1200.0, "fc_factor": 0.19, "weight": 0.17,
         "transitions": [{ "mode": 1, "initial": 0, "final": 1 }] }
     ]
   }
@@ -392,7 +394,11 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
 単位は入力ファイルと同じ書き方で書く（ADR-0081）。有次元の値 1 つは `[値, "単位"]` の組、
 表（`conditions.modes` / `spectrum` / `lines`）は表のブロックに `<列名>_unit` を書く。無次元の
 値と温度（K）は素の数である。書き出す単位は常に正準単位（`cm^-1`、密度 `1/cm^-1`、τ `cm`）で、
-読み込みはそれ以外の単位を `UnsupportedUnitError` で止める。`derived` は系から一意に決まる控えなので、書き出しはするが読み込み
+読み込みはそれ以外の単位を `UnsupportedUnitError` で止める。
+
+グリッドの点数は `conditions.grid.n_fft` だけに書き、診断値には重ねない。`lines` の
+`transitions[].mode` はモード表の行の番号で、1 から数える。線のエネルギーは ZPL からの
+符号付き変位で、振動量子を生成するサイドバンドが負側に立つ（上の「単位・規約」の E 軸）。`derived` は系から一意に決まる控えなので、書き出しはするが読み込み
 時は読み飛ばす（ADR-0047）。`load → save` でファイルは変化しない（ADR-0008）。
 
 結果ファイルの `schema_version` は 4 で、入力ファイルの版とは別に数える。入力の書き方が

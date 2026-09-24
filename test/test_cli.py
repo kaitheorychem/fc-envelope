@@ -779,6 +779,7 @@ def test_lines_prints_the_strongest_transitions(tmp_path, input_file):
     assert "ZPL" in invocation.output
     assert "more" in invocation.output
     assert invocation.output.count("->") >= 1
+    assert "#0:" not in invocation.output  # モードの番号は 1 始まり
 
 
 def test_lines_top_zero_prints_no_table(tmp_path, input_file):

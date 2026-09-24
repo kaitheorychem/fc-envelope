@@ -656,19 +656,20 @@ uv run fcenvelope lines mymolecule.toml -o lines.json --top 30
 wrote lines.json (58 lines, captured=0.997261, <E>=-583.531 cm^-1, lambda=588 cm^-1)
      E / cm^-1            FC        weight  transition
              0      0.410656       0.36206  ZPL
-          -450       0.26282      0.231718  #1:0->1
-         -1200      0.102664     0.0905149  #0:0->1
-          -900     0.0841023     0.0741498  #1:0->2
-         -1650     0.0657049     0.0579296  #0:0->1, #1:0->1
-           450       0.26282      0.026772  #1:1->0
-          -450      0.243056     0.0247588  #1:1->2
-         -2100     0.0210256     0.0185375  #0:0->1, #1:0->2
-          -900      0.156139      0.015905  #1:1->3
-         -1350     0.0179418     0.0158186  #1:0->3
+          -450       0.26282      0.231718  #2:0->1
+         -1200      0.102664     0.0905149  #1:0->1
+          -900     0.0841023     0.0741498  #2:0->2
+         -1650     0.0657049     0.0579296  #1:0->1, #2:0->1
+           450       0.26282      0.026772  #2:1->0
+          -450      0.243056     0.0247588  #2:1->2
+         -2100     0.0210256     0.0185375  #1:0->1, #2:0->2
+          -900      0.156139      0.015905  #2:1->3
+         -1350     0.0179418     0.0158186  #2:0->3
   ... 48 more (see lines.json)
 ```
 
-`#1:0->1` は「1 番目のモード（`modes` の並び順、0 始まり）が n = 0 から m = 1 へ」の意味。
+`#2:0->1` は「2 番目のモード（`modes.rows` の並び順、1 始まり）が n = 0 から m = 1 へ」の意味。
+結果ファイルの `transitions[].mode` も同じ番号である。
 量子数がすべて 0 の線は `ZPL`。線は**重みの降順**に並ぶので、主要なものから順に読めばよい。
 
 ### FC 因子と重み
@@ -748,7 +749,7 @@ lines = compute_fc_lines(
     system, temperature=300.0, selection=Selection(min_weight=1e-5)
 )
 for line in lines.lines[:5]:
-    labels = [f"#{t.mode_index}: {t.initial}->{t.final}" for t in line.transitions]
+    labels = [f"#{t.mode_number}: {t.initial}->{t.final}" for t in line.transitions]
     print(f"{line.energy:9.1f} cm^-1  FC={line.fc_factor:.5f}  w={line.weight:.5f}  {labels}")
 
 save_lines(lines, "lines.json")

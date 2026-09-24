@@ -385,6 +385,49 @@ def test_out_of_range_echo_is_rejected_with_its_location(lines_result, tmp_path)
         load_lines(path)
 
 
+def test_fc_lines_number_modes_from_one(lines_result, tmp_path):
+    """結果ファイルのモードの番号は、モード表の行の並びで 1 から数える。"""
+    path = tmp_path / "lines.json"
+    save_lines(lines_result, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    written = [
+        (transition["mode"], transition["initial"], transition["final"])
+        for row in payload["lines"]["rows"]
+        for transition in row["transitions"]
+    ]
+    expected = [
+        (transition.mode_index + 1, transition.initial, transition.final)
+        for line in lines_result.lines
+        for transition in line.transitions
+    ]
+    assert written == expected
+    assert min(mode for mode, _, _ in written) == 1
+    assert load_lines(path) == lines_result
+
+
+@pytest.mark.parametrize("mode", [0, 99])
+def test_fc_lines_mode_number_out_of_range(lines_result, tmp_path, mode):
+    path = tmp_path / "lines.json"
+    save_lines(lines_result, path)
+    _corrupt(
+        path,
+        lambda p: p["lines"]["rows"][1].update(
+            transitions=[{"mode": mode, "initial": 0, "final": 1}]
+        ),
+    )
+    with pytest.raises(InvalidInputError, match="out of range"):
+        load_lines(path)
+
+
+def test_diagnostics_do_not_repeat_the_grid_size(result, tmp_path):
+    """点数は `conditions.grid.n_fft` だけに書く。"""
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert "n_fft" not in payload["diagnostics"]
+    assert payload["conditions"]["grid"]["n_fft"] == result.grid.n_fft
+
+
 def test_fc_lines_malformed_transition(lines_result, tmp_path):
     path = tmp_path / "lines.json"
     save_lines(lines_result, path)

@@ -162,7 +162,7 @@ def test_shift_only_refines_the_sampling(multi_mode):
     assert shifted.diagnostics.edge_intensity_ratio == pytest.approx(
         base.diagnostics.edge_intensity_ratio, rel=1e-9
     )
-    assert shifted.diagnostics.n_fft == base.diagnostics.n_fft * 2
+    assert shifted.grid.n_fft == base.grid.n_fft * 2
     assert shifted.energy.size > base.energy.size
 
 
