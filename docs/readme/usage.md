@@ -161,7 +161,7 @@ shift = 1       # 任意。冪を 1 段上げ、ΔE = 2.5、点数は倍
 つまみなので、`edge_intensity_ratio`（端の折り返し）の警告には効かない。
 
 実際に使われた点数と ΔE は、`run` の終了行（`N=...`）と結果ファイルの
-`input.grid` / `diagnostics` に残る。
+`conditions.grid` / `diagnostics` に残る。
 
 E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
 ここで λ = Σ S_α ε_α、Var = Σ S_α ε_α²(2n_α+1) + σ²。
