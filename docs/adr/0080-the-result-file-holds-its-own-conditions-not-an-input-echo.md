@@ -22,8 +22,8 @@
 ```json
 "conditions": {
   "modes": {
-    "frequency_unit": "cm^-1",
-    "rows": [{ "frequency": 1200.0, "huang_rhys": 0.25 }]
+    "columns": [["frequency", "cm^-1"], "huang_rhys"],
+    "rows": [[1200.0, 0.25]]
   },
   "temperature": 300.0,
   "broadening": { "sigma": [150.0, "cm^-1"] },
