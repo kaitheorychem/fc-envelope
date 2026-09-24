@@ -3,7 +3,7 @@
 - 日付: 2026-09-24
 - 状態: 受理（ADR-0010 の「入力エコー」を置き換える。単一 JSON から結果クラスを完全に
   復元する、流儀の曖昧さを残さない、は変わらない。ADR-0079 の「結果ファイルの形と版は
-  変えない」を置き換える）
+  変えない」を置き換える。単位の書き方は ADR-0081 が決める）
 
 結果ファイルは `input` という名前で入力エコーを持ち、トップレベルの `frequency_unit` /
 `coupling_convention` と `modes` の配列という、版 3 の入力ファイルと同じ形をしていた。
@@ -21,20 +21,26 @@
 
 ```json
 "conditions": {
-  "modes": [{ "frequency": 1200.0, "huang_rhys": 0.25 }],
+  "modes": {
+    "frequency_unit": "cm^-1",
+    "rows": [{ "frequency": 1200.0, "huang_rhys": 0.25 }]
+  },
   "temperature": 300.0,
-  "broadening": { "sigma": 150.0 },
-  "grid": { "e_min": -4000.0, "e_max": 1000.0, "de": 5.0, "n_fft": 2048 }
+  "broadening": { "sigma": [150.0, "cm^-1"] },
+  "grid": {
+    "e_min": [-4000.0, "cm^-1"], "e_max": [1000.0, "cm^-1"],
+    "de": [5.0, "cm^-1"], "n_fft": 2048
+  }
 }
 ```
 
 ## 決まりごと
 
 - モードは `frequency` と `huang_rhys` で書く。S をキーの名前で持つので、流儀の欄は
-  要らない。振動数を含むエネルギーはヘッダの `energy_unit`（`cm^-1`）で書く。
-- `conditions` には単位・流儀・既定の単位の欄を置かない。入力ファイルにしかない語彙
-  （`coupling_convention` / `frequency_unit` / `coupling_unit` / `rows` / `csv` /
-  `grid.points` など）は持ち込まない。
+  要らない。単位は入力ファイルと同じ書き方で値や表に添える（ADR-0081）。
+- `conditions` には流儀の欄や、入力の読み方だけに関わる語彙（`coupling_convention` /
+  `coupling_unit` / `csv` / `grid.points` など）を持ち込まない。単位の書き方は入力と共有
+  するが、それはプログラム全体で 1 つの書き方を使うためで、入力の形を写すためではない。
 - `grid` は入力の指定（`grid.points`）ではなく、解決済みの全域グリッド
   （`de` / `n_fft`、ADR-0070）を書く。
 - `run` の結果は `temperature` / `broadening` / `grid`、`lines` の結果は `temperature` /

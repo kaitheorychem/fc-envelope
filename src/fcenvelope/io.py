@@ -77,9 +77,19 @@ LINES_KIND = "fcenvelope.fc_lines"
 SCHEMA_VERSION = 4
 
 #: 結果ファイルの形式の知識。計算側は常に cm^-1 しか扱わないので、単位は結果クラス
-#: ではなく io が持つ（ADR-0047）。モードの振動数も `energy_unit` で書く。
+#: ではなく io が持つ（ADR-0047）。有次元の値は `[値, "単位"]` の組、表の列は表の
+#: ブロックの `<列名>_unit` で単位を書く（入力ファイルと同じ書き方、ADR-0081）。
+#: 読み込みはこの単位だけを受け、ほかの単位は `UnsupportedUnitError` で止める。
 CANONICAL_ENERGY_UNIT = "cm^-1"
 CANONICAL_DENSITY_UNIT = "1/cm^-1"
+CANONICAL_TAU_UNIT = "cm"
+
+#: 単位を持つ診断値。ここにないものは無次元（点数・割合・比・真偽）で、素の数で書く。
+_DIAGNOSTIC_UNITS: dict[str, str] = {
+    "d_tau": CANONICAL_TAU_UNIT,
+    "tau_max": CANONICAL_TAU_UNIT,
+    "mean_energy": CANONICAL_ENERGY_UNIT,
+}
 
 #: 診断値の型 -> JSON からの変換。dataclass の型注釈から引く。受け取るのは検証前の
 #: JSON の値なので入力側だけが `JsonValue` で、返すのは診断値の型そのものである。
@@ -107,10 +117,10 @@ def _diagnostic_readers(
 
 
 def _diagnostics_to_dict(diagnostics: AnyDiagnostics) -> JsonObject:
-    """診断値を JSON の構造へ写す。"""
+    """診断値を JSON の構造へ写す。単位を持つものは組にする。"""
     return {
         **{
-            name: getattr(diagnostics, name)
+            name: _with_unit(getattr(diagnostics, name), _DIAGNOSTIC_UNITS.get(name))
             for name in _diagnostic_readers(type(diagnostics))
         },
         "messages": list(diagnostics.messages),
@@ -120,15 +130,16 @@ def _diagnostics_to_dict(diagnostics: AnyDiagnostics) -> JsonObject:
 def _diagnostics_from_dict(cls: type[_D], data: JsonValue) -> _D:
     """JSON の構造から診断値を復元する。渡した型のインスタンスが返る。"""
     if not isinstance(data, dict):
-        raise InvalidInputError(
-            f"'diagnostics' must be a JSON object, got {type(data).__name__}"
-        )
+        raise InvalidInputError(f"'diagnostics' must be a JSON object, got {type(data).__name__}")
     # フィールドと型の対応は dataclass から実行時に導くので（ADR-0036）、下の
     # 展開は型検査では追えない。取り違えは `_diagnostic_readers` が見ている。
     values: dict[str, JsonValue]
     try:
         values = {
-            name: read(data[name]) for name, read in _diagnostic_readers(cls).items()
+            name: read(
+                _without_unit(data[name], _DIAGNOSTIC_UNITS.get(name), f"diagnostics.{name}")
+            )
+            for name, read in _diagnostic_readers(cls).items()
         }
     except KeyError as exc:
         raise InvalidInputError(f"missing diagnostics field {exc.args[0]!r}") from exc
@@ -170,17 +181,19 @@ def envelope_to_dict(result: EnvelopeResult) -> JsonObject:
         "conditions": {
             **_system_to_dict(result.system),
             "temperature": result.temperature,
-            "broadening": {"sigma": result.broadening.sigma},
+            "broadening": {"sigma": _with_unit(result.broadening.sigma, CANONICAL_ENERGY_UNIT)},
             "grid": {
-                "e_min": result.grid.e_min,
-                "e_max": result.grid.e_max,
-                "de": result.grid.de,
+                "e_min": _with_unit(result.grid.e_min, CANONICAL_ENERGY_UNIT),
+                "e_max": _with_unit(result.grid.e_max, CANONICAL_ENERGY_UNIT),
+                "de": _with_unit(result.grid.de, CANONICAL_ENERGY_UNIT),
                 "n_fft": result.grid.n_fft,
             },
         },
         "derived": _derived_to_dict(result.system),
         "diagnostics": _diagnostics_to_dict(result.diagnostics),
         "spectrum": {
+            "energy_unit": CANONICAL_ENERGY_UNIT,
+            "density_unit": CANONICAL_DENSITY_UNIT,
             "energy": result.energy.tolist(),
             "density": result.density.tolist(),
         },
@@ -214,12 +227,55 @@ def _require(data: JsonValue, key: str, path: str) -> JsonValue:
 
 
 def _require_float(data: JsonValue, key: str, path: str) -> float:
-    value = _require(data, key, path)
+    return _as_float(_require(data, key, path), path)
+
+
+def _as_float(value: JsonValue, path: str) -> float:
     # JSON の true / false は Python では int なので、明示的に弾く。数のつもりで
     # 真偽値を書いたファイルを 1.0 として黙って受けたくない（`_require_int` も同じ）。
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidInputError(f"{path!r} must be a number (got {value!r})")
     return float(value)
+
+
+def _with_unit(value: object, unit: str | None) -> JsonValue:
+    """有次元の値を `[値, "単位"]` の組にする。無次元（`unit` が None）なら素の値のまま。"""
+    return value if unit is None else [value, unit]  # type: ignore[return-value]
+
+
+def _check_unit(written: JsonValue, unit: str, path: str) -> None:
+    if written != unit:
+        raise UnsupportedUnitError(
+            f"{path!r}: unsupported unit {written!r} (only {unit!r} is supported)"
+        )
+
+
+def _without_unit(value: JsonValue, unit: str | None, path: str) -> JsonValue:
+    """`[値, "単位"]` の組から、単位を確かめて値を取り出す。無次元なら素の値のまま。"""
+    if unit is None:
+        return value
+    if not isinstance(value, list) or len(value) != 2:
+        raise InvalidInputError(f'{path!r} must be a [value, "unit"] pair (got {value!r})')
+    _check_unit(value[1], unit, path)
+    return value[0]
+
+
+def _require_quantity(data: JsonValue, key: str, path: str, unit: str) -> float:
+    """`[値, "単位"]` の組で書かれた有次元の値を読む。"""
+    return _as_float(_without_unit(_require(data, key, path), unit, path), path)
+
+
+def _require_column_unit(table: JsonValue, column: str, path: str, unit: str) -> None:
+    """表のブロックに書かれた列の単位（`<列名>_unit`）を確かめる。"""
+    key = f"{column}_unit"
+    _check_unit(_require(table, key, f"{path}.{key}"), unit, f"{path}.{key}")
+
+
+def _require_rows(table: JsonValue, path: str) -> list[JsonValue]:
+    rows = _require(table, "rows", f"{path}.rows")
+    if not isinstance(rows, list):
+        raise InvalidInputError(f"{path}.rows must be a list, got {type(rows).__name__}")
+    return rows
 
 
 def _require_int(data: JsonValue, key: str, path: str) -> int:
@@ -263,7 +319,6 @@ def _header_to_dict(kind: str, provenance: Provenance) -> JsonObject:
         "kind": kind,
         "fcenvelope_version": provenance.fcenvelope_version,
         "created_at": _format_timestamp(provenance.created_at),
-        **RESULT_KINDS[kind].units,
     }
 
 
@@ -281,29 +336,28 @@ def _check_header(data: JsonValue, kind: str) -> None:
     found = data.get("kind")
     if found != kind:
         raise InvalidInputError(f"unexpected kind {found!r} (expected {kind!r})")
-    for key, canonical in RESULT_KINDS[kind].units.items():
-        unit = data.get(key, canonical)
-        if unit != canonical:
-            raise UnsupportedUnitError(
-                f"unsupported {key} {unit!r} (only {canonical!r} is supported)"
-            )
 
 
 def _system_to_dict(system: VibrationalSystem) -> JsonObject:
     """系を計算条件の構造へ写す。結果ファイル側の固定の形で、入力ファイルの形には
-    合わせない（ADR-0080）。単位はヘッダの `energy_unit` に従い、coupling は
-    キー名どおり Huang-Rhys 因子 S である。"""
+    合わせない（ADR-0080）。モード表の列の単位は表のブロックに書き、coupling は
+    キー名どおり Huang-Rhys 因子 S である（無次元）。"""
     return {
-        "modes": [
-            {"frequency": mode.frequency, "huang_rhys": mode.huang_rhys}
-            for mode in system.modes
-        ],
+        "modes": {
+            "frequency_unit": CANONICAL_ENERGY_UNIT,
+            "rows": [
+                {"frequency": mode.frequency, "huang_rhys": mode.huang_rhys}
+                for mode in system.modes
+            ],
+        },
     }
 
 
 def _derived_to_dict(system: VibrationalSystem) -> JsonObject:
     """系から導かれる量。結果クラスは持たず、io が書き出す（ADR-0047）。"""
-    return {"reorganization_energy": system.reorganization_energy}
+    return {
+        "reorganization_energy": _with_unit(system.reorganization_energy, CANONICAL_ENERGY_UNIT)
+    }
 
 
 def _provenance_from_dict(data: JsonValue) -> Provenance:
@@ -314,22 +368,17 @@ def _provenance_from_dict(data: JsonValue) -> Provenance:
 
 
 def _system_from_conditions(conditions: JsonValue) -> VibrationalSystem:
-    """計算条件のモードから系を組み立てる。"""
-    return _build(
-        VibrationalSystem, "conditions.modes", modes=_modes_from_conditions(conditions)
-    )
+    """計算条件のモード表から系を組み立てる。"""
+    return _build(VibrationalSystem, "conditions.modes", modes=_modes_from_conditions(conditions))
 
 
 def _modes_from_conditions(conditions: JsonValue) -> tuple[VibrationalMode, ...]:
-    """計算条件の各モードを値の型にする。"""
-    specs = _require(conditions, "modes", "conditions.modes")
-    if not isinstance(specs, list):
-        raise InvalidInputError(
-            f"conditions.modes must be a list, got {type(specs).__name__}"
-        )
+    """計算条件のモード表の各行を値の型にする。"""
+    table = _require(conditions, "modes", "conditions.modes")
+    _require_column_unit(table, "frequency", "conditions.modes", CANONICAL_ENERGY_UNIT)
     modes: list[VibrationalMode] = []
-    for index, spec in enumerate(specs):
-        location = f"conditions.modes[{index}]"
+    for index, spec in enumerate(_require_rows(table, "conditions.modes")):
+        location = f"conditions.modes.rows[{index}]"
         modes.append(
             _build(
                 VibrationalMode,
@@ -351,29 +400,37 @@ def envelope_from_dict(data: JsonValue) -> EnvelopeResult:
     broadening = _build(
         Broadening,
         "conditions.broadening",
-        sigma=_require_float(broadening_conditions, "sigma", "conditions.broadening.sigma"),
+        sigma=_require_quantity(
+            broadening_conditions,
+            "sigma",
+            "conditions.broadening.sigma",
+            CANONICAL_ENERGY_UNIT,
+        ),
     )
     grid_conditions = _require(conditions, "grid", "conditions.grid")
     grid = _build(
         EnergyGrid,
         "conditions.grid",
-        e_min=_require_float(grid_conditions, "e_min", "conditions.grid.e_min"),
-        e_max=_require_float(grid_conditions, "e_max", "conditions.grid.e_max"),
-        de=_require_float(grid_conditions, "de", "conditions.grid.de"),
+        e_min=_require_quantity(
+            grid_conditions, "e_min", "conditions.grid.e_min", CANONICAL_ENERGY_UNIT
+        ),
+        e_max=_require_quantity(
+            grid_conditions, "e_max", "conditions.grid.e_max", CANONICAL_ENERGY_UNIT
+        ),
+        de=_require_quantity(grid_conditions, "de", "conditions.grid.de", CANONICAL_ENERGY_UNIT),
         n_fft=_require_int(grid_conditions, "n_fft", "conditions.grid.n_fft"),
     )
 
-    diagnostics = _diagnostics_from_dict(
-        Diagnostics, _require(data, "diagnostics", "diagnostics")
-    )
+    diagnostics = _diagnostics_from_dict(Diagnostics, _require(data, "diagnostics", "diagnostics"))
 
     spectrum = _require(data, "spectrum", "spectrum")
+    _require_column_unit(spectrum, "energy", "spectrum", CANONICAL_ENERGY_UNIT)
+    _require_column_unit(spectrum, "density", "spectrum", CANONICAL_DENSITY_UNIT)
     energy = _float_array(_require(spectrum, "energy", "spectrum.energy"), "spectrum.energy")
     density = _float_array(_require(spectrum, "density", "spectrum.density"), "spectrum.density")
     if energy.shape != density.shape:
         raise InvalidInputError(
-            f"spectrum.energy and spectrum.density length mismatch: "
-            f"{energy.size} vs {density.size}"
+            f"spectrum.energy and spectrum.density length mismatch: {energy.size} vs {density.size}"
         )
 
     # `derived` は系から一意に決まる控えなので読み飛ばす（ADR-0047）。
@@ -423,22 +480,25 @@ def lines_to_dict(result: LinesResult) -> JsonObject:
         },
         "derived": _derived_to_dict(result.system),
         "diagnostics": _diagnostics_to_dict(result.diagnostics),
-        "lines": [
-            {
-                "energy": line.energy,
-                "fc_factor": line.fc_factor,
-                "weight": line.weight,
-                "transitions": [
-                    {
-                        "mode": transition.mode_index,
-                        "initial": transition.initial,
-                        "final": transition.final,
-                    }
-                    for transition in line.transitions
-                ],
-            }
-            for line in result.lines
-        ],
+        "lines": {
+            "energy_unit": CANONICAL_ENERGY_UNIT,
+            "rows": [
+                {
+                    "energy": line.energy,
+                    "fc_factor": line.fc_factor,
+                    "weight": line.weight,
+                    "transitions": [
+                        {
+                            "mode": transition.mode_index,
+                            "initial": transition.initial,
+                            "final": transition.final,
+                        }
+                        for transition in line.transitions
+                    ],
+                }
+                for line in result.lines
+            ],
+        },
     }
 
 
@@ -449,7 +509,7 @@ def save_lines(result: LinesResult, path: str | Path) -> None:
 
 def _parse_transitions(data: JsonValue, index: int) -> tuple[ModeTransition, ...]:
     if not isinstance(data, list):
-        raise InvalidInputError(f"lines[{index}].transitions must be a list")
+        raise InvalidInputError(f"lines.rows[{index}].transitions must be a list")
     try:
         return tuple(
             ModeTransition(
@@ -460,7 +520,7 @@ def _parse_transitions(data: JsonValue, index: int) -> tuple[ModeTransition, ...
             for item in data
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise InvalidInputError(f"lines[{index}]: malformed transition: {exc}") from exc
+        raise InvalidInputError(f"lines.rows[{index}]: malformed transition: {exc}") from exc
 
 
 def lines_from_dict(data: JsonValue) -> LinesResult:
@@ -478,15 +538,15 @@ def lines_from_dict(data: JsonValue) -> LinesResult:
     selection = _build(
         Selection,
         "conditions.selection",
-        min_weight=_require_float(selection_conditions, "min_weight", "conditions.selection.min_weight"),
-        max_lines=_require_int(
-            selection_conditions, "max_lines", "conditions.selection.max_lines"
+        min_weight=_require_float(
+            selection_conditions, "min_weight", "conditions.selection.min_weight"
         ),
+        max_lines=_require_int(selection_conditions, "max_lines", "conditions.selection.max_lines"),
         max_quanta=_optional_int(selection_conditions.get("max_quanta")),
     )
-    lines_data = _require(data, "lines", "lines")
-    if not isinstance(lines_data, list):
-        raise InvalidInputError(f"lines must be a list, got {type(lines_data).__name__}")
+    lines_table = _require(data, "lines", "lines")
+    _require_column_unit(lines_table, "energy", "lines", CANONICAL_ENERGY_UNIT)
+    lines_data = _require_rows(lines_table, "lines")
     try:
         lines = tuple(
             FCLine(
@@ -531,9 +591,6 @@ class _ResultKind(Generic[_R]):
     result_type: type[_R]
     """対応する結果クラス。"""
 
-    units: dict[str, str]
-    """ファイルに書く単位のフィールド。読み込み時はこの値と突き合わせる。"""
-
     to_dict: Callable[[_R], JsonObject]
     """結果クラス -> JSON。"""
 
@@ -548,25 +605,18 @@ RESULT_KINDS: dict[str, _ResultKind[Any]] = {
     ENVELOPE_KIND: _ResultKind(
         kind=ENVELOPE_KIND,
         result_type=EnvelopeResult,
-        units={
-            "energy_unit": CANONICAL_ENERGY_UNIT,
-            "density_unit": CANONICAL_DENSITY_UNIT,
-        },
         to_dict=envelope_to_dict,
         from_dict=envelope_from_dict,
     ),
     LINES_KIND: _ResultKind(
         kind=LINES_KIND,
         result_type=LinesResult,
-        units={"energy_unit": CANONICAL_ENERGY_UNIT},
         to_dict=lines_to_dict,
         from_dict=lines_from_dict,
     ),
 }
 
-_KIND_BY_TYPE: dict[type, str] = {
-    spec.result_type: spec.kind for spec in RESULT_KINDS.values()
-}
+_KIND_BY_TYPE: dict[type, str] = {spec.result_type: spec.kind for spec in RESULT_KINDS.values()}
 
 
 def kind_for(result_type: type) -> str:

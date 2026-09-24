@@ -324,17 +324,21 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
   "kind": "fcenvelope.envelope",
   "fcenvelope_version": "0.1.0",
   "created_at": "2026-09-17T03:21:44Z",
-  "energy_unit": "cm^-1",
-  "density_unit": "1/cm^-1",
   "conditions": {
-    "modes": [{ "frequency": 1200.0, "huang_rhys": 0.25 }],
+    "modes": {
+      "frequency_unit": "cm^-1",
+      "rows": [{ "frequency": 1200.0, "huang_rhys": 0.25 }]
+    },
     "temperature": 300.0,
-    "broadening": { "sigma": 150.0 },
-    "grid": { "e_min": -4500.0, "e_max": 1000.0, "de": 4.0, "n_fft": 4096 }
+    "broadening": { "sigma": [150.0, "cm^-1"] },
+    "grid": {
+      "e_min": [-4500.0, "cm^-1"], "e_max": [1000.0, "cm^-1"],
+      "de": [4.0, "cm^-1"], "n_fft": 4096
+    }
   },
-  "derived": { "reorganization_energy": 300.0 },
+  "derived": { "reorganization_energy": [300.0, "cm^-1"] },
   "diagnostics": {
-    "n_fft": 4096, "d_tau": 3.83e-4, "tau_max": 0.785,
+    "n_fft": 4096, "d_tau": [3.83e-4, "cm"], "tau_max": [0.785, "cm"],
     "sigma_tau_max": 117.8, "total_area": 0.9999999998,
     "window_captured_fraction": 0.9993,
     "edge_intensity_ratio": 4.9e-9,
@@ -342,6 +346,8 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
     "messages": []
   },
   "spectrum": {
+    "energy_unit": "cm^-1",
+    "density_unit": "1/cm^-1",
     "energy": [-4500.0, -4496.0, "..."],
     "density": [4.6e-8, 4.4e-8, "..."]
   }
@@ -356,25 +362,37 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
   "kind": "fcenvelope.fc_lines",
   "fcenvelope_version": "0.1.0",
   "created_at": "2026-09-17T01:23:45Z",
-  "energy_unit": "cm^-1",
   "conditions": {
-    "modes": [{ "frequency": 1200.0, "huang_rhys": 0.25 }],
+    "modes": {
+      "frequency_unit": "cm^-1",
+      "rows": [{ "frequency": 1200.0, "huang_rhys": 0.25 }]
+    },
     "temperature": 300.0,
     "selection": { "min_weight": 0.0001, "max_lines": 10000, "max_quanta": null }
   },
-  "derived": { "reorganization_energy": 300.0 },
-  "diagnostics": { "n_lines": 58, "captured_weight": 0.997, "...": "..." },
-  "lines": [
-    { "energy": 0.0, "fc_factor": 0.41, "weight": 0.36, "transitions": [] },
-    { "energy": -450.0, "fc_factor": 0.26, "weight": 0.23,
-      "transitions": [{ "mode": 1, "initial": 0, "final": 1 }] }
-  ]
+  "derived": { "reorganization_energy": [300.0, "cm^-1"] },
+  "diagnostics": {
+    "n_lines": 58, "captured_weight": 0.997, "mean_energy": [-583.5, "cm^-1"], "...": "..."
+  },
+  "lines": {
+    "energy_unit": "cm^-1",
+    "rows": [
+      { "energy": 0.0, "fc_factor": 0.41, "weight": 0.36, "transitions": [] },
+      { "energy": -450.0, "fc_factor": 0.26, "weight": 0.23,
+        "transitions": [{ "mode": 1, "initial": 0, "final": 1 }] }
+    ]
+  }
 }
 ```
 
 どちらの出力も計算条件（`conditions`）は結果ファイル側の固定の形で、入力ファイルの形は
-写さない（ADR-0080）。モードは振動数（`energy_unit`）と Huang-Rhys 因子 S（`huang_rhys`）で
-書き、単位・流儀の欄は持たない。`grid` は解決済みの全域グリッドである。`derived` は系から一意に決まる控えなので、書き出しはするが読み込み
+写さない（ADR-0080）。モードは振動数と Huang-Rhys 因子 S（`huang_rhys`）で書き、流儀の欄は
+持たない。`grid` は解決済みの全域グリッドである。
+
+単位は入力ファイルと同じ書き方で書く（ADR-0081）。有次元の値 1 つは `[値, "単位"]` の組、
+表（`conditions.modes` / `spectrum` / `lines`）は表のブロックに `<列名>_unit` を書く。無次元の
+値と温度（K）は素の数である。書き出す単位は常に正準単位（`cm^-1`、密度 `1/cm^-1`、τ `cm`）で、
+読み込みはそれ以外の単位を `UnsupportedUnitError` で止める。`derived` は系から一意に決まる控えなので、書き出しはするが読み込み
 時は読み飛ばす（ADR-0047）。`load → save` でファイルは変化しない（ADR-0008）。
 
 結果ファイルの `schema_version` は 4 で、入力ファイルの版とは別に数える。入力の書き方が

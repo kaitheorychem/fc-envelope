@@ -836,7 +836,7 @@ MAGNIFY = 5.0        # overlay_plot.py の頭にある
 
 結果クラスが持つのは**計算で決まったものだけ**である。再配列エネルギー λ は系から一意に
 決まるので `result.system.reorganization_energy` から、単位はファイル形式の知識なので
-出力 JSON の `energy_unit` / `density_unit` から得る。λ は出力 JSON の `derived` にも
+出力 JSON の値に添えた単位（`[値, "単位"]`）や表の `energy_unit` などから読む。λ は出力 JSON の `derived` にも
 書き出されるが、読み込み時は読み飛ばして系から計算し直す。
 
 ## 数値品質の見方

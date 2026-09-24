@@ -138,9 +138,9 @@ def stick_heights(envelope: dict, lines: dict) -> list[float]:
     孤立した線では棒の先端が曲線の山に一致し、sigma の中に何本も密集するところでは
     曲線が棒より高くなる。線形状はエンベロープ側の条件から取る。
     """
-    sigma = envelope["conditions"]["broadening"]["sigma"]       # cm^-1
+    sigma = envelope["conditions"]["broadening"]["sigma"][0]    # [値, "cm^-1"]
     peak = 1.0 / (sigma * math.sqrt(2.0 * math.pi))
-    return [line["weight"] * peak * MAGNIFY / X_SCALE for line in lines["lines"]]
+    return [line["weight"] * peak * MAGNIFY / X_SCALE for line in lines["lines"]["rows"]]
 
 
 def check(envelope: dict, lines: dict) -> None:
@@ -155,10 +155,10 @@ def check(envelope: dict, lines: dict) -> None:
         )
 
     low, high = envelope["spectrum"]["energy"][0], envelope["spectrum"]["energy"][-1]
-    dropped = sum(1 for line in lines["lines"] if not low <= line["energy"] <= high)
+    dropped = sum(1 for line in lines["lines"]["rows"] if not low <= line["energy"] <= high)
     if dropped:
         print(
-            f"warning: {dropped} of {len(lines['lines'])} lines fall outside "
+            f"warning: {dropped} of {len(lines['lines']['rows'])} lines fall outside "
             f"the E window [{low:g}, {high:g}] cm^-1 and are not drawn",
             file=sys.stderr,
         )
@@ -175,7 +175,7 @@ def draw(ax, envelope: dict, lines: dict) -> None:
 
     ax.plot(energy, density, color=ENVELOPE_COLOR, linewidth=LINEWIDTH,
             label=ENVELOPE_LABEL, zorder=2.2)
-    ax.vlines([line["energy"] * X_SCALE for line in lines["lines"]], 0.0,
+    ax.vlines([line["energy"] * X_SCALE for line in lines["lines"]["rows"]], 0.0,
               stick_heights(envelope, lines), colors=LINES_COLOR,
               linewidth=LINEWIDTH, label=lines_label, zorder=2.1)
     ax.axvline(0.0, **GUIDE)             # E = 0 は ZPL
@@ -217,8 +217,8 @@ def main() -> None:
             "Source": f"{envelope_path.name} + {lines_path.name} "
                       f"({envelope['created_at']})",
             "Description": f"T = {envelope['conditions']['temperature']:g} K, "
-                           f"sigma = {envelope['conditions']['broadening']['sigma']:g} cm^-1, "
-                           f"{len(lines['lines'])} lines",
+                           f"sigma = {envelope['conditions']['broadening']['sigma'][0]:g} cm^-1, "
+                           f"{len(lines['lines']['rows'])} lines",
         })
         print(f"wrote {output}")
     if SHOW if SHOW is not None else sys.stdout.isatty():
