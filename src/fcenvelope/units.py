@@ -2,7 +2,12 @@
 
 エネルギーの正準単位は cm^-1 で、入力に現れる単位はすべてここへ換算される
 （ADR-0002, 0054）。換算係数の表は `ENERGY_UNITS`、引き当ては
-`energy_conversion_factor` にある。
+`ENERGY_UNIT_KIND.resolve`（と薄い `energy_conversion_factor`）にある。
+
+単位は**正式名**・**別名**・**倍率**の 3 つからなる（ADR-0076）。別名は
+入力ファイルでだけ使える書き方で、どの欄に書かれたか（単位の種類 `UnitKind`）で
+正式名が決まる。倍率は名前と組にして `[0.001, "eV"]` と書く正の数である（ADR-0078）。
+`resolve` は別名を正式名へ置き換えた**正式形**と、倍率を掛けた換算係数を返す。
 
 流儀は Enum と関数表ではなくオブジェクトにする（ADR-0033）。変換式・単位の有無・
 振動数への依存の仕方を、流儀自身が知っている必要があるためである。
@@ -10,24 +15,26 @@
 `docs/theory/vcc.md` の 5 流儀のうち、S への変換に振動数を要するのは V と lambda の
 2 つで、この 2 つだけが単位を持つ。
 
-| 流儀 | S への変換 | omega が要るか | coupling の次元 | 登録 |
+| 流儀 | S への変換 | omega が要るか | coupling の正準単位 | 登録 |
 |---|---|---|---|---|
 | g | S = g^2 | 不要 | 無次元 | 済 |
 | Delta | S = Delta^2 / 2 | 不要 | 無次元 | 済 |
 | huang_rhys | 恒等 | 不要 | 無次元 | 済 |
-| lambda | S = lambda / (h_bar omega) | 必要 | エネルギー^1 | 済 |
-| vcc (V) | S = V^2 / (2 h_bar omega^3) | 必要 | 未確定 | 保留 |
+| lambda | S = lambda / (h_bar omega) | 必要 | cm^-1 | 済 |
+| vcc (V) | S = V^2 / (2 h_bar omega^3) | 必要 | (cm^-1)^{3/2} | 済 |
 
-V の次元が energy^1.5 に見えるのは h_bar = 1 の単位系に限った話で、相手が
-eV/(A*sqrt(amu)) のような単位で出す場合は質量の次元が残る。`energy_power` が保証
-するのは lambda までである（ADR-0055）。
+coupling の単位の種類は流儀が持つ（`CouplingConvention.unit_kind`）。V を
+「エネルギーの 1.5 乗」というべき指数で持たないのは、`eV` のような実在しない V の
+単位まで受け付けてしまい、逆に質量を含む実在の単位は表せないからである（ADR-0077）。
 
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import math
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Final
 
 from scipy import constants
 
@@ -39,12 +46,23 @@ __all__ = [
     "DEFAULT_COUPLING_CONVENTION",
     "DELTA",
     "ENERGY_UNITS",
+    "ENERGY_UNIT_ALIASES",
+    "ENERGY_UNIT_KIND",
     "G",
     "HUANG_RHYS",
     "LAMBDA",
+    "UNIT_FORMS",
+    "UnitForm",
+    "VCC",
+    "VCC_UNIT",
+    "VCC_UNIT_KIND",
     "CouplingConvention",
+    "ResolvedUnit",
+    "UnitKind",
     "coupling_convention",
     "energy_conversion_factor",
+    "split_unit",
+    "unit_form",
 ]
 
 #: 内部で用いるエネルギーの単位。入力はここへ正準化される。振動数・sigma・グリッド・
@@ -71,19 +89,149 @@ ENERGY_UNITS: dict[str, float] = {
 }
 
 
+#: 単位の書き方。名前だけの `"eV"` か、倍率と名前の組 `(1e-3, "eV")` である
+#: （ADR-0078）。入力ファイルでは組は配列 `[0.001, "eV"]` として書かれ、検証を通った
+#: 後はタプルで持つ。
+UnitForm = str | tuple[float, str]
+
+#: 受け付ける単位の書き方。誤りの報告にそのまま載せる（ADR-0078）。
+UNIT_FORMS: Final = '"<name>" or [<scale>, "<name>"]'
+
+
+def _split(written: object) -> tuple[float | None, str]:
+    """単位を (倍率, 名前) に分ける。書き方の誤りは `ValueError`。
+
+    倍率は文字列から読むのではなく、配列の要素として書かれた数をそのまま使う
+    （ADR-0078）。名前の字面はそのまま名前として扱い、空白で区切ったりはしない。
+    """
+    if isinstance(written, str):
+        return None, written
+    if not isinstance(written, list | tuple) or len(written) != 2:
+        raise ValueError("a unit must be a name or a [scale, name] pair")
+    scale, name = written
+    if isinstance(scale, bool) or not isinstance(scale, int | float):
+        raise ValueError(f"the scale {scale!r} is not a number")
+    if not (scale > 0.0 and math.isfinite(scale)):
+        raise ValueError(f"the scale {scale!r} must be a positive finite number")
+    if not isinstance(name, str):
+        raise ValueError(f"the unit name {name!r} is not a string")
+    return float(scale), name
+
+
+def split_unit(written: object) -> tuple[float | None, str]:
+    """単位を (倍率, 名前) に分ける（ADR-0078）。
+
+    単位の種類に依存しない**書き方だけ**の検査である。名前が既知かどうかは見ない。
+    流儀が分かる前の coupling の欄が、これで書き方だけを確かめる。
+
+    受け付けるのは名前だけの文字列か、`[倍率, 名前]` の組である。倍率は正の有限な
+    数でなければならない。
+    """
+    try:
+        return _split(written)
+    except ValueError as exc:
+        raise UnsupportedUnitError(
+            f"malformed unit {written!r}: {exc} (write {UNIT_FORMS})"
+        ) from exc
+
+
+def unit_form(scale: float | None, name: str) -> UnitForm:
+    """倍率と名前から単位の書き方を作る。倍率が無ければ名前だけになる。"""
+    return name if scale is None else (scale, name)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedUnit:
+    """`UnitKind.resolve` の結果。"""
+
+    form: UnitForm
+    """正式形。別名を正式名に置き換え、倍率はそのまま残したもの。"""
+
+    factor: float
+    """値に掛けると正準単位になる係数。倍率 × 正式名の係数である。"""
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class UnitKind:
+    """単位の種類。その欄の値がどの次元の量かの区別（ADR-0076）。
+
+    正式名の表と別名の表を持つ。同じ別名（`a.u.`）でも、種類が違えば違う正式名を
+    指す。インスタンスはモジュールに 1 つずつ置く定数なので、等しさは同一性で見る。
+    """
+
+    name: str
+    """誤りの報告に使う名前。"""
+
+    factors: Mapping[str, float]
+    """正式名 -> 正準単位への係数。"""
+
+    aliases: Mapping[str, str]
+    """別名 -> 正式名。入力ファイルでだけ使える。"""
+
+    def _describe(self) -> str:
+        known = ", ".join(self.factors)
+        aliases = ", ".join(f"{alias} = {name}" for alias, name in self.aliases.items())
+        return (
+            f"known units: {known}"
+            + (f"; aliases: {aliases}" if aliases else "")
+            + f"; write {UNIT_FORMS}"
+        )
+
+    def resolve(self, written: object) -> ResolvedUnit:
+        """書かれた単位を正式形と換算係数にする。
+
+        受けるのは検証前のファイルの値なので `object` で取る。書き方の誤りと未知の
+        名前は、どちらも `UnsupportedUnitError` として同じ形で報告する。
+        正式形を渡せば同じ正式形が返る（冪等）。
+        """
+        try:
+            scale, name = _split(written)
+        except ValueError as exc:
+            raise UnsupportedUnitError(
+                f"unsupported {self.name} unit {written!r}: {exc} ({self._describe()})"
+            ) from exc
+        formal = self.aliases.get(name, name)
+        if formal not in self.factors:
+            raise UnsupportedUnitError(
+                f"unsupported {self.name} unit {written!r} ({self._describe()})"
+            )
+        factor = self.factors[formal]
+        if scale is not None:
+            factor *= scale
+        return ResolvedUnit(form=unit_form(scale, formal), factor=factor)
+
+
+#: 別名 -> エネルギーの単位の正式名。入力ファイルでだけ使える（ADR-0076）。
+ENERGY_UNIT_ALIASES: dict[str, str] = {
+    "a.u.": "hartree",
+}
+
+#: エネルギーの単位の種類。振動数・sigma・グリッドと、流儀 lambda の coupling の欄。
+ENERGY_UNIT_KIND = UnitKind(
+    name="energy", factors=ENERGY_UNITS, aliases=ENERGY_UNIT_ALIASES
+)
+
+
 def energy_conversion_factor(unit: object) -> float:
     """エネルギーの単位から cm^-1 への換算係数を引く。
 
-    受けるのは検証前のファイルの値なので `object` で取る。ハッシュできない値
-    （辞書やリスト）も、`TypeError` ではなく他の未知の単位と同じ形で報告する。
+    `ENERGY_UNIT_KIND.resolve(unit).factor` の薄い包みで、別名も倍率も受ける。
     """
-    try:
-        return ENERGY_UNITS[unit]  # type: ignore[index]
-    except (KeyError, TypeError) as exc:
-        known = ", ".join(ENERGY_UNITS)
-        raise UnsupportedUnitError(
-            f"unsupported energy unit {unit!r} (known units: {known})"
-        ) from exc
+    return ENERGY_UNIT_KIND.resolve(unit).factor
+
+
+#: 振電相互作用定数 V の正式名（ADR-0077）。質量重み付き基準座標 Q = sqrt(m) x に
+#: ついての dE/dQ で、質量は電子の質量で測る。
+VCC_UNIT = "hartree/(bohr*sqrt(m_e))"
+
+#: 振電相互作用定数 V の単位の種類。正準単位は (cm^-1)^{3/2} である。
+VCC_UNIT_KIND = UnitKind(
+    name="vibronic coupling constant",
+    # 原子単位では E_h = h_bar^2 / (m_e a_0^2) なので 1 E_h/(a_0 sqrt(m_e)) =
+    # E_h^{3/2} h_bar^{-1/2}。h_bar = 1 と置けば E_h を cm^-1 で表した数の 1.5 乗になる。
+    factors={VCC_UNIT: ENERGY_UNITS["hartree"] ** 1.5},
+    aliases={"a.u.": VCC_UNIT},
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,16 +241,16 @@ class CouplingConvention:
     name: str
     """入力ファイルの `coupling_convention` に書く名前。"""
 
-    energy_power: float | None
-    """coupling の次元を「エネルギーの何乗か」で表したもの。None なら無次元。
+    unit_kind: UnitKind | None
+    """coupling の単位の種類。None なら無次元。
 
-    g / Delta / huang_rhys は None、lambda は 1.0。V は保留で、単一のべき指数で
-    表せるかどうかも未確定である（ADR-0055）。
+    g / Delta / huang_rhys は None、lambda はエネルギー（`ENERGY_UNIT_KIND`）、vcc は
+    振電相互作用定数（`VCC_UNIT_KIND`）である（ADR-0076, 0077）。
 
     coupling と frequency の単位が揃うことは前提にできない（ADR-0053）。frequency は
     ほぼ常に cm^-1 である一方、coupling の単位は値を出した相手プログラムの都合で
     決まるためである。したがって両者はそれぞれの単位から別々に正準単位へ直してから
-    変換式に入る。`energy_power` はそのとき coupling の換算係数に乗せるべきである。
+    変換式に入る。
     """
 
     converter: Callable[[float, float], float]
@@ -111,7 +259,7 @@ class CouplingConvention:
     @property
     def is_dimensionless(self) -> bool:
         """単位を持たない流儀か。"""
-        return self.energy_power is None
+        return self.unit_kind is None
 
     def to_huang_rhys(self, coupling: float, frequency: float) -> float:
         """coupling を Huang-Rhys 因子 S に変換する。
@@ -121,11 +269,11 @@ class CouplingConvention:
         """
         return self.converter(coupling, frequency)
 
-    def check_coupling_unit(self, unit: str | None) -> None:
+    def check_coupling_unit(self, unit: UnitForm | None) -> None:
         """coupling に添えられた単位が、この流儀にとって妥当かを検査する。
 
         無次元の流儀に単位を添えるのは誤りであり、単位を持つ流儀では単位が要る。
-        今の入力フォーマットは coupling の単位を持たないので `None` が渡る。
+        `None` は単位が書かれていないことを表す。
         """
         if self.is_dimensionless:
             if unit is not None:
@@ -135,53 +283,65 @@ class CouplingConvention:
                 )
             return
         if unit is None:
+            assert self.unit_kind is not None  # is_dimensionless で分けた
             raise UnsupportedUnitError(
                 f"coupling_convention {self.name!r} carries units "
-                f"(energy^{self.energy_power:g}); a coupling unit must be given"
+                f"({self.unit_kind.name}); a coupling unit must be given"
             )
 
-    def coupling_to_canonical(self, unit: str | None) -> float:
+    def coupling_to_canonical(self, unit: UnitForm | None) -> float:
         """coupling に掛けると正準単位になる係数。単位の妥当性もここで検査する。
 
-        無次元の流儀では 1 である。有次元の流儀では、エネルギーの換算係数を
-        `energy_power` 乗する。coupling の次元はエネルギーの整数乗とは限らないので
-        （V は energy^1.5）、係数そのものではなくべきを取ったものが要る。
+        無次元の流儀では 1 である。有次元の流儀では、流儀の単位の種類で単位を
+        引き当てた係数（倍率込み）である。
 
         係数を引くことと単位を検査することは分けられない。妥当でない単位に対して
         返せる係数がないためで、呼び出し側はこれ 1 つを呼べばよい。
         """
         self.check_coupling_unit(unit)
-        power = self.energy_power
-        if power is None or unit is None:
+        if self.unit_kind is None or unit is None:
             return 1.0
-        return energy_conversion_factor(unit) ** power
+        return self.unit_kind.resolve(unit).factor
 
 
-G = CouplingConvention(name="g", energy_power=None, converter=lambda g, _: g * g)
+G = CouplingConvention(name="g", unit_kind=None, converter=lambda g, _: g * g)
 """無次元化振電相互作用定数。S = g^2。g の符号は S に効かない（ADR-0003）。"""
 
 DELTA = CouplingConvention(
-    name="delta", energy_power=None, converter=lambda d, _: 0.5 * d * d
+    name="delta", unit_kind=None, converter=lambda d, _: 0.5 * d * d
 )
 """無次元変位。S = Delta^2 / 2。g とは Delta = sqrt(2) g の関係にある。"""
 
 HUANG_RHYS = CouplingConvention(
-    name="huang_rhys", energy_power=None, converter=lambda s, _: s
+    name="huang_rhys", unit_kind=None, converter=lambda s, _: s
 )
 """正準量そのもの。変換は恒等。"""
 
 LAMBDA = CouplingConvention(
-    name="lambda", energy_power=1.0, converter=lambda value, freq: value / freq
+    name="lambda",
+    unit_kind=ENERGY_UNIT_KIND,
+    converter=lambda value, freq: value / freq,
 )
-"""再配列エネルギー。S = lambda / eps。次元は energy^1 で確定している。
+"""再配列エネルギー。S = lambda / eps。単位はエネルギーの単位である。
 
 coupling も frequency もそれぞれの単位から正準単位へ直したうえで渡るので、この式は
 どちらも cm^-1 として割ればよい（ADR-0053, 0054）。
 """
 
+VCC = CouplingConvention(
+    name="vcc",
+    unit_kind=VCC_UNIT_KIND,
+    converter=lambda v, eps: v * v / (2.0 * eps**3),
+)
+"""振電相互作用定数。S = V^2 / (2 eps^3)。V の符号は S に効かない（ADR-0077）。
+
+V は正準単位 (cm^-1)^{3/2}、eps は cm^-1 で渡る。S は V^2 と eps^3 の比なので、
+エネルギーの単位をそろえてさえいれば単位系によらない。
+"""
+
 #: 名前 -> 流儀。流儀の追加は 1 エントリの追加で済む。
 COUPLING_CONVENTIONS: dict[str, CouplingConvention] = {
-    convention.name: convention for convention in (G, DELTA, HUANG_RHYS, LAMBDA)
+    convention.name: convention for convention in (G, DELTA, HUANG_RHYS, LAMBDA, VCC)
 }
 
 #: 入力ファイルで `coupling_convention` を省略したときの流儀。

@@ -1,5 +1,6 @@
 # fcenvelope の入力ファイルの雛形。1 項目 1 行のコメントは何を設定する数かだけを言う。
 # 書き方の決まりごとは docs/readme/usage.md にある。
+# 単位には別名 "a.u." や倍率の組 [1e-3, "eV"] も書ける。値に添えるなら [18.6, 1e-3, "eV"]。
 #   uv run fcenvelope run input.toml     # エンベロープ F(E)
 #   uv run fcenvelope lines input.toml   # 離散 FC 因子の一覧
 #
@@ -8,8 +9,8 @@
 
 schema_version = 3          # 入力ファイルの版。3 固定
 frequency_unit = "cm^-1"    # modes[].frequency の既定の単位
-coupling_convention = "g"   # coupling の流儀。g / delta / huang_rhys / lambda
-# coupling_unit = "cm^-1"   # 有次元の流儀（lambda）のときだけ書く
+coupling_convention = "g"   # coupling の流儀。g / delta / huang_rhys / lambda / vcc
+# coupling_unit = "cm^-1"   # 有次元の流儀（lambda / vcc）のときだけ書く
 temperature = 300.0         # 温度 T [K]。0 でもよい
 
 # 1 モード = 1 つの [[modes]]。並び順は結果に効かない。

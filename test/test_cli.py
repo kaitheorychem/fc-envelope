@@ -926,3 +926,41 @@ def test_an_override_may_carry_its_own_unit(tmp_path, input_payload):
 
     assert invocation.exit_code == 0, invocation.output
     assert load_envelope(output).broadening.sigma == pytest.approx(300.0, rel=1e-12)
+
+
+def test_an_override_may_use_an_alias(tmp_path, input_payload):
+    """上書きの値の単位にも別名 `a.u.` が使えること（ADR-0076）。"""
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+    in_au = 300.0 / units.energy_conversion_factor("hartree")
+
+    output = tmp_path / "result.json"
+    invocation = runner.invoke(
+        app,
+        [
+            "run", str(path), "-o", str(output),
+            "--override", f'broadening.sigma=[{in_au}, "a.u."]',
+        ],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert load_envelope(output).broadening.sigma == pytest.approx(300.0, rel=1e-12)
+
+
+def test_an_override_may_carry_a_scale(tmp_path, input_payload):
+    """上書きの値にも `[値, 倍率, "単位"]` を渡せること（ADR-0078）。"""
+    path = tmp_path / "input.json"
+    path.write_text(json.dumps(input_payload), encoding="utf-8")
+    in_mev = 300.0 / units.energy_conversion_factor("eV") * 1e3
+
+    output = tmp_path / "result.json"
+    invocation = runner.invoke(
+        app,
+        [
+            "run", str(path), "-o", str(output),
+            "--override", f'broadening.sigma=[{in_mev}, 0.001, "eV"]',
+        ],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert load_envelope(output).broadening.sigma == pytest.approx(300.0, rel=1e-12)
