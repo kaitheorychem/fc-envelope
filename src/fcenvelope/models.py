@@ -47,7 +47,7 @@ def validate_temperature(temperature: float) -> float:
 
 
 def validate_frequency(frequency: float) -> float:
-    """振動数 eps [cm^-1] の不変条件 eps > 0 を検証して返す。
+    """振動数 omega [cm^-1] の不変条件 omega > 0 を検証して返す。
 
     `VibrationalMode` の検査はこれを使う。入力の正準化も、振動数で割る流儀の変換式
     （lambda / vcc）を呼ぶ前にこれを呼ぶ（ADR-0077）。そうしないと 0 の振動数が
@@ -63,7 +63,7 @@ class VibrationalMode:
     """基底状態の調和ポテンシャルにおける 1 つの基準振動。正準形。"""
 
     frequency: float
-    """epsilon_alpha [cm^-1]。"""
+    """omega_alpha [cm^-1]。"""
 
     huang_rhys: float
     """S_alpha（無次元）。"""
@@ -113,7 +113,7 @@ class VibrationalSystem:
 
     @property
     def reorganization_energy(self) -> float:
-        """再配列エネルギー lambda = sum_alpha S_alpha * eps_alpha [cm^-1]。
+        """再配列エネルギー lambda = sum_alpha S_alpha * omega_alpha [cm^-1]。
 
         系から一意に決まるので結果クラスには持たせない（ADR-0047）。
         """

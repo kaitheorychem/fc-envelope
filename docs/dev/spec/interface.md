@@ -23,7 +23,7 @@
 | 密度の単位 | 1/cm⁻¹（∫F dE = 1） |
 | 重みの単位 | 無次元（全遷移にわたる総和 = 1） |
 | 重ね描きでの棒の高さ | w·L(0)、ガウス型なら w/(σ√(2π))。単位は密度と同じ 1/cm⁻¹ |
-| E 軸 | E = 0 が ZPL。k 量子生成のサイドバンドは E = −k·ε（負側） |
+| E 軸 | E = 0 が ZPL。k 量子生成のサイドバンドは E = −k·ω（負側） |
 
 単位は結果クラスではなく `io`（ファイル形式）と `plotting`（軸ラベル）が持つ（ADR-0047）。
 
@@ -63,6 +63,10 @@ save_lines(result: LinesResult, path: str | Path) -> None
 load_lines(path: str | Path) -> LinesResult
 plot_lines(result, *, ax=None, label=None, title=None) -> matplotlib.figure.Figure
 
+# 計算に使ったモード: 振動数 ω に g = sqrt(S)（height="S" なら S）の棒を立てる（ADR-0083）
+plot_modes(system: VibrationalSystem, *, height="g", ax=None, label=None,
+           title=None) -> matplotlib.figure.Figure
+
 # 理論式そのもの: FC_mn = |<m|U(sqrt(S))|n>|^2 を (m_max+1, n_max+1) で返す
 fc_factor_matrix(huang_rhys: float, m_max: int, n_max: int = 0) -> np.ndarray
 
@@ -86,6 +90,7 @@ emit.image_path_for(script: Path) -> Path       # result_plot.py -> fcenvelope-r
 emit.write_script(result, data: Path, script: Path, *, force=False) -> bool
 emit.write_overlay_script(envelope, envelope_path, lines, lines_path, script, *,
                           force=False) -> bool
+emit.write_modes_script(result, data: Path, script: Path, *, force=False) -> bool
 ```
 
 戻り値は「書いたかどうか」で、生成先が既にあれば書かずに `False` を返す（ADR-0060）。
@@ -267,7 +272,7 @@ max_lines = 10000
 | `modes.coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` \| `"vcc"` | coupling の列の流儀。既定 `"g"` |
 | `modes.frequency_unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | frequency の列の既定の単位。既定 `"cm^-1"` |
 | `modes.coupling_unit` | str \| [倍率, str] \| null | 流儀の単位の種類の正式名か別名。倍率は組で書く | coupling の列の既定の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
-| `modes.rows[].frequency` | 有次元 | > 0（正準化後） | ε_α。既定の単位は `modes.frequency_unit` |
+| `modes.rows[].frequency` | 有次元 | > 0（正準化後） | ω_α。既定の単位は `modes.frequency_unit` |
 | `modes.rows[].coupling` | 有次元 | 流儀による | 流儀に従った値。既定の単位は `modes.coupling_unit` |
 | `modes.csv` | object | キーは `path` と `columns` | 行を CSV から読む。パース時に `rows` へ差し替わる |
 | `modes.csv.path` | str | 空でない | CSV のパス。相対パスは入力ファイルのディレクトリ基準 |
@@ -415,7 +420,7 @@ fcenvelope lines INPUT.json [-o LINES.json] [--override KEY=VALUE]... [--top INT
                           [--script FILE | --no-script] [--force-script]
                           [--config FILE | --no-config] [--log FILE]
 
-fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--force] [--log FILE]
+fcenvelope script RESULT.json [LINES.json] -o PLOT.py [--modes] [--force] [--log FILE]
 
 fcenvelope template [-o INPUT.toml] [--force]
 
@@ -480,6 +485,8 @@ fcenvelope --version
 スペクトルのどちらかの雛形を選び、ファイルを 2 つ（エンベロープ 1 つと線リスト 1 つ、
 順序は任意）渡すと重ね描きの雛形になる（ADR-0030 の規則をそのまま引き継ぐ）。種類の
 組み合わせが違えば使用法エラー。壊したスクリプトを作り直す口でもある。
+`--modes` を付けると、結果 1 つ（種類は問わない）の `conditions.modes` を描く雛形になる
+（ADR-0083）。結果を 2 つ渡すと使用法エラー。この雛形は `run` / `lines` では書かれない。
 
 `--top N` は図ではなく結果の報告で、強い線を N 本まで端末に表として出す（旧 `--show`）。
 入力ファイルに書けないものはフラグのまま残る——`--top` / `--log` / `--script` /
@@ -493,7 +500,7 @@ fcenvelope --version
 ## 作図スクリプト
 
 生成物は `json` と `matplotlib` だけで動き、`fcenvelope` を import しない（ADR-0058）。
-雛形は `src/fcenvelope/templates/{envelope,lines,overlay}.py` にそのまま走る Python
+雛形は `src/fcenvelope/templates/{envelope,lines,overlay,modes}.py` にそのまま走る Python
 ファイルとして置いてあり、生成が差し替えるのは生成ヘッダの区画だけである（ADR-0059）。
 
 ```python
@@ -513,8 +520,9 @@ SCHEMA_VERSION = 2
 | `FIGSIZE` / `DPI` / `TITLE` / `XLIM` / `YLIM` / 色 | 図の体裁 |
 | `X_UNIT` / `X_SCALE` | 横軸の単位（ADR-0062） |
 | `MAGNIFY` | 重ね描きの棒の倍率（ADR-0028。凡例に出る） |
+| `Y` | 結合の図の縦軸。`"g"`（√S）か `"S"`（ADR-0083） |
 
-構造は 3 つの雛形で共通である。
+構造はすべての雛形で共通である。
 
 | 関数 | 役目 |
 |---|---|
@@ -525,7 +533,7 @@ SCHEMA_VERSION = 2
 | `show(fig)` | kitty graphics protocol で端末に出す |
 | `main()` | 読む → 描く → 画像と端末へ出す |
 
-`beside` / `load` / `terminal_pixel_width` / `show` は 3 つの雛形で同一で、食い違わない
+`beside` / `load` / `terminal_pixel_width` / `show` はすべての雛形で同一で、食い違わない
 ことを `test/test_emit.py` が確かめる。`image_for` は雛形ごとに違う（単独の図はデータ 1 つ、
 重ね描きはエンベロープを見る）ので共有部分には入らない。
 

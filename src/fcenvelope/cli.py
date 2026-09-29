@@ -478,13 +478,24 @@ def script(
         bool,
         typer.Option("--force", help="Overwrite an existing script."),
     ] = False,
+    modes: Annotated[
+        bool,
+        typer.Option(
+            "--modes",
+            help=(
+                "Draw the modes the result was computed from (g against the "
+                "frequency) instead of the spectrum. Takes one result of either kind."
+            ),
+        ),
+    ] = False,
     log: LogFile = None,
 ) -> None:
     """Write a plot script for stored results, then run it to draw the figure.
 
     One file draws either an envelope or a stick spectrum; the `kind` field decides.
     Two files -- one envelope result and one FC line list, in either order -- give a
-    script that draws both on one axes (ADR-0030).
+    script that draws both on one axes (ADR-0030). With `--modes`, one file of either
+    kind gives a script that draws the coupling of each mode instead (ADR-0083).
 
     Everything about how the figure looks lives in the script, so this is also the
     way to get a fresh one back after editing yours beyond repair.
@@ -492,7 +503,17 @@ def script(
     with _traced(log, output):
         results = [load_any(result_path) for result_path in result_paths]
 
-        if len(results) == 1:
+        if modes:
+            if len(results) != 1:
+                raise typer.BadParameter(
+                    f"--modes takes exactly one result (got {len(results)}); "
+                    "the modes of an envelope and of its line list are the same",
+                    param_hint="RESULT.json...",
+                )
+            written = emit.write_modes_script(
+                results[0], result_paths[0], output, force=force
+            )
+        elif len(results) == 1:
             written = emit.write_script(
                 results[0], result_paths[0], output, force=force
             )

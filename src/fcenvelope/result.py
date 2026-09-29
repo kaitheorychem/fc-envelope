@@ -135,7 +135,7 @@ class FCLine:
     """離散的な振電遷移 1 本。"""
 
     energy: float
-    """E = -sum_alpha (m_alpha - n_alpha) eps_alpha [cm^-1]。E = 0 が ZPL。"""
+    """E = -sum_alpha (m_alpha - n_alpha) omega_alpha [cm^-1]。E = 0 が ZPL。"""
 
     fc_factor: float
     """FC 因子 prod_alpha |<m_alpha|U(g_alpha)|n_alpha>|^2（無次元）。"""

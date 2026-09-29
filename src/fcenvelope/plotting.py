@@ -11,11 +11,21 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
     import matplotlib.axes
     import matplotlib.figure
 
+import numpy as np
+
 from .errors import InvalidInputError
 from .logs import stage
+from .models import VibrationalSystem
 from .result import EnvelopeResult, LinesResult, Result
 
-__all__ = ["DRAWERS", "plot_any", "plot_envelope", "plot_lines", "plot_overlay"]
+__all__ = [
+    "DRAWERS",
+    "plot_any",
+    "plot_envelope",
+    "plot_lines",
+    "plot_modes",
+    "plot_overlay",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +156,43 @@ def plot_lines(
         _energy_axis(ax)
         ax.set_ylabel("weight")
         ax.axhline(0.0, **_GUIDE)
+        _finish(ax, title=title, labelled=label is not None)
+
+    return figure
+
+
+MODE_HEIGHTS = ("g", "S")
+"""`plot_modes` の縦軸に取れる量。どちらも無次元。"""
+
+
+def plot_modes(
+    system: VibrationalSystem,
+    *,
+    height: str = "g",
+    ax: "matplotlib.axes.Axes | None" = None,
+    label: str | None = None,
+    title: str | None = None,
+) -> "matplotlib.figure.Figure":
+    """モードごとに、振動数 ω の位置へ結合の高さの棒を立てて `Figure` を返す。
+
+    縦軸は `height="g"` なら g = sqrt(S)、`"S"` なら Huang-Rhys 因子 S。系は S しか
+    持たない（g の符号は物理的に意味を持たない）ので、g は常に正で描く。結果から描く
+    ときは `plot_modes(result.system)` とする。横軸は E ではなく ω なので、E = 0 の
+    案内線は引かない。
+    """
+    if height not in MODE_HEIGHTS:
+        raise InvalidInputError(f"height must be one of {MODE_HEIGHTS} (got {height!r})")
+
+    with stage(logger, f"plot modes ({len(system.modes)} modes)"):
+        figure, ax = _resolve_axes(ax)
+
+        huang_rhys = system.huang_rhys
+        heights = np.sqrt(huang_rhys) if height == "g" else huang_rhys
+        _draw_sticks(ax, system.frequencies, heights, label=label)
+        ax.set_xlabel(rf"$\omega$ / {_mathtext_unit(ENERGY_UNIT)}")
+        ax.set_ylabel(f"${height}$")
+        ax.axhline(0.0, **_GUIDE)
+        ax.set_xlim(left=0.0)
         _finish(ax, title=title, labelled=label is not None)
 
     return figure

@@ -21,10 +21,12 @@ from .logs import stage
 from .result import EnvelopeResult, LinesResult, Result
 
 __all__ = [
+    "MODES_TEMPLATE",
     "OVERLAY_TEMPLATE",
     "TEMPLATES",
     "image_path_for",
     "script_path_for",
+    "write_modes_script",
     "write_overlay_script",
     "write_script",
 ]
@@ -41,6 +43,10 @@ TEMPLATES: dict[type, str] = {
 
 OVERLAY_TEMPLATE = "overlay"
 """重ね描きの雛形。表には載せず名前で呼ぶ。"""
+
+MODES_TEMPLATE = "modes"
+"""モードごとの結合を描く雛形。どちらの種類の結果も同じモード表を持つので、表には載せず
+名前で呼ぶ（ADR-0083）。"""
 
 HEADER_BEGIN = "# --- generated header (fcenvelope)"
 """生成ヘッダの開始マーカー。行頭の一致だけを見る。"""
@@ -96,6 +102,24 @@ def write_script(
         f"SCHEMA_VERSION = {SCHEMA_VERSION}",
     ]
     return _write(template, header, script, force=force)
+
+
+def write_modes_script(
+    result: Result, data: Path, script: Path, *, force: bool = False
+) -> bool:
+    """結果に埋め込まれたモード表（振動数と結合）を描く作図スクリプトを書き出す。
+
+    エンベロープと線のどちらの結果も計算条件として同じモード表を持つので、種類を問わない。
+    書いたなら True。既にあれば書かずに残す（ADR-0060）。
+    """
+    header = [
+        _provenance(result, [data]),
+        f"DATA = {_reference(data, script)}",
+        f"OUTPUT = {_reference(image_path_for(script), script)}",
+        f"KIND = {kind_of(result)!r}",
+        f"SCHEMA_VERSION = {SCHEMA_VERSION}",
+    ]
+    return _write(MODES_TEMPLATE, header, script, force=force)
 
 
 def write_overlay_script(

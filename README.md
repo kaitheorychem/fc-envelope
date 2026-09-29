@@ -4,7 +4,7 @@
 振電相互作用、振動数(ω_α)、温度(T)の３点を元にFranck-Condon Enveropeを計算する。
 振電相互作用は g・Δ・S・λ の 4 つの流儀のいずれで書いてもよく、エネルギーの単位も
 cm⁻¹・eV・hartree・THz・kJ/mol・kcal/mol から選べる。どちらも入力を読む時点で
-内部の正準形（ε [cm⁻¹] と Huang-Rhys 因子 S）へ畳まれる。
+内部の正準形（ω [cm⁻¹] と Huang-Rhys 因子 S）へ畳まれる。
 併せて、主要な離散FC因子とその遷移エネルギーの一覧も出力できる。
 両者は同じ縦軸で1枚に重ねてグラフ化できる。
 
@@ -24,7 +24,8 @@ TOML を基本とし、JSON でも同じように読める（書式は拡張子�
 | エンベロープ F(E) | `compute_envelope` | `save_envelope` | `load_envelope` | `plot_envelope` |
 | 線 | `compute_fc_lines` | `save_lines` | `load_lines` | `plot_lines` |
 
-加えて、両者を 1 枚に重ねる `plot_overlay` と、理論式の行列そのものを返す
+加えて、両者を 1 枚に重ねる `plot_overlay`、計算に使ったモードの結合を描く `plot_modes`、
+理論式の行列そのものを返す
 `fc_factor_matrix` を公開する。結果クラスは純粋なデータ容器で、I/O と描画の責務は持たない。
 作図スクリプトの生成は `fcenvelope.emit`、その雛形は `src/fcenvelope/templates/` にある。
 

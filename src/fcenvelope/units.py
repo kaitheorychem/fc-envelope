@@ -81,7 +81,7 @@ ENERGY_UNITS: dict[str, float] = {
     CANONICAL_ENERGY_UNIT: 1.0,
     "eV": constants.e * _PER_JOULE,
     "hartree": constants.value("Hartree energy") * _PER_JOULE,
-    # 振動数だが eps = h*nu としてエネルギーに読む。
+    # 振動数だが omega = h*nu としてエネルギーに読む。
     "THz": 1.0e12 * constants.h * _PER_JOULE,
     # モルあたりの量なので、1 粒子あたりに直してから換算する。
     "kJ/mol": 1.0e3 / constants.N_A * _PER_JOULE,
@@ -322,7 +322,7 @@ LAMBDA = CouplingConvention(
     unit_kind=ENERGY_UNIT_KIND,
     converter=lambda value, freq: value / freq,
 )
-"""再配列エネルギー。S = lambda / eps。単位はエネルギーの単位である。
+"""再配列エネルギー。S = lambda / omega。単位はエネルギーの単位である。
 
 coupling も frequency もそれぞれの単位から正準単位へ直したうえで渡るので、この式は
 どちらも cm^-1 として割ればよい（ADR-0053, 0054）。
@@ -331,11 +331,11 @@ coupling も frequency もそれぞれの単位から正準単位へ直したう
 VCC = CouplingConvention(
     name="vcc",
     unit_kind=VCC_UNIT_KIND,
-    converter=lambda v, eps: v * v / (2.0 * eps**3),
+    converter=lambda v, omega: v * v / (2.0 * omega**3),
 )
-"""振電相互作用定数。S = V^2 / (2 eps^3)。V の符号は S に効かない（ADR-0077）。
+"""振電相互作用定数。S = V^2 / (2 omega^3)。V の符号は S に効かない（ADR-0077）。
 
-V は正準単位 (cm^-1)^{3/2}、eps は cm^-1 で渡る。S は V^2 と eps^3 の比なので、
+V は正準単位 (cm^-1)^{3/2}、omega は cm^-1 で渡る。S は V^2 と omega^3 の比なので、
 エネルギーの単位をそろえてさえいれば単位系によらない。
 """
 

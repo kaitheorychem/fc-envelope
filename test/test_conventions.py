@@ -139,7 +139,7 @@ def test_unknown_convention_is_rejected(convention):
 
 
 def test_lambda_and_huang_rhys_agree():
-    """S = lambda / eps。lambda を eV で書いても同じ系になる（ADR-0055）。"""
+    """S = lambda / omega。lambda を eV で書いても同じ系になる（ADR-0055）。"""
     huang_rhys = 0.25
     frequency = 1200.0
     in_ev = huang_rhys * frequency / units.energy_conversion_factor("eV")
@@ -297,7 +297,7 @@ def test_the_sign_of_v_does_not_matter():
 
 
 def test_vcc_and_delta_agree():
-    """Delta = V / sqrt(eps^3) が同じエンベロープを与える（`docs/theory/vcc.md` の表）。"""
+    """Delta = V / sqrt(omega^3) が同じエンベロープを与える（`docs/theory/vcc.md` の表）。"""
     delta = 0.5
     canonical_v = delta * math.sqrt(1200.0**3)  # (cm^-1)^{3/2}
     in_au = canonical_v / units.VCC_UNIT_KIND.resolve("a.u.").factor

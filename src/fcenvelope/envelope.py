@@ -5,14 +5,14 @@
     F(E) = (1 / 2pi) * int dtau rho(tau) D(tau) exp(i E tau)
 
     rho(tau) = prod_alpha exp( -S_a (2 n_a + 1)
-                               + S_a (n_a + 1) exp(+i eps_a tau)
-                               + S_a n_a       exp(-i eps_a tau) )
+                               + S_a (n_a + 1) exp(+i omega_a tau)
+                               + S_a n_a       exp(-i omega_a tau) )
 
 D(tau) は線形状に由来する減衰因子で、その形は `Broadening` が持つ（ADR-0034）。
 このモジュールは線形状の種類を知らない。ガウス型では D = exp(-sigma^2 tau^2 / 2)。
 
 符号規約は反転しない。E = 0 が ZPL であり、振動量子を k 個生成する
-サイドバンドは E = -k * eps_alpha（負側）に立つ。
+サイドバンドは E = -k * omega_alpha（負側）に立つ。
 """
 
 from __future__ import annotations

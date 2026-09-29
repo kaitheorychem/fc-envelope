@@ -21,7 +21,7 @@ frequency_unit = "cm^-1"    # frequency の列の既定の単位
 
 # 1 モード = 1 つの [[modes.rows]]。並び順は結果に効かない。
 [[modes.rows]]
-frequency = 1200.0          # 振動数 ε
+frequency = 1200.0          # 振動数 ω
 coupling = 0.5              # 流儀に従った結合の値（g なら S = g^2）
 
 [[modes.rows]]

@@ -1,8 +1,8 @@
 """モーメント恒等式による検証（合意文書 §11）。
 
     0 次: int F dE = 1
-    1 次: <E> = -lambda,  lambda = sum_a S_a eps_a   （温度に依存しない）
-    2 次: Var(E) = sum_a S_a eps_a^2 (2 n_a + 1) + sigma^2 （ここにのみ温度が効く）
+    1 次: <E> = -lambda,  lambda = sum_a S_a omega_a   （温度に依存しない）
+    2 次: Var(E) = sum_a S_a omega_a^2 (2 n_a + 1) + sigma^2 （ここにのみ温度が効く）
 """
 
 from __future__ import annotations

@@ -11,9 +11,9 @@
     <m|U|0> = exp(-g^2 / 2) g^m / sqrt(m!)
 
 符号規約は `envelope.py` のエンベロープと同一で、反転しない。E = 0 が ZPL であり、
-振動量子を正味 k 個生成する線は E = -k * eps_alpha（負側）に立つ。多モードでは
+振動量子を正味 k 個生成する線は E = -k * omega_alpha（負側）に立つ。多モードでは
 
-    E = -sum_alpha (m_alpha - n_alpha) eps_alpha
+    E = -sum_alpha (m_alpha - n_alpha) omega_alpha
 
 線の重みは始状態の熱占有 P(n_alpha) を掛けた
 

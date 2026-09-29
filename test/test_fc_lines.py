@@ -44,7 +44,7 @@ def temperature(request: pytest.FixtureRequest) -> float:
 
 
 def test_single_mode_at_zero_temperature_is_the_poisson_series(single_mode):
-    """T = 0・単一モードでは FC = exp(-S) S^k / k! が E = -k eps に並ぶ。"""
+    """T = 0・単一モードでは FC = exp(-S) S^k / k! が E = -k omega に並ぶ。"""
     mode = single_mode.modes[0]
     result = lines_quietly(single_mode, temperature=0.0, min_weight=1e-12)
 

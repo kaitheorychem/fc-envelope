@@ -16,7 +16,7 @@
 ## エネルギーの向き
 
 E = 0 が ZPL（zero-phonon line）で、E は ZPL からの符号付き変位 [cm⁻¹]。
-振動量子を k 個生成するサイドバンドは **E = −k·ε_α**（負側）に立つ。
+振動量子を k 個生成するサイドバンドは **E = −k·ω_α**（負側）に立つ。
 有限温度ではホットバンドにより正側にも重みが乗り、F(E) は左右非対称になる。
 
 吸収／発光の区別は導入していない。F(E) はどちらでもない中立な量である。
@@ -88,7 +88,7 @@ uv run fcenvelope template -o mymolecule.toml   # ファイルに書いて、そ
 | `modes.coupling_convention` | `coupling` の列の流儀（下の流儀表） | 既定は `"g"` |
 | `modes.frequency_unit` | `frequency` の列の既定の単位 | 下の単位表のいずれか（別名・倍率も可）、既定 `"cm^-1"` |
 | `modes.coupling_unit` | `coupling` の列の既定の単位 | 有次元の流儀では必須、無次元の流儀では書けない |
-| `modes.rows[].frequency` | ε_α | > 0 |
+| `modes.rows[].frequency` | ω_α | > 0 |
 | `modes.rows[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | 流儀による |
 | `modes.csv` | 行を CSV から読むときの参照 | `rows` とは排他。[モードを CSV で渡す](#モードを-csv-で渡す) |
 | `temperature` | T [K] | ≥ 0（0 は許可） |
@@ -164,7 +164,7 @@ shift = 1       # 任意。冪を 1 段上げ、ΔE = 2.5、点数は倍
 `conditions.grid` / `diagnostics` に残る。
 
 E 範囲の目安は `e_min ≲ −(λ + 5√Var)`、`e_max ≳ +5σ`。
-ここで λ = Σ S_α ε_α、Var = Σ S_α ε_α²(2n_α+1) + σ²。
+ここで λ = Σ S_α ω_α、Var = Σ S_α ω_α²(2n_α+1) + σ²。
 
 これは**窓**の目安である。端の折り返し（`edge_intensity_ratio`）が見ているのは窓では
 なく**全域グリッドの端**で、全域幅は 2 の冪に切り上げた点数 × ΔE だから、窓を少し
@@ -209,8 +209,8 @@ JSON だけだからである。
 | `"g"` | 無次元化振電相互作用定数 g | S = g² | 無次元 |
 | `"delta"` | 無次元変位 Δ | S = Δ²/2 | 無次元 |
 | `"huang_rhys"` | Huang-Rhys 因子 S | そのまま | 無次元 |
-| `"lambda"` | 再配列エネルギー λ_α | S = λ_α/ε_α | エネルギー |
-| `"vcc"` | 振電相互作用定数 V_α | S = V_α²/(2ε_α³) | 振電相互作用定数 |
+| `"lambda"` | 再配列エネルギー λ_α | S = λ_α/ω_α | エネルギー |
+| `"vcc"` | 振電相互作用定数 V_α | S = V_α²/(2ω_α³) | 振電相互作用定数 |
 
 無次元の流儀（`"g"` / `"delta"` / `"huang_rhys"`）では `coupling_unit` を書いてはいけない。
 `"lambda"` と `"vcc"` では必ず書く（値に添えてもよい）。
@@ -248,7 +248,7 @@ coupling = [-0.3, 1e-4, "a.u."]   # 出力の VCC 列と、見出しの 10^-4 a.
 | `"cm^-1"` | 既定。内部・出力で使う単位でもある |
 | `"eV"` | |
 | `"hartree"` | 原子単位 |
-| `"THz"` | 振動数だが ε = hν としてエネルギーに読む |
+| `"THz"` | 振動数だが ω = hν としてエネルギーに読む |
 | `"kJ/mol"` | |
 | `"kcal/mol"` | 熱化学カロリー（1 cal = 4.184 J） |
 
@@ -445,7 +445,7 @@ csv = { path = "modes.csv", columns = ["coupling", "frequency"] }   # 並びだ�
   ないため、コメント行は書けない。空行もエラー（ファイル末尾の改行 1 つは可）。
 - 行の順序は計算結果に影響しない。縮重モードは同じ値の行を複数書く。
 - **構造の誤り**（列数違い、数値として読めない、空行、引用の誤りなど）は `modes.csv:3: ...`
-  のように行番号付きで報告される。**値の範囲**（ε ≤ 0 など）は流儀と単位を消費した後で
+  のように行番号付きで報告される。**値の範囲**（ω ≤ 0 など）は流儀と単位を消費した後で
   判定するので、位置は `modes.rows[2]` のようにモードの番号で報告される。
 - 実効設定と結果 JSON にはモードの値そのものが埋め込まれる（列の単位は各値に添えた形に
   なる）ので、CSV が後で変わっても再現できる。
@@ -476,6 +476,9 @@ uv run fcenvelope lines mymolecule.toml -o lines.json --override selection.min_w
 
 # 2 つの結果を 1 枚に重ねる作図スクリプトを作る（与える順序は問わない）
 uv run fcenvelope script result.json lines.json -o overlay_plot.py
+
+# 計算に使ったモードの g を振動数に対して描く作図スクリプトを作る
+uv run fcenvelope script --modes lines.json -o modes_plot.py
 
 # 名前を変えながら掃引するときは作図スクリプトを作らせない
 uv run fcenvelope run mymolecule.toml -o T100.json --override temperature=100 --no-script
@@ -629,10 +632,32 @@ uv run fcenvelope run mymolecule.toml -o result.json --force-script
 uv run fcenvelope script result.json -o result_plot.py --force
 ```
 
+### モードの結合を描く
+
+計算に使ったモードを、横軸に振動数 ω、縦軸に g を取った棒で描く。スペクトルの山がどのモード
+から来ているかを見るときに使う。作図スクリプトは `run` / `lines` では書かれないので、結果
+ファイルから `script --modes` で作る。エンベロープと線のどちらの結果でもよい。
+
+```bash
+uv run fcenvelope script --modes lines.json -o modes_plot.py
+uv run python modes_plot.py
+#   -> fcenvelope-modes.png
+```
+
+描くのは結果ファイルの `conditions.modes`、つまり流儀と単位を読み終えた後の値である。g は
+√S として描くので常に正で、入力で g に負の符号を付けていても図には出ない（符号は物理的に
+意味を持たない）。縦軸を S にするなら先頭の 1 行を変える。
+
+```python
+Y = "S"              # "g" なら sqrt(S)
+```
+
+ライブラリからは `plot_modes(result.system)`（`height="S"` で S）で同じ図が描ける。
+
 ## 線
 
 `docs/theory/fc-factor.md` の漸化式で FC 因子 |⟨m|U(g)|n⟩|² を求め、対応する遷移エネルギーと
-一緒に並べる。エネルギーは E 軸の規約どおり **E = −Σ_α (m_α − n_α)·ε_α**。
+一緒に並べる。エネルギーは E 軸の規約どおり **E = −Σ_α (m_α − n_α)·ω_α**。
 
 入力ファイルは `run` と同じものをそのまま使う。読むのは `temperature` と `selection` だけで、
 `broadening` と `grid` は使わない。

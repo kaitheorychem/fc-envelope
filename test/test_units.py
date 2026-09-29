@@ -256,7 +256,7 @@ def test_a_coupling_unit_on_the_mode_satisfies_a_dimensioned_convention(input_pa
 
     mode = FCEnvelopeInput.from_obj(payload).to_system().modes[0]
 
-    assert mode.huang_rhys == pytest.approx(0.25, rel=1e-14)  # S = lambda / eps
+    assert mode.huang_rhys == pytest.approx(0.25, rel=1e-14)  # S = lambda / omega
 
 
 def test_a_unit_on_a_dimensionless_coupling_names_the_mode(input_payload):
