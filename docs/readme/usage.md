@@ -480,6 +480,11 @@ uv run fcenvelope script result.json lines.json -o overlay_plot.py
 # 計算に使ったモードの g を振動数に対して描く作図スクリプトを作る
 uv run fcenvelope script --modes lines.json -o modes_plot.py
 
+# 保存済みの結果を既定の見た目で窓に出して一目見る（何も書き出さない）
+uv run fcenvelope show result.json
+uv run fcenvelope show result.json lines.json    # 重ね描き
+uv run fcenvelope show --modes lines.json        # モードの結合
+
 # 名前を変えながら掃引するときは作図スクリプトを作らせない
 uv run fcenvelope run mymolecule.toml -o T100.json --override temperature=100 --no-script
 
@@ -654,6 +659,28 @@ Y = "S"              # "g" なら sqrt(S)
 
 ライブラリからは `plot_modes(result.system)`（`height="S"` で S）で同じ図が描ける。
 
+### 一目見るだけなら `show`
+
+調整するつもりのない図をちょっと見たいだけなら、スクリプトを作らずに `show` で窓に出せる。
+取るファイルの組み合わせは `script` と同じで、1 つならその種類の図、エンベロープと線リストを
+1 つずつなら重ね描き、`--modes` なら結合の図になる。
+
+```bash
+uv run fcenvelope show result.json
+uv run fcenvelope show result.json lines.json
+uv run fcenvelope show --modes lines.json
+```
+
+見た目はライブラリの `plot_*` の既定のままで、つまみは持たない。スクリプトも画像も書き
+出さないので、残したい図は `script` で作る。
+
+窓を開くには、画面があり、matplotlib が対話的なバックエンド（TkAgg、QtAgg、macosx など）を
+使える環境が要る。SSH 越しなど画面のない環境では matplotlib が `agg` に落ち、`show` は何も
+出さずに終わる代わりに終了コード 1 で止まって `script` を案内する。バックエンドは環境変数
+`MPLBACKEND` で選べる。
+
+ライブラリからは `fcenvelope.show` で同じことができる（次の節）。
+
 ## 線
 
 `docs/theory/fc-factor.md` の漸化式で FC 因子 |⟨m|U(g)|n⟩|² を求め、対応する遷移エネルギーと
@@ -752,6 +779,22 @@ result = load_envelope("result.json")
 fig = plot_envelope(result, label="300 K")   # 保存は呼び出し側の責務
 fig.savefig("spectrum.png", dpi=300)
 ```
+
+図を残さずに一目見るだけなら `show` を使う。既定の見た目で描いて `plt.show()` まで呼び、
+描いた `Figure` を返す。計算した結果そのものでも結果ファイルのパスでも渡せて、組み合わせの
+規則は CLI の `fcenvelope show` と同じである。
+
+```python
+from fcenvelope import show
+
+show(result)                        # その種類の図
+show("result.json", "lines.json")   # エンベロープと線の重ね描き（順序は問わない）
+show(lines, modes=True)             # 計算に使ったモードの結合
+show(result, block=False)           # 窓を開いたまま先へ進む（plt.show にそのまま渡る）
+```
+
+表題や重ね描きの倍率などを指定したいときは `plot_envelope` / `plot_lines` /
+`plot_overlay` / `plot_modes` の引数で渡し、自分で `plt.show()` を呼ぶ。
 
 値の型は自分の不変条件を自分で検証するので、ライブラリから直接呼んでも
 入力ファイル経由と同じように止まる。

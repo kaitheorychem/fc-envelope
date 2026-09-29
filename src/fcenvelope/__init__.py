@@ -44,7 +44,7 @@ from .models import (
     VibrationalMode,
     VibrationalSystem,
 )
-from .plotting import plot_envelope, plot_lines, plot_modes, plot_overlay
+from .plotting import plot_envelope, plot_lines, plot_modes, plot_overlay, show
 from .result import (
     Diagnostics,
     EnvelopeResult,
@@ -73,6 +73,8 @@ __all__ = [
     "fc_factor_matrix",
     # 公開 API: 2 つの表現の重ね描き
     "plot_overlay",
+    # 公開 API: 既定の見た目で窓に出して一目見る
+    "show",
     # 計算用の値の型
     "Broadening",
     "EnergyGrid",

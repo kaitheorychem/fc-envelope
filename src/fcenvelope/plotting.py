@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -14,6 +15,7 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
 import numpy as np
 
 from .errors import InvalidInputError
+from .io import load_any
 from .logs import stage
 from .models import VibrationalSystem
 from .result import EnvelopeResult, LinesResult, Result
@@ -25,6 +27,7 @@ __all__ = [
     "plot_lines",
     "plot_modes",
     "plot_overlay",
+    "show",
 ]
 
 logger = logging.getLogger(__name__)
@@ -313,3 +316,73 @@ def plot_any(
     except KeyError as exc:
         raise InvalidInputError(f"no way to draw a {type(result).__name__}") from exc
     return draw(result, ax=ax, label=label, title=title)
+
+
+NON_INTERACTIVE_BACKENDS = frozenset({"agg", "cairo", "pdf", "pgf", "ps", "svg", "template"})
+"""窓を開けない matplotlib のバックエンド。ここで `plt.show()` を呼んでも何も出ない。"""
+
+
+def opens_a_window() -> bool:
+    """いまの matplotlib のバックエンドで `plt.show()` が図を出せるか。
+
+    画面のない環境では matplotlib が自動で `agg` に落ちるので、その判定に使う。
+    """
+    import matplotlib.pyplot as plt
+
+    return plt.get_backend().lower() not in NON_INTERACTIVE_BACKENDS
+
+
+def _default_figure(
+    results: "list[Result]", *, modes: bool
+) -> "matplotlib.figure.Figure":
+    """結果の並びから、既定の見た目の図を 1 枚描く。組み合わせの規則は `script` と同じ。
+
+    1 つなら種類に応じた図、エンベロープと線リストを 1 つずつなら重ね描き、`modes`
+    なら結合の図（結果は 1 つ）。
+    """
+    if modes:
+        if len(results) != 1:
+            raise InvalidInputError(
+                f"modes takes exactly one result (got {len(results)}); "
+                "the modes of an envelope and of its line list are the same"
+            )
+        return plot_modes(results[0].system)
+    if len(results) == 1:
+        return plot_any(results[0])
+
+    envelopes = [item for item in results if isinstance(item, EnvelopeResult)]
+    line_lists = [item for item in results if isinstance(item, LinesResult)]
+    if len(results) != 2 or len(envelopes) != 1 or len(line_lists) != 1:
+        found = ", ".join(type(item).__name__ for item in results)
+        raise InvalidInputError(
+            "overlaying takes exactly one EnvelopeResult and one LinesResult, "
+            f"in either order (got {found or 'nothing'})"
+        )
+    return plot_overlay(envelopes[0], line_lists[0])
+
+
+def show(
+    *results: "Result | str | os.PathLike[str]",
+    modes: bool = False,
+    block: bool | None = None,
+) -> "matplotlib.figure.Figure":
+    """結果を既定の見た目で描き、`plt.show()` で窓に出す。描いた `Figure` を返す。
+
+    ちょっと見るための口で、図のつまみは持たない（ADR-0084）。見た目を詰めるなら作図
+    スクリプトか `plot_*` を使う。結果は計算した結果そのものでも、結果ファイルのパスでも
+    よい。組み合わせの規則は `fcenvelope script` と同じで、1 つならその種類の図、
+    エンベロープと線リストを 1 つずつなら重ね描き（順序は問わない）、`modes=True` なら
+    その結果が使ったモードの結合の図になる。
+
+    `block` は `plt.show` にそのまま渡す。既定では窓を閉じるまで戻らない。
+    """
+    loaded = [
+        item if isinstance(item, (EnvelopeResult, LinesResult)) else load_any(item)
+        for item in results
+    ]
+    figure = _default_figure(loaded, modes=modes)
+
+    import matplotlib.pyplot as plt
+
+    plt.show(block=block)
+    return figure

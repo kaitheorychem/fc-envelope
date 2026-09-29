@@ -17,8 +17,11 @@ from fcenvelope import (
     plot_lines,
     plot_modes,
     plot_overlay,
+    save_envelope,
+    show,
 )
 from fcenvelope.errors import InvalidInputError
+from fcenvelope.plotting import opens_a_window
 
 SYSTEM = VibrationalSystem([VibrationalMode(frequency=1200.0, huang_rhys=0.5)])
 
@@ -341,3 +344,80 @@ def test_overlay_rejects_a_non_positive_magnification(overlay_pair, magnify):
     envelope, lines = overlay_pair
     with pytest.raises(InvalidInputError):
         plot_overlay(envelope, lines, magnify=magnify)
+
+
+# --- 既定の見た目で窓に出す（ADR-0084） ---
+
+
+@pytest.fixture
+def shown(monkeypatch):
+    """`plt.show` の代わりに呼ばれた回数と引数を記録する。窓は開かない。"""
+    calls: list[dict] = []
+    monkeypatch.setattr(plt, "show", lambda **kwargs: calls.append(kwargs))
+    return calls
+
+
+def test_show_draws_one_result_and_calls_plt_show(result, shown):
+    figure = show(result)
+    try:
+        (line,) = figure.axes[0].lines[:1]
+        np.testing.assert_array_equal(line.get_ydata(), result.density)
+        assert shown == [{"block": None}]
+    finally:
+        plt.close(figure)
+
+
+def test_show_reads_a_result_file(result, shown, tmp_path):
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    figure = show(path)
+    try:
+        (line,) = figure.axes[0].lines[:1]
+        np.testing.assert_allclose(line.get_ydata(), result.density)
+    finally:
+        plt.close(figure)
+
+
+def test_show_overlays_an_envelope_and_a_line_list_in_either_order(overlay_pair, shown):
+    envelope, lines = overlay_pair
+    figure = show(lines, envelope)
+    try:
+        (ax,) = figure.axes
+        assert _envelope_line(ax) is not None
+        assert len(ax.collections) == 1
+    finally:
+        plt.close(figure)
+
+
+def test_show_draws_the_modes(overlay_pair, shown):
+    _, lines = overlay_pair
+    figure = show(lines, modes=True)
+    try:
+        assert drawn_sticks(figure) == pytest.approx([(1200.0, np.sqrt(0.5))])
+    finally:
+        plt.close(figure)
+
+
+def test_show_passes_block_through(result, shown):
+    plt.close(show(result, block=False))
+    assert shown == [{"block": False}]
+
+
+@pytest.mark.parametrize(
+    "pick, modes",
+    [
+        (lambda envelope, lines: (), False),
+        (lambda envelope, lines: (envelope, envelope), False),
+        (lambda envelope, lines: (envelope, lines, lines), False),
+        (lambda envelope, lines: (envelope, lines), True),
+    ],
+)
+def test_show_rejects_a_combination_script_would_reject(overlay_pair, shown, pick, modes):
+    with pytest.raises(InvalidInputError):
+        show(*pick(*overlay_pair), modes=modes)
+    assert shown == []
+
+
+def test_opens_a_window_is_false_on_agg():
+    # テストは `Agg` で走る（conftest）。画面のない環境で自動的に落ちるのもここ。
+    assert not opens_a_window()
