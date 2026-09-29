@@ -169,7 +169,7 @@ def test_occupation_numbers_at_zero_temperature():
 
 
 def test_occupation_numbers_do_not_overflow():
-    """eps / kT が大きい領域は expm1 -> inf を経て n = 0 に畳まれる。"""
+    """omega / kT が大きい領域は expm1 -> inf を経て n = 0 に畳まれる。"""
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         occupations = occupation_numbers(np.array([1e5, 1e6]), 1e-3)
@@ -178,7 +178,7 @@ def test_occupation_numbers_do_not_overflow():
 
 
 def test_occupation_numbers_classical_limit():
-    """eps << kT では n -> kT / eps。"""
+    """omega << kT では n -> kT / omega。"""
     temperature = 300.0
     frequency = 1e-3
     n_alpha = occupation_numbers(np.array([frequency]), temperature)[0]

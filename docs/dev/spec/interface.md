@@ -23,7 +23,7 @@
 | 密度の単位 | 1/cm⁻¹（∫F dE = 1） |
 | 重みの単位 | 無次元（全遷移にわたる総和 = 1） |
 | 重ね描きでの棒の高さ | w·L(0)、ガウス型なら w/(σ√(2π))。単位は密度と同じ 1/cm⁻¹ |
-| E 軸 | E = 0 が ZPL。k 量子生成のサイドバンドは E = −k·ε（負側） |
+| E 軸 | E = 0 が ZPL。k 量子生成のサイドバンドは E = −k·ω（負側） |
 
 単位は結果クラスではなく `io`（ファイル形式）と `plotting`（軸ラベル）が持つ（ADR-0047）。
 
@@ -272,7 +272,7 @@ max_lines = 10000
 | `modes.coupling_convention` | str | `"g"` \| `"delta"` \| `"huang_rhys"` \| `"lambda"` \| `"vcc"` | coupling の列の流儀。既定 `"g"` |
 | `modes.frequency_unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | frequency の列の既定の単位。既定 `"cm^-1"` |
 | `modes.coupling_unit` | str \| [倍率, str] \| null | 流儀の単位の種類の正式名か別名。倍率は組で書く | coupling の列の既定の単位。無次元の流儀では書いてはならず、有次元の流儀では要る。TOML では `null` を書けないので省略する |
-| `modes.rows[].frequency` | 有次元 | > 0（正準化後） | ε_α。既定の単位は `modes.frequency_unit` |
+| `modes.rows[].frequency` | 有次元 | > 0（正準化後） | ω_α。既定の単位は `modes.frequency_unit` |
 | `modes.rows[].coupling` | 有次元 | 流儀による | 流儀に従った値。既定の単位は `modes.coupling_unit` |
 | `modes.csv` | object | キーは `path` と `columns` | 行を CSV から読む。パース時に `rows` へ差し替わる |
 | `modes.csv.path` | str | 空でない | CSV のパス。相対パスは入力ファイルのディレクトリ基準 |

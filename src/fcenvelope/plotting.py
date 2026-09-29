@@ -177,7 +177,7 @@ def plot_modes(
 
     縦軸は `height="g"` なら g = sqrt(S)、`"S"` なら Huang-Rhys 因子 S。系は S しか
     持たない（g の符号は物理的に意味を持たない）ので、g は常に正で描く。結果から描く
-    ときは `plot_modes(result.system)` とする。横軸は E ではなく ε なので、E = 0 の
+    ときは `plot_modes(result.system)` とする。横軸は E ではなく ω なので、E = 0 の
     案内線は引かない。
     """
     if height not in MODE_HEIGHTS:

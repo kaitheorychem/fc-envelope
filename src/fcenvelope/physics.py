@@ -28,7 +28,7 @@ K_B_CM = constants.k / (constants.h * constants.c * 100.0)
 def occupation_numbers(frequencies: np.ndarray, temperature: float) -> np.ndarray:
     """ボーズ分布による占有数 n_alpha を返す。
 
-    `expm1` を用いることで eps / kT が大きい領域は inf -> n = 0 と正しく畳まれる。
+    `expm1` を用いることで omega / kT が大きい領域は inf -> n = 0 と正しく畳まれる。
     T = 0 は分岐して n = 0 を直接与える。
     """
     freq = np.asarray(frequencies, dtype=float)
@@ -39,7 +39,7 @@ def occupation_numbers(frequencies: np.ndarray, temperature: float) -> np.ndarra
 
 
 def boltzmann_populations(frequency: float, temperature: float, n_max: int) -> np.ndarray:
-    """調和振動子の始状態占有 P(n) = (1 - x) x^n, x = exp(-eps / kT) を返す。
+    """調和振動子の始状態占有 P(n) = (1 - x) x^n, x = exp(-omega / kT) を返す。
 
     T = 0 は分岐して P(0) = 1 を直接与える。
     """

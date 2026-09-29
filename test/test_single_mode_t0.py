@@ -1,8 +1,8 @@
 """T = 0・単一モードの解析解（合意文書 §3）との一致。
 
-    F(E) = exp(-S) * sum_k S^k / k! * N(E; -k eps, sigma)
+    F(E) = exp(-S) * sum_k S^k / k! * N(E; -k omega, sigma)
 
-サイドバンドは E = -k eps（負側）に立つ。
+サイドバンドは E = -k omega（負側）に立つ。
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def test_matches_poisson_series_at_zero_temperature(huang_rhys):
 
 
 def test_sidebands_sit_on_the_negative_side():
-    """振動量子 k 個生成のサイドバンドは E = -k eps に立つ（符号規約 §3）。"""
+    """振動量子 k 個生成のサイドバンドは E = -k omega に立つ（符号規約 §3）。"""
     frequency = 1000.0
     grid = EnergyGrid.from_spacing(e_min=-8000.0, e_max=4000.0, de=2.0)
     system = VibrationalSystem([VibrationalMode(frequency=frequency, huang_rhys=1.0)])
