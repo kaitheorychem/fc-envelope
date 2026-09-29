@@ -138,6 +138,7 @@ def test_modes_draws_g_at_each_frequency_by_default():
     try:
         np.testing.assert_allclose(drawn_sticks(figure), [(450.0, 0.8), (1200.0, 0.5)])
         assert figure.axes[0].get_ylabel() == "$g$"
+        assert figure.axes[0].get_xlabel().startswith(r"$\omega$")
     finally:
         plt.close(figure)
 

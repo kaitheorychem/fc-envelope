@@ -155,7 +155,7 @@ def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> No
     ax.vlines(frequency, 0.0, height, colors=color, linewidth=LINEWIDTH, label=label)
     ax.axhline(0.0, **GUIDE)
     ax.set_xlim(left=0.0)                # 振動数は正。0 から見ると低振動数の並びが読める
-    ax.set_xlabel(rf"$\varepsilon$ / {X_UNIT}")
+    ax.set_xlabel(rf"$\omega$ / {X_UNIT}")
     ax.set_ylabel(f"${Y}$")              # どちらも無次元
 
 

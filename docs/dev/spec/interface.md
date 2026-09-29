@@ -63,7 +63,7 @@ save_lines(result: LinesResult, path: str | Path) -> None
 load_lines(path: str | Path) -> LinesResult
 plot_lines(result, *, ax=None, label=None, title=None) -> matplotlib.figure.Figure
 
-# 計算に使ったモード: 振動数 ε に g = sqrt(S)（height="S" なら S）の棒を立てる（ADR-0083）
+# 計算に使ったモード: 振動数 ω に g = sqrt(S)（height="S" なら S）の棒を立てる（ADR-0083）
 plot_modes(system: VibrationalSystem, *, height="g", ax=None, label=None,
            title=None) -> matplotlib.figure.Figure
 

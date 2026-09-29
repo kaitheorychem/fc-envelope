@@ -484,7 +484,7 @@ def test_the_modes_script_draws_g_at_each_frequency(modes_script, multi_mode):
 
     expected = sorted((m.frequency, m.huang_rhys**0.5) for m in multi_mode.modes)
     assert sticks == pytest.approx(expected)
-    assert ylabel == "$g$" and "cm" in xlabel
+    assert ylabel == "$g$" and xlabel.startswith(r"$\omega$") and "cm" in xlabel
 
 
 def test_the_modes_script_can_draw_s_in_another_unit(modes_script, multi_mode):

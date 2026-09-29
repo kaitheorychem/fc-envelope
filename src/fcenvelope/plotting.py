@@ -173,7 +173,7 @@ def plot_modes(
     label: str | None = None,
     title: str | None = None,
 ) -> "matplotlib.figure.Figure":
-    """モードごとに、振動数 ε の位置へ結合の高さの棒を立てて `Figure` を返す。
+    """モードごとに、振動数 ω の位置へ結合の高さの棒を立てて `Figure` を返す。
 
     縦軸は `height="g"` なら g = sqrt(S)、`"S"` なら Huang-Rhys 因子 S。系は S しか
     持たない（g の符号は物理的に意味を持たない）ので、g は常に正で描く。結果から描く
@@ -189,7 +189,7 @@ def plot_modes(
         huang_rhys = system.huang_rhys
         heights = np.sqrt(huang_rhys) if height == "g" else huang_rhys
         _draw_sticks(ax, system.frequencies, heights, label=label)
-        ax.set_xlabel(rf"$\varepsilon$ / {_mathtext_unit(ENERGY_UNIT)}")
+        ax.set_xlabel(rf"$\omega$ / {_mathtext_unit(ENERGY_UNIT)}")
         ax.set_ylabel(f"${height}$")
         ax.axhline(0.0, **_GUIDE)
         ax.set_xlim(left=0.0)
