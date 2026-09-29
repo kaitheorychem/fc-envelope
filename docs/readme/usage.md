@@ -480,7 +480,7 @@ uv run fcenvelope script result.json lines.json -o overlay_plot.py
 # 計算に使ったモードの g を振動数に対して描く作図スクリプトを作る
 uv run fcenvelope script --modes lines.json -o modes_plot.py
 
-# 保存済みの結果を既定の見た目で窓に出して一目見る（何も書き出さない）
+# 保存済みの結果を既定の見た目で一目見る（kitty 系の端末なら端末に、ほかは窓に出る。何も書き出さない）
 uv run fcenvelope show result.json
 uv run fcenvelope show result.json lines.json    # 重ね描き
 uv run fcenvelope show --modes lines.json        # モードの結合
@@ -661,7 +661,7 @@ Y = "S"              # "g" なら sqrt(S)
 
 ### 一目見るだけなら `show`
 
-調整するつもりのない図をちょっと見たいだけなら、スクリプトを作らずに `show` で窓に出せる。
+調整するつもりのない図をちょっと見たいだけなら、スクリプトを作らずに `show` で出せる。
 取るファイルの組み合わせは `script` と同じで、1 つならその種類の図、エンベロープと線リストを
 1 つずつなら重ね描き、`--modes` なら結合の図になる。
 
@@ -674,10 +674,16 @@ uv run fcenvelope show --modes lines.json
 見た目はライブラリの `plot_*` の既定のままで、つまみは持たない。スクリプトも画像も書き
 出さないので、残したい図は `script` で作る。
 
+出し先は自動で決まる。端末が kitty graphics protocol に対応していれば（kitty、WezTerm、
+Ghostty など）作図スクリプトと同じく端末に直接出し、そうでなければ matplotlib の窓を開く。
+対応しているかは端末に尋ねて確かめるので、SSH の先でも手元の端末が対応していれば端末に出る。
+`--terminal` / `--window` で出し先を固定できる（tmux 越しで判定が通らないときや、kitty の
+中でも拡大できる窓で見たいとき）。
+
 窓を開くには、画面があり、matplotlib が対話的なバックエンド（TkAgg、QtAgg、macosx など）を
-使える環境が要る。SSH 越しなど画面のない環境では matplotlib が `agg` に落ち、`show` は何も
-出さずに終わる代わりに終了コード 1 で止まって `script` を案内する。バックエンドは環境変数
-`MPLBACKEND` で選べる。
+使える環境が要る。端末にも出せず、画面もない環境（matplotlib が `agg` に落ちる）では、
+`show` は何も出さずに終わる代わりに終了コード 1 で止まって `script` を案内する。
+バックエンドは環境変数 `MPLBACKEND` で選べる。
 
 ライブラリからは `fcenvelope.show` で同じことができる（次の節）。
 
@@ -780,8 +786,8 @@ fig = plot_envelope(result, label="300 K")   # 保存は呼び出し側の責務
 fig.savefig("spectrum.png", dpi=300)
 ```
 
-図を残さずに一目見るだけなら `show` を使う。既定の見た目で描いて `plt.show()` まで呼び、
-描いた `Figure` を返す。計算した結果そのものでも結果ファイルのパスでも渡せて、組み合わせの
+図を残さずに一目見るだけなら `show` を使う。既定の見た目で描いて、kitty 系の端末なら端末に、
+ほかは `plt.show()` の窓に出し、描いた `Figure` を返す。計算した結果そのものでも結果ファイルのパスでも渡せて、組み合わせの
 規則は CLI の `fcenvelope show` と同じである。
 
 ```python
@@ -790,6 +796,7 @@ from fcenvelope import show
 show(result)                        # その種類の図
 show("result.json", "lines.json")   # エンベロープと線の重ね描き（順序は問わない）
 show(lines, modes=True)             # 計算に使ったモードの結合
+show(result, terminal=False)        # 端末が対応していても窓に出す（True なら常に端末）
 show(result, block=False)           # 窓を開いたまま先へ進む（plt.show にそのまま渡る）
 ```
 

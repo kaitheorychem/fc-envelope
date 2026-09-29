@@ -4,7 +4,7 @@
 
 正式な図は描かない。計算に添えて**作図スクリプト**を書き出し、図はそれを走らせて作る
 （ADR-0057, 0061）。図のつまみは CLI に置かない——調整はスクリプトを直して行う。
-保存済みの結果を既定の見た目で窓に出して一目見るだけなら `show` を使う（ADR-0084）。
+保存済みの結果を既定の見た目で端末か窓に出して一目見るだけなら `show` を使う（ADR-0084）。
 
 入力ファイルの項目を差し替えるつまみは `--override key=value` 1 つに畳んである
 （ADR-0064）。キーは入力ファイル中の項目の位置そのもので、CLI 側にその写しを持たない。
@@ -559,22 +559,40 @@ def show(
         ),
     ],
     modes: ModesFlag = False,
+    terminal: Annotated[
+        Optional[bool],
+        typer.Option(
+            "--terminal/--window",
+            help=(
+                "Draw in the terminal (kitty graphics protocol) or open a window. "
+                "Without either, the terminal is used when it answers that it can "
+                "show images, and a window otherwise."
+            ),
+            show_default=False,
+        ),
+    ] = None,
     log: LogFile = None,
 ) -> None:
-    """Open stored results in a window with the default look, for a quick look.
+    """Show stored results with the default look, for a quick look.
 
     Takes the same files as `script`: one result, one envelope and one FC line list
-    to overlay, or one result with `--modes`. No script or image is written. The figure has no
-    knobs; for a figure to keep, use `script` and edit the script (ADR-0084).
+    to overlay, or one result with `--modes`. The figure goes to the terminal when
+    it speaks the kitty graphics protocol, and to a window otherwise. No script or
+    image is written. The figure has no knobs; for a figure to keep, use `script`
+    and edit the script (ADR-0084).
     """
-    if not plotting.opens_a_window():
+    if terminal is None:
+        terminal = plotting.kitty_terminal()
+    if not terminal and not plotting.opens_a_window():
         # 計算や読み込みの失敗ではなく環境の話なので、痕跡のログは残さない。
         import matplotlib
 
         typer.secho(
-            "error: no window can be opened here (matplotlib backend "
-            f"{matplotlib.get_backend()!r}); use `fcenvelope script` to write a plot "
-            "script, or set MPLBACKEND to an interactive backend",
+            "error: this terminal cannot show images and no window can be opened "
+            f"(matplotlib backend {matplotlib.get_backend()!r}); use "
+            "`fcenvelope script` to write a plot script, --terminal if the terminal "
+            "does speak the kitty graphics protocol, or set MPLBACKEND to an "
+            "interactive backend",
             fg=typer.colors.RED,
             err=True,
         )
@@ -583,7 +601,7 @@ def show(
     with _traced(log, result_paths[0]):
         results = [load_any(result_path) for result_path in result_paths]
         _check_combination(results, result_paths, modes=modes)
-        plotting.show(*results, modes=modes)
+        plotting.show(*results, modes=modes, terminal=terminal)
 
 
 @app.command()

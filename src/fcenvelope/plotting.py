@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import logging
 import os
+import sys
+import time
 import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -332,6 +336,105 @@ def opens_a_window() -> bool:
     return plt.get_backend().lower() not in NON_INTERACTIVE_BACKENDS
 
 
+KITTY_QUERY = b"\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\"
+"""kitty graphics protocol に対応しているかを端末に尋ねる列。1x1 画素の画像を
+検証だけさせる（`a=q`）ので、画面には何も出ない。"""
+
+DEVICE_ATTRIBUTES = b"\033[c"
+"""どの端末も答える問い合わせ（DA1）。答えがここまでに来なければ非対応とみなす。"""
+
+KITTY_TIMEOUT = 0.5
+"""端末の答えを待つ上限の秒数。DA1 すら返さない端末で止まらないための保険。"""
+
+TERMINAL_WIDTH = 0.9
+"""端末に出すとき、窓の幅に対する図の幅の割合。作図スクリプトの `SHOW_WIDTH` と同じ。"""
+
+TERMINAL_DPI = 110
+"""端末が画素数を返さないときの解像度。作図スクリプトの `SHOW_DPI` と同じ。"""
+
+
+def kitty_terminal() -> bool:
+    """標準入出力の先の端末が kitty graphics protocol で画像を出せるか。
+
+    作図スクリプトは標準出力が端末かどうかだけで決める（ADR-0061）が、そちらは画像
+    ファイルが必ず残る。`show` は端末に出せなければ窓に回したいので、端末に実際に
+    尋ねる（ADR-0084）。問い合わせの後ろに DA1 を続けて送り、DA1 の答えより先に
+    画像の答えが来れば対応している。SSH の先でも同じように働く。
+    """
+    try:
+        import select
+        import termios
+        import tty
+    except ImportError:  # Windows
+        return False
+    try:
+        stdin, stdout = sys.stdin.fileno(), sys.stdout.fileno()
+        if not (os.isatty(stdin) and os.isatty(stdout)):
+            return False
+        saved = termios.tcgetattr(stdin)
+    except (OSError, ValueError, AttributeError, termios.error):
+        # 標準入出力が差し替えられて fileno を持たない（pytest の捕捉など）場合も含む。
+        return False
+
+    reply = b""
+    try:
+        tty.setcbreak(stdin)  # 答えを 1 バイトずつ読み、画面に出さない
+        sys.stdout.flush()
+        os.write(stdout, KITTY_QUERY + DEVICE_ATTRIBUTES)
+        deadline = time.monotonic() + KITTY_TIMEOUT
+        while (left := deadline - time.monotonic()) > 0:
+            ready, _, _ = select.select([stdin], [], [], left)
+            if not ready:
+                break
+            reply += os.read(stdin, 1024)
+            if b"\033[?" in reply and reply.endswith(b"c"):
+                break
+    finally:
+        termios.tcsetattr(stdin, termios.TCSAFLUSH, saved)
+    answer = reply.split(b"\033[?", 1)[0]
+    return b"\033_Gi=31;OK" in answer
+
+
+def _terminal_pixel_width() -> int | None:
+    """端末の窓の画素幅。返さない端末もあるので、その場合は None。"""
+    try:
+        import fcntl
+        import struct
+        import termios
+
+        packed = fcntl.ioctl(sys.stdout, termios.TIOCGWINSZ, b"\0" * 8)
+    except (ImportError, OSError, ValueError, AttributeError):
+        return None
+    return struct.unpack("HHHH", packed)[2] or None  # rows, cols, xpixel, ypixel
+
+
+def _to_terminal(figure: "matplotlib.figure.Figure") -> None:
+    """kitty graphics protocol で端末に直に出す。作図スクリプトの `show` と同じ出し方。
+
+    解像度は窓の画素幅から逆算して、端末側で縮小させない（ADR-0061）。
+    """
+    pixels = _terminal_pixel_width()
+    width = figure.get_figwidth()
+    dpi = pixels * TERMINAL_WIDTH / width if pixels else TERMINAL_DPI
+
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", dpi=dpi)
+    payload = base64.standard_b64encode(buffer.getvalue())
+
+    sys.stdout.flush()
+    out, first = sys.stdout.buffer, True
+    while payload:  # 制御データは先頭のみ、以降は m= だけ
+        head, payload = payload[:4096], payload[4096:]
+        control = "a=T,f=100,q=2," if first else ""
+        out.write(
+            b"\033_G" + f"{control}m={int(bool(payload))}".encode()
+            + b";" + head + b"\033\\"
+        )
+        first = False
+    out.write(b"\n")
+    out.flush()
+
+
 def _default_figure(
     results: "list[Result]", *, modes: bool
 ) -> "matplotlib.figure.Figure":
@@ -364,9 +467,10 @@ def _default_figure(
 def show(
     *results: "Result | str | os.PathLike[str]",
     modes: bool = False,
+    terminal: bool | None = None,
     block: bool | None = None,
 ) -> "matplotlib.figure.Figure":
-    """結果を既定の見た目で描き、`plt.show()` で窓に出す。描いた `Figure` を返す。
+    """結果を既定の見た目で描き、端末か窓に出す。描いた `Figure` を返す。
 
     ちょっと見るための口で、図のつまみは持たない（ADR-0084）。見た目を詰めるなら作図
     スクリプトか `plot_*` を使う。結果は計算した結果そのものでも、結果ファイルのパスでも
@@ -374,7 +478,12 @@ def show(
     エンベロープと線リストを 1 つずつなら重ね描き（順序は問わない）、`modes=True` なら
     その結果が使ったモードの結合の図になる。
 
-    `block` は `plt.show` にそのまま渡す。既定では窓を閉じるまで戻らない。
+    出し先は `terminal` で決まる。`None`（既定）なら、端末が kitty graphics protocol に
+    対応していれば端末へ、そうでなければ `plt.show()` の窓へ出す。`True` / `False` で
+    端末 / 窓に固定できる。端末に出した図は pyplot から外す（後の `plt.show()` で窓に
+    出てこない）が、返した `Figure` はそのまま保存などに使える。
+
+    `block` は窓に出すときだけ `plt.show` にそのまま渡す。既定では窓を閉じるまで戻らない。
     """
     loaded = [
         item if isinstance(item, (EnvelopeResult, LinesResult)) else load_any(item)
@@ -384,5 +493,9 @@ def show(
 
     import matplotlib.pyplot as plt
 
-    plt.show(block=block)
+    if terminal if terminal is not None else kitty_terminal():
+        _to_terminal(figure)
+        plt.close(figure)
+    else:
+        plt.show(block=block)
     return figure
