@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import os
+import re
+import subprocess
+import sys
+
 import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,8 +23,11 @@ from fcenvelope import (
     plot_lines,
     plot_modes,
     plot_overlay,
+    save_envelope,
+    show,
 )
 from fcenvelope.errors import InvalidInputError
+from fcenvelope.plotting import opens_a_window
 
 SYSTEM = VibrationalSystem([VibrationalMode(frequency=1200.0, huang_rhys=0.5)])
 
@@ -341,3 +350,185 @@ def test_overlay_rejects_a_non_positive_magnification(overlay_pair, magnify):
     envelope, lines = overlay_pair
     with pytest.raises(InvalidInputError):
         plot_overlay(envelope, lines, magnify=magnify)
+
+
+# --- 既定の見た目で窓に出す（ADR-0084） ---
+
+
+@pytest.fixture
+def shown(monkeypatch):
+    """`plt.show` の代わりに呼ばれた回数と引数を記録する。窓は開かない。
+
+    端末は画像を出せないものとする（出せる場合の振る舞いは別に見る）。
+    """
+    import fcenvelope.plotting
+
+    calls: list[dict] = []
+    monkeypatch.setattr(plt, "show", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(fcenvelope.plotting, "kitty_terminal", lambda: False)
+    return calls
+
+
+def test_show_draws_one_result_and_calls_plt_show(result, shown):
+    figure = show(result)
+    try:
+        (line,) = figure.axes[0].lines[:1]
+        np.testing.assert_array_equal(line.get_ydata(), result.density)
+        assert shown == [{"block": None}]
+    finally:
+        plt.close(figure)
+
+
+def test_show_reads_a_result_file(result, shown, tmp_path):
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    figure = show(path)
+    try:
+        (line,) = figure.axes[0].lines[:1]
+        np.testing.assert_allclose(line.get_ydata(), result.density)
+    finally:
+        plt.close(figure)
+
+
+def test_show_overlays_an_envelope_and_a_line_list_in_either_order(overlay_pair, shown):
+    envelope, lines = overlay_pair
+    figure = show(lines, envelope)
+    try:
+        (ax,) = figure.axes
+        assert _envelope_line(ax) is not None
+        assert len(ax.collections) == 1
+    finally:
+        plt.close(figure)
+
+
+def test_show_draws_the_modes(overlay_pair, shown):
+    _, lines = overlay_pair
+    figure = show(lines, modes=True)
+    try:
+        assert drawn_sticks(figure) == pytest.approx([(1200.0, np.sqrt(0.5))])
+    finally:
+        plt.close(figure)
+
+
+def test_show_passes_block_through(result, shown):
+    plt.close(show(result, block=False))
+    assert shown == [{"block": False}]
+
+
+@pytest.mark.parametrize(
+    "pick, modes",
+    [
+        (lambda envelope, lines: (), False),
+        (lambda envelope, lines: (envelope, envelope), False),
+        (lambda envelope, lines: (envelope, lines, lines), False),
+        (lambda envelope, lines: (envelope, lines), True),
+    ],
+)
+def test_show_rejects_a_combination_script_would_reject(overlay_pair, shown, pick, modes):
+    with pytest.raises(InvalidInputError):
+        show(*pick(*overlay_pair), modes=modes)
+    assert shown == []
+
+
+def test_opens_a_window_is_false_on_agg():
+    # テストは `Agg` で走る（conftest）。画面のない環境で自動的に落ちるのもここ。
+    assert not opens_a_window()
+
+
+KITTY_CHUNK = re.compile(rb"\033_G([^;]*);([^\033]*)\033\\")
+
+
+def test_show_draws_in_a_kitty_terminal_instead_of_a_window(result, shown, monkeypatch, capfdbinary):
+    import fcenvelope.plotting
+
+    monkeypatch.setattr(fcenvelope.plotting, "kitty_terminal", lambda: True)
+    figure = show(result)
+
+    stream = capfdbinary.readouterr().out
+    chunks = KITTY_CHUNK.findall(stream)
+    assert chunks and chunks[0][0].startswith(b"a=T,f=100,q=2,")
+    png = base64.standard_b64decode(b"".join(payload for _, payload in chunks))
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert shown == []
+    # 端末に出した図は pyplot から外すが、返した Figure は使える。
+    assert figure.number not in plt.get_fignums()
+    assert figure.axes[0].lines
+
+
+def test_terminal_false_opens_a_window_even_in_a_kitty_terminal(result, shown, monkeypatch):
+    import fcenvelope.plotting
+
+    monkeypatch.setattr(fcenvelope.plotting, "kitty_terminal", lambda: True)
+    plt.close(show(result, terminal=False))
+    assert shown == [{"block": None}]
+
+
+# --- 端末への問い合わせ ---
+
+ASK = (
+    "import sys; from fcenvelope.plotting import kitty_terminal; "
+    "sys.stderr.write(str(kitty_terminal()))"
+)
+
+
+def ask_on_a_terminal(answer: bytes | None) -> str:
+    """疑似端末に繋いだ子プロセスで `kitty_terminal` を呼び、端末役として `answer` を返す。
+
+    `answer` が None なら何も答えない端末になる。
+    """
+    pty = pytest.importorskip("pty")
+    import select
+
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        [sys.executable, "-c", ASK], stdin=slave, stdout=slave, stderr=subprocess.PIPE
+    )
+    os.close(slave)
+    try:
+        asked = b""
+        while not asked.endswith(b"\033[c"):
+            ready, _, _ = select.select([master], [], [], 10.0)
+            assert ready, "端末に問い合わせが来ない"
+            asked += os.read(master, 1024)
+        assert b"\033_G" in asked and b"a=q" in asked
+        if answer is not None:
+            os.write(master, answer)
+        _, err = process.communicate(timeout=10.0)
+    finally:
+        os.close(master)
+    return err.decode().strip()
+
+
+DA1 = b"\033[?62;22c"
+
+
+def test_a_terminal_that_answers_the_graphics_query_is_kitty():
+    assert ask_on_a_terminal(b"\033_Gi=31;OK\033\\" + DA1) == "True"
+
+
+def test_a_terminal_that_answers_only_da1_is_not():
+    assert ask_on_a_terminal(DA1) == "False"
+
+
+def test_a_terminal_that_answers_nothing_is_not():
+    assert ask_on_a_terminal(None) == "False"
+
+
+def test_a_stdout_that_is_not_a_terminal_is_never_asked():
+    finished = subprocess.run(
+        [sys.executable, "-c", ASK], capture_output=True, stdin=subprocess.DEVNULL
+    )
+    assert finished.stdout == b""
+    assert finished.stderr.decode() == "False"
+
+
+@pytest.mark.parametrize("name", ["envelope", "lines", "modes", "overlay"])
+def test_the_terminal_resolution_matches_the_plot_scripts(name):
+    # 端末への出し方はライブラリと作図スクリプトの 2 か所にある（ADR-0084）。
+    from importlib import resources
+
+    import fcenvelope.plotting
+
+    text = resources.files("fcenvelope").joinpath("templates", f"{name}.py").read_text("utf-8")
+    assert re.search(rf"^SHOW_WIDTH = {fcenvelope.plotting.TERMINAL_WIDTH}\b", text, re.M)
+    assert re.search(rf"^SHOW_DPI = {fcenvelope.plotting.TERMINAL_DPI}\b", text, re.M)

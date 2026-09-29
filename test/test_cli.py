@@ -310,6 +310,117 @@ def test_modes_takes_exactly_one_result(tmp_path, input_file):
     assert not (tmp_path / "m.py").exists()
 
 
+@pytest.fixture
+def stored_pair(tmp_path, input_file):
+    """保存済みのエンベロープと線リスト。作図スクリプトは書かない。"""
+    envelope, lines = tmp_path / "result.json", tmp_path / "lines.json"
+    runner.invoke(app, ["run", str(input_file), "-o", str(envelope), "--no-script"])
+    runner.invoke(app, ["lines", str(input_file), "-o", str(lines), "--no-script"])
+    return envelope, lines
+
+
+@pytest.fixture
+def shown(monkeypatch):
+    """`plotting.show` に渡った引数を記録する。端末は画像を出せないものとする。"""
+    from fcenvelope import plotting
+
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(plotting, "kitty_terminal", lambda: False)
+    monkeypatch.setattr(
+        plotting, "show", lambda *results, **kwargs: calls.append((results, kwargs))
+    )
+    return calls
+
+
+@pytest.fixture
+def window(monkeypatch, shown):
+    """窓が開ける環境のふりをする。"""
+    from fcenvelope import plotting
+
+    monkeypatch.setattr(plotting, "opens_a_window", lambda: True)
+    return shown
+
+
+@pytest.mark.parametrize(
+    "args, kinds, modes",
+    [
+        (["result.json"], ["EnvelopeResult"], False),
+        (["lines.json", "result.json"], ["LinesResult", "EnvelopeResult"], False),
+        (["--modes", "lines.json"], ["LinesResult"], True),
+    ],
+)
+def test_show_opens_the_stored_results(tmp_path, stored_pair, window, args, kinds, modes):
+    before = sorted(tmp_path.iterdir())
+    invocation = runner.invoke(
+        app, ["show", *(a if a.startswith("--") else str(tmp_path / a) for a in args)]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    ((results, kwargs),) = window
+    assert [type(item).__name__ for item in results] == kinds
+    assert kwargs == {"modes": modes, "terminal": False}
+    assert sorted(tmp_path.iterdir()) == before  # 何も書かない
+
+
+def test_show_takes_the_same_combinations_as_script(stored_pair, window):
+    envelope, lines = stored_pair
+    two_envelopes = runner.invoke(app, ["show", str(envelope), str(envelope)])
+    modes_of_two = runner.invoke(app, ["show", "--modes", str(envelope), str(lines)])
+
+    assert two_envelopes.exit_code == 2 and "overlaying takes" in two_envelopes.output
+    assert modes_of_two.exit_code == 2 and "exactly one result" in modes_of_two.output
+    assert window == []
+
+
+def test_show_without_a_window_points_to_script(stored_pair, shown):
+    # テストは `Agg` で走る。画面のない環境と同じで、黙って何も出さずに終わらない。
+    envelope, _ = stored_pair
+    invocation = runner.invoke(app, ["show", str(envelope)])
+
+    assert invocation.exit_code == 1
+    assert "fcenvelope script" in invocation.output
+    assert not envelope.with_suffix(".log").exists()
+    assert shown == []
+
+
+def test_show_prefers_a_terminal_that_draws_images(stored_pair, shown, monkeypatch):
+    # 窓の開けない環境（SSH の先など）でも、端末が kitty なら端末に出る。
+    from fcenvelope import plotting
+
+    monkeypatch.setattr(plotting, "kitty_terminal", lambda: True)
+    envelope, _ = stored_pair
+    invocation = runner.invoke(app, ["show", str(envelope)])
+
+    assert invocation.exit_code == 0, invocation.output
+    ((_, kwargs),) = shown
+    assert kwargs["terminal"] is True
+
+
+def test_window_overrides_a_terminal_that_draws_images(stored_pair, window, monkeypatch):
+    from fcenvelope import plotting
+
+    monkeypatch.setattr(plotting, "kitty_terminal", lambda: True)
+    envelope, _ = stored_pair
+    invocation = runner.invoke(app, ["show", "--window", str(envelope)])
+
+    assert invocation.exit_code == 0, invocation.output
+    ((_, kwargs),) = window
+    assert kwargs["terminal"] is False
+
+
+def test_terminal_skips_asking_the_terminal(stored_pair, shown, monkeypatch):
+    # tmux 越しなど、答えないが画像は通す端末のために、問い合わせを飛ばして固定できる。
+    from fcenvelope import plotting
+
+    monkeypatch.setattr(plotting, "kitty_terminal", lambda: pytest.fail("asked"))
+    envelope, _ = stored_pair
+    invocation = runner.invoke(app, ["show", "--terminal", str(envelope)])
+
+    assert invocation.exit_code == 0, invocation.output
+    ((_, kwargs),) = shown
+    assert kwargs["terminal"] is True
+
+
 def test_invalid_input_exits_with_one(tmp_path, input_payload):
     input_payload["modes"]["frequency_unit"] = "nm"
     path = tmp_path / "input.json"

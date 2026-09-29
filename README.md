@@ -14,8 +14,9 @@ cm⁻¹・eV・hartree・THz・kJ/mol・kcal/mol から選べる。どちらも�
 ## 技術構成
 python + uv で実装。Python 3.11 以上。
 CLI（typer）から入力ファイルの読み込みと結果 JSON の書き出しができる。入力ファイルは
-TOML を基本とし、JSON でも同じように読める（書式は拡張子で決まる）。図は CLI では
-描かず、結果の隣に置かれる作図スクリプト（matplotlib）を走らせて作る。
+TOML を基本とし、JSON でも同じように読める（書式は拡張子で決まる）。残す図は CLI では
+描かず、結果の隣に置かれる作図スクリプト（matplotlib）を走らせて作る。一目見るだけなら
+`fcenvelope show` が既定の見た目で端末（kitty 系）か窓に出す。
 ライブラリとしては `pip install` でインストールし、スペクトルの表現ごとに
 「計算・保存・読み込み・描画」の自由関数 4 つを 1 組として公開する。
 
@@ -25,7 +26,7 @@ TOML を基本とし、JSON でも同じように読める（書式は拡張子�
 | 線 | `compute_fc_lines` | `save_lines` | `load_lines` | `plot_lines` |
 
 加えて、両者を 1 枚に重ねる `plot_overlay`、計算に使ったモードの結合を描く `plot_modes`、
-理論式の行列そのものを返す
+結果を既定の見た目で描いて端末か窓に出す `show`、理論式の行列そのものを返す
 `fc_factor_matrix` を公開する。結果クラスは純粋なデータ容器で、I/O と描画の責務は持たない。
 作図スクリプトの生成は `fcenvelope.emit`、その雛形は `src/fcenvelope/templates/` にある。
 
@@ -75,6 +76,9 @@ uv run fcenvelope run mymolecule.toml -o result.json --override temperature=0
 # 2つを1枚に重ねる作図スクリプトを作る
 uv run fcenvelope script mymolecule_envelope.json mymolecule_lines.json -o overlay_plot.py
 uv run python overlay_plot.py
+
+# スクリプトを作らずに一目見る（既定の見た目。kitty 系の端末なら端末、ほかは窓。何も書き出さない）
+uv run fcenvelope show mymolecule_envelope.json mymolecule_lines.json
 
 uv run fcenvelope run mymolecule.toml --log run.log  # 節目のログを残す
 ```

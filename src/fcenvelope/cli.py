@@ -2,8 +2,9 @@
 
 終了コード: 0 正常 / 1 `FCEnvelopeError` / 2 typer の使用法エラー。
 
-図は描かない。計算に添えて**作図スクリプト**を書き出し、図はそれを走らせて作る
+正式な図は描かない。計算に添えて**作図スクリプト**を書き出し、図はそれを走らせて作る
 （ADR-0057, 0061）。図のつまみは CLI に置かない——調整はスクリプトを直して行う。
+保存済みの結果を既定の見た目で端末か窓に出して一目見るだけなら `show` を使う（ADR-0084）。
 
 入力ファイルの項目を差し替えるつまみは `--override key=value` 1 つに畳んである
 （ADR-0064）。キーは入力ファイル中の項目の位置そのもので、CLI 側にその写しを持たない。
@@ -30,7 +31,7 @@ from typing import Annotated, Optional, TypeVar
 
 import typer
 
-from . import emit, logs
+from . import emit, logs, plotting
 from .envelope import compute_envelope
 from .errors import FCEnvelopeError, NumericalQualityWarning
 from .inputs import FCEnvelopeInput, template_text
@@ -89,6 +90,19 @@ ForceScript = Annotated[
     typer.Option(
         "--force-script",
         help="Overwrite the plot script instead of keeping the existing one.",
+    ),
+]
+
+
+#: `--modes` の宣言。`script` と `show` で同じものを使う（ADR-0036）。
+ModesFlag = Annotated[
+    bool,
+    typer.Option(
+        "--modes",
+        help=(
+            "Draw the modes the result was computed from (g against the "
+            "frequency) instead of the spectrum. Takes one result of either kind."
+        ),
     ),
 ]
 
@@ -478,16 +492,7 @@ def script(
         bool,
         typer.Option("--force", help="Overwrite an existing script."),
     ] = False,
-    modes: Annotated[
-        bool,
-        typer.Option(
-            "--modes",
-            help=(
-                "Draw the modes the result was computed from (g against the "
-                "frequency) instead of the spectrum. Takes one result of either kind."
-            ),
-        ),
-    ] = False,
+    modes: ModesFlag = False,
     log: LogFile = None,
 ) -> None:
     """Write a plot script for stored results, then run it to draw the figure.
@@ -503,13 +508,8 @@ def script(
     with _traced(log, output):
         results = [load_any(result_path) for result_path in result_paths]
 
+        _check_combination(results, result_paths, modes=modes)
         if modes:
-            if len(results) != 1:
-                raise typer.BadParameter(
-                    f"--modes takes exactly one result (got {len(results)}); "
-                    "the modes of an envelope and of its line list are the same",
-                    param_hint="RESULT.json...",
-                )
             written = emit.write_modes_script(
                 results[0], result_paths[0], output, force=force
             )
@@ -529,6 +529,79 @@ def script(
             typer.echo(f"wrote {output}")
         else:
             typer.echo(f"kept {output} (--force to regenerate)")
+
+
+def _check_combination(
+    results: list[Result], paths: list[Path], *, modes: bool
+) -> None:
+    """`script` と `show` が取る結果の組み合わせを確かめる（ADR-0030, 0083）。"""
+    if modes:
+        if len(results) != 1:
+            raise typer.BadParameter(
+                f"--modes takes exactly one result (got {len(results)}); "
+                "the modes of an envelope and of its line list are the same",
+                param_hint="RESULT.json...",
+            )
+    elif len(results) != 1:
+        _pair_for_overlay(results, paths)
+
+
+@app.command()
+def show(
+    result_paths: Annotated[
+        list[Path],
+        typer.Argument(
+            metavar="RESULT.json...",
+            help=(
+                "Result JSON written by `fcenvelope run` or `fcenvelope lines`. "
+                "Pass one of each to overlay the envelope and the stick spectrum."
+            ),
+        ),
+    ],
+    modes: ModesFlag = False,
+    terminal: Annotated[
+        Optional[bool],
+        typer.Option(
+            "--terminal/--window",
+            help=(
+                "Draw in the terminal (kitty graphics protocol) or open a window. "
+                "Without either, the terminal is used when it answers that it can "
+                "show images, and a window otherwise."
+            ),
+            show_default=False,
+        ),
+    ] = None,
+    log: LogFile = None,
+) -> None:
+    """Show stored results with the default look, for a quick look.
+
+    Takes the same files as `script`: one result, one envelope and one FC line list
+    to overlay, or one result with `--modes`. The figure goes to the terminal when
+    it speaks the kitty graphics protocol, and to a window otherwise. No script or
+    image is written. The figure has no knobs; for a figure to keep, use `script`
+    and edit the script (ADR-0084).
+    """
+    if terminal is None:
+        terminal = plotting.kitty_terminal()
+    if not terminal and not plotting.opens_a_window():
+        # 計算や読み込みの失敗ではなく環境の話なので、痕跡のログは残さない。
+        import matplotlib
+
+        typer.secho(
+            "error: this terminal cannot show images and no window can be opened "
+            f"(matplotlib backend {matplotlib.get_backend()!r}); use "
+            "`fcenvelope script` to write a plot script, --terminal if the terminal "
+            "does speak the kitty graphics protocol, or set MPLBACKEND to an "
+            "interactive backend",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    with _traced(log, result_paths[0]):
+        results = [load_any(result_path) for result_path in result_paths]
+        _check_combination(results, result_paths, modes=modes)
+        plotting.show(*results, modes=modes, terminal=terminal)
 
 
 @app.command()
