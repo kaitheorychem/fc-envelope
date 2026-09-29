@@ -25,6 +25,10 @@
 - ファイルに書かれた CSV の列の並びを読む `inputs.csv_columns`。モード表の CSV と同じ
   書き方で、ほかの表の列も読める。ゴールデンケース（外部プログラムの出力との突き合わせ、
   `test/golden/`、手順は `docs/dev/golden-tests.md`）の参照データの読み込みに使っている。
+- 計算に使ったモードの結合を描く作図スクリプト `fcenvelope script --modes RESULT.json -o PLOT.py`。
+  横軸は振動数、縦軸は g（スクリプト先頭の `Y = "S"` で S に切り替わる）で、モード 1 つに棒が
+  1 本立つ。エンベロープと線のどちらの結果からでも作れる。ライブラリからは
+  `plot_modes(result.system)`（ADR-0083）。
 
 ### 修正
 

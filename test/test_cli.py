@@ -280,6 +280,36 @@ def test_script_subcommand_keeps_an_existing_file(tmp_path, input_file):
     assert forced.exit_code == 0 and "def draw(" in script.read_text(encoding="utf-8")
 
 
+def test_script_subcommand_writes_a_modes_script(tmp_path, input_file):
+    output = tmp_path / "lines.json"
+    runner.invoke(app, ["lines", str(input_file), "-o", str(output), "--no-script"])
+    script = tmp_path / "modes_plot.py"
+
+    invocation = runner.invoke(app, ["script", "--modes", str(output), "-o", str(script)])
+
+    assert invocation.exit_code == 0, invocation.output
+    text = script.read_text(encoding="utf-8")
+    assert 'Y = "g"' in text and 'data["conditions"]["modes"]' in text
+    finished = run_script(script)
+    assert finished.returncode == 0, finished.stderr.decode()
+    assert image_path_for(script).is_file()
+
+
+def test_modes_takes_exactly_one_result(tmp_path, input_file):
+    envelope, lines = tmp_path / "result.json", tmp_path / "lines.json"
+    runner.invoke(app, ["run", str(input_file), "-o", str(envelope), "--no-script"])
+    runner.invoke(app, ["lines", str(input_file), "-o", str(lines), "--no-script"])
+
+    invocation = runner.invoke(
+        app,
+        ["script", "--modes", str(envelope), str(lines), "-o", str(tmp_path / "m.py")],
+    )
+
+    assert invocation.exit_code == 2
+    assert "exactly one result" in invocation.output
+    assert not (tmp_path / "m.py").exists()
+
+
 def test_invalid_input_exits_with_one(tmp_path, input_payload):
     input_payload["modes"]["frequency_unit"] = "nm"
     path = tmp_path / "input.json"

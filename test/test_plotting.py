@@ -15,6 +15,7 @@ from fcenvelope import (
     VibrationalSystem,
     plot_envelope,
     plot_lines,
+    plot_modes,
     plot_overlay,
 )
 from fcenvelope.errors import InvalidInputError
@@ -113,6 +114,56 @@ def test_fc_lines_title_is_applied(lines_result):
         assert figure.axes[0].get_title() == "sticks"
     finally:
         plt.close(figure)
+
+
+# --- モードごとの結合 ---
+
+MODES = VibrationalSystem(
+    [
+        VibrationalMode(frequency=1200.0, huang_rhys=0.25),
+        VibrationalMode(frequency=450.0, huang_rhys=0.64),
+    ]
+)
+
+
+def drawn_sticks(figure) -> list[tuple[float, float]]:
+    (collection,) = figure.axes[0].collections
+    segments = collection.get_segments()
+    assert all(segment[0][1] == 0.0 for segment in segments)
+    return sorted((segment[0][0], segment[1][1]) for segment in segments)
+
+
+def test_modes_draws_g_at_each_frequency_by_default():
+    figure = plot_modes(MODES)
+    try:
+        np.testing.assert_allclose(drawn_sticks(figure), [(450.0, 0.8), (1200.0, 0.5)])
+        assert figure.axes[0].get_ylabel() == "$g$"
+    finally:
+        plt.close(figure)
+
+
+def test_modes_can_draw_the_huang_rhys_factor():
+    figure = plot_modes(MODES, height="S")
+    try:
+        np.testing.assert_allclose(drawn_sticks(figure), [(450.0, 0.64), (1200.0, 0.25)])
+        assert figure.axes[0].get_ylabel() == "$S$"
+    finally:
+        plt.close(figure)
+
+
+def test_modes_accepts_an_existing_axes_and_a_title():
+    figure, ax = plt.subplots()
+    try:
+        assert plot_modes(MODES, ax=ax, label="S1", title="coupling") is figure
+        assert ax.get_legend() is not None
+        assert ax.get_title() == "coupling"
+    finally:
+        plt.close(figure)
+
+
+def test_modes_rejects_an_unknown_height():
+    with pytest.raises(InvalidInputError, match="height"):
+        plot_modes(MODES, height="lambda")
 
 
 # --- エンベロープと離散 FC 因子の重ね描き ---

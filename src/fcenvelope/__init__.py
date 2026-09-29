@@ -44,7 +44,7 @@ from .models import (
     VibrationalMode,
     VibrationalSystem,
 )
-from .plotting import plot_envelope, plot_lines, plot_overlay
+from .plotting import plot_envelope, plot_lines, plot_modes, plot_overlay
 from .result import (
     Diagnostics,
     EnvelopeResult,
@@ -69,6 +69,7 @@ __all__ = [
     "save_lines",
     "load_lines",
     "plot_lines",
+    "plot_modes",
     "fc_factor_matrix",
     # 公開 API: 2 つの表現の重ね描き
     "plot_overlay",

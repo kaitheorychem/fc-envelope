@@ -22,9 +22,11 @@ from conftest import compute_quietly, lines_quietly, run_script
 from fcenvelope import Broadening, EnergyGrid, save_envelope, save_lines
 from fcenvelope.io import SCHEMA_VERSION
 from fcenvelope.emit import (
+    MODES_TEMPLATE,
     TEMPLATES,
     image_path_for,
     script_path_for,
+    write_modes_script,
     write_overlay_script,
     write_script,
 )
@@ -121,6 +123,15 @@ def overlay_script(tmp_path, envelope, lines):
     return script
 
 
+@pytest.fixture
+def modes_script(tmp_path, lines):
+    data = tmp_path / "lines.json"
+    save_lines(lines, data)
+    script = tmp_path / "modes_plot.py"
+    assert write_modes_script(lines, data, script)
+    return script
+
+
 # --- 名前の付け方 ---
 
 
@@ -137,7 +148,9 @@ def test_the_image_is_named_after_the_program(tmp_path):
 # --- 生成されたスクリプトが単独で走る ---
 
 
-@pytest.mark.parametrize("name", ["envelope_script", "lines_script", "overlay_script"])
+@pytest.mark.parametrize(
+    "name", ["envelope_script", "lines_script", "overlay_script", "modes_script"]
+)
 def test_the_script_runs_on_its_own_and_writes_the_image(name, request):
     script = request.getfixturevalue(name)
     image = image_path_for(script)
@@ -170,7 +183,9 @@ def imported_modules(script: Path) -> set[str]:
     return found
 
 
-@pytest.mark.parametrize("name", ["envelope_script", "lines_script", "overlay_script"])
+@pytest.mark.parametrize(
+    "name", ["envelope_script", "lines_script", "overlay_script", "modes_script"]
+)
 def test_the_script_does_not_depend_on_fcenvelope(name, request):
     """図の設定がスクリプトの中で完結していることの裏返し（ADR-0058）。"""
     imported = imported_modules(request.getfixturevalue(name))
@@ -330,7 +345,9 @@ def test_the_overlay_script_reports_lines_outside_the_energy_window(
 # --- 2 つの出力先 ---
 
 
-@pytest.mark.parametrize("name", ["envelope_script", "lines_script", "overlay_script"])
+@pytest.mark.parametrize(
+    "name", ["envelope_script", "lines_script", "overlay_script", "modes_script"]
+)
 def test_nothing_is_written_to_a_stdout_that_is_not_a_terminal(name, request):
     finished = run_script(request.getfixturevalue(name))
     assert b"\033_G" not in finished.stdout
@@ -422,7 +439,7 @@ def test_the_script_reaches_data_in_another_directory(tmp_path, envelope):
 
 
 def test_every_template_shares_one_copy_of_the_common_helpers():
-    """3 つの雛形で共通の部分が食い違わないようにする。"""
+    """すべての雛形で共通の部分が食い違わないようにする。"""
     from importlib import resources
 
     def helpers(name: str) -> str:
@@ -434,5 +451,72 @@ def test_every_template_shares_one_copy_of_the_common_helpers():
         start = text.index("def beside(")
         return text[start : text.index("def image_for(")]
 
-    shared = {helpers(name) for name in {*TEMPLATES.values(), "overlay"}}
+    shared = {helpers(name) for name in {*TEMPLATES.values(), "overlay", MODES_TEMPLATE}}
     assert len(shared) == 1
+
+
+# --- モードごとの結合（ADR-0083） ---
+
+
+def draw_with(script: Path, data: Path, **settings):
+    """生成されたスクリプトを import し、設定を差し替えて `draw` だけを走らせる。"""
+    import importlib.util
+
+    import matplotlib.pyplot as plt
+
+    spec = importlib.util.spec_from_file_location("generated", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for name, value in settings.items():
+        setattr(module, name, value)
+    figure, ax = plt.subplots()
+    try:
+        module.draw(ax, module.load(data, module.KIND))
+        (collection,) = ax.collections
+        sticks = sorted((s[0][0], s[1][1]) for s in collection.get_segments())
+        return sticks, ax.get_xlabel(), ax.get_ylabel()
+    finally:
+        plt.close(figure)
+
+
+def test_the_modes_script_draws_g_at_each_frequency(modes_script, multi_mode):
+    sticks, xlabel, ylabel = draw_with(modes_script, modes_script.parent / "lines.json")
+
+    expected = sorted((m.frequency, m.huang_rhys**0.5) for m in multi_mode.modes)
+    assert sticks == pytest.approx(expected)
+    assert ylabel == "$g$" and "cm" in xlabel
+
+
+def test_the_modes_script_can_draw_s_in_another_unit(modes_script, multi_mode):
+    sticks, xlabel, ylabel = draw_with(
+        modes_script,
+        modes_script.parent / "lines.json",
+        Y="S",
+        X_UNIT="eV",
+        X_SCALE=1.0 / 8065.543937,
+    )
+
+    expected = sorted((m.frequency / 8065.543937, m.huang_rhys) for m in multi_mode.modes)
+    assert sticks == pytest.approx(expected)
+    assert ylabel == "$S$" and "eV" in xlabel
+
+
+def test_the_modes_script_reads_an_envelope_result_too(tmp_path, envelope, multi_mode):
+    data = tmp_path / "result.json"
+    save_envelope(envelope, data)
+    script = tmp_path / "modes_plot.py"
+    assert write_modes_script(envelope, data, script)
+
+    finished = run_script(script)
+    assert finished.returncode == 0, finished.stderr.decode()
+    assert image_path_for(script).is_file()
+
+    sticks, _, _ = draw_with(script, data)
+    assert len(sticks) == len(multi_mode.modes)
+
+
+def test_an_existing_modes_script_is_kept(tmp_path, lines, modes_script):
+    modes_script.write_text("# 手で直した\n", encoding="utf-8")
+
+    assert not write_modes_script(lines, tmp_path / "lines.json", modes_script)
+    assert modes_script.read_text(encoding="utf-8") == "# 手で直した\n"

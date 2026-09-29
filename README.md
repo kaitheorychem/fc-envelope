@@ -24,7 +24,8 @@ TOML を基本とし、JSON でも同じように読める（書式は拡張子�
 | エンベロープ F(E) | `compute_envelope` | `save_envelope` | `load_envelope` | `plot_envelope` |
 | 線 | `compute_fc_lines` | `save_lines` | `load_lines` | `plot_lines` |
 
-加えて、両者を 1 枚に重ねる `plot_overlay` と、理論式の行列そのものを返す
+加えて、両者を 1 枚に重ねる `plot_overlay`、計算に使ったモードの結合を描く `plot_modes`、
+理論式の行列そのものを返す
 `fc_factor_matrix` を公開する。結果クラスは純粋なデータ容器で、I/O と描画の責務は持たない。
 作図スクリプトの生成は `fcenvelope.emit`、その雛形は `src/fcenvelope/templates/` にある。
 

@@ -477,6 +477,9 @@ uv run fcenvelope lines mymolecule.toml -o lines.json --override selection.min_w
 # 2 つの結果を 1 枚に重ねる作図スクリプトを作る（与える順序は問わない）
 uv run fcenvelope script result.json lines.json -o overlay_plot.py
 
+# 計算に使ったモードの g を振動数に対して描く作図スクリプトを作る
+uv run fcenvelope script --modes lines.json -o modes_plot.py
+
 # 名前を変えながら掃引するときは作図スクリプトを作らせない
 uv run fcenvelope run mymolecule.toml -o T100.json --override temperature=100 --no-script
 
@@ -628,6 +631,28 @@ uv run python result_plot.py
 uv run fcenvelope run mymolecule.toml -o result.json --force-script
 uv run fcenvelope script result.json -o result_plot.py --force
 ```
+
+### モードの結合を描く
+
+計算に使ったモードを、横軸に振動数 ε、縦軸に g を取った棒で描く。スペクトルの山がどのモード
+から来ているかを見るときに使う。作図スクリプトは `run` / `lines` では書かれないので、結果
+ファイルから `script --modes` で作る。エンベロープと線のどちらの結果でもよい。
+
+```bash
+uv run fcenvelope script --modes lines.json -o modes_plot.py
+uv run python modes_plot.py
+#   -> fcenvelope-modes.png
+```
+
+描くのは結果ファイルの `conditions.modes`、つまり流儀と単位を読み終えた後の値である。g は
+√S として描くので常に正で、入力で g に負の符号を付けていても図には出ない（符号は物理的に
+意味を持たない）。縦軸を S にするなら先頭の 1 行を変える。
+
+```python
+Y = "S"              # "g" なら sqrt(S)
+```
+
+ライブラリからは `plot_modes(result.system)`（`height="S"` で S）で同じ図が描ける。
 
 ## 線
 
