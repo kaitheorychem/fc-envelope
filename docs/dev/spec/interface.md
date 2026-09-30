@@ -515,7 +515,7 @@ SCHEMA_VERSION = 2
 | 名前 | 何を決めるか |
 |---|---|
 | `SAVE` / `SHOW` | 出力先。`SHOW` が `None` なら端末のときだけ出す |
-| `SHOW_WIDTH` / `SHOW_DPI` | 端末に出す図の大きさ。ファイルの `DPI` とは別（ADR-0061） |
+| `SHOW_SIZE` / `SHOW_DPI` | 端末に出す図の大きさ（窓の幅・高さに対する上限の割合と、画素数が分からないときの解像度）。ファイルの `DPI` とは別（ADR-0061, 0085） |
 | `IMAGE_PREFIX` | 引数でほかの結果を指したときの画像名の頭（ADR-0067） |
 | `FIGSIZE` / `DPI` / `TITLE` / `XLIM` / `YLIM` / 色 | 図の体裁 |
 | `X_UNIT` / `X_SCALE` | 横軸の単位（ADR-0062） |

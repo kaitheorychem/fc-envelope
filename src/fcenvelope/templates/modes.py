@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import io
 import math
+import os
 import sys
 import json
 from pathlib import Path
@@ -33,7 +34,7 @@ SCHEMA_VERSION = 4
 # 出力先。SHOW は None なら端末のときだけ、True / False で固定できる。
 SAVE = True
 SHOW = None
-SHOW_WIDTH = 0.9     # 端末の幅に対する図の幅の割合
+SHOW_SIZE = 0.5      # 端末の窓の幅・高さに対する図の大きさの上限の割合
 SHOW_DPI = 110       # 端末が画素数を返さないときの解像度。ファイルの DPI とは別
 IMAGE_PREFIX = "fcenvelope-"   # 引数でほかの結果を指したときの画像名の頭
 
@@ -93,8 +94,8 @@ def column(table: dict, name: str) -> list:
     return [row[index] for row in table["rows"]]
 
 
-def terminal_pixel_width() -> int | None:
-    """端末の窓の画素幅。返さない端末もあるので、その場合は None。"""
+def terminal_size() -> tuple[int, int, int, int]:
+    """端末の窓の (行数, 桁数, 画素幅, 画素高さ)。分からない値は 0。"""
     try:
         import fcntl
         import struct
@@ -102,14 +103,41 @@ def terminal_pixel_width() -> int | None:
 
         packed = fcntl.ioctl(sys.stdout, termios.TIOCGWINSZ, b"\0" * 8)
     except (ImportError, OSError):
-        return None
-    return struct.unpack("HHHH", packed)[2] or None      # rows, cols, xpixel, ypixel
+        return 0, 0, 0, 0
+    return struct.unpack("HHHH", packed)
+
+
+def in_tmux() -> bool:
+    """tmux の中か。tmux は画像の列を素通しさせないので、包んで渡す必要がある。"""
+    return bool(os.environ.get("TMUX"))
+
+
+def passthrough(sequence: bytes) -> bytes:
+    """tmux の中なら、外の端末へ届くように包む。tmux 側で allow-passthrough が要る。"""
+    if not in_tmux():
+        return sequence
+    return b"\033Ptmux;" + sequence.replace(b"\033", b"\033\033") + b"\033\\"
 
 
 def show(fig) -> None:
-    """kitty graphics protocol で端末に直接出す。別の端末なら、ここを書き替える。"""
-    pixels = terminal_pixel_width()
-    dpi = pixels * SHOW_WIDTH / FIGSIZE[0] if pixels else SHOW_DPI
+    """kitty graphics protocol で端末に直接出す。別の端末なら、ここを書き替える。
+
+    図は窓の幅と高さの SHOW_SIZE 倍に収まる大きさで描く。窓の画素数が分かれば解像度を
+    そこから逆算して端末に縮小させず、分からなければ SHOW_DPI で描いて行数だけ指定する。
+    tmux の中では画像の後ろで tmux のカーソルが動かないので、画像の高さぶん改行する。
+    """
+    rows, columns, xpixel, ypixel = terminal_size()
+    width, height = fig.get_size_inches()
+    if rows and columns and xpixel and ypixel:
+        dpi = SHOW_SIZE * min(xpixel / width, ypixel / height)
+        lines = math.ceil(height * dpi / (ypixel / rows))
+        placement = ""
+    else:
+        dpi = SHOW_DPI
+        lines = max(1, round(rows * SHOW_SIZE)) if rows else 1
+        placement = f"r={lines}," if rows else ""
+    if in_tmux():
+        placement += "C=1,"                  # カーソルは下の改行で動かす
 
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png", dpi=dpi)
@@ -118,13 +146,13 @@ def show(fig) -> None:
     out, first = sys.stdout.buffer, True
     while payload:                       # 制御データは先頭のみ、以降は m= だけ
         head, payload = payload[:4096], payload[4096:]
-        control = "a=T,f=100,q=2," if first else ""
-        out.write(
+        control = f"a=T,f=100,q=2,{placement}" if first else ""
+        out.write(passthrough(
             b"\033_G" + f"{control}m={int(bool(payload))}".encode()
             + b";" + head + b"\033\\"
-        )
+        ))
         first = False
-    out.write(b"\n")
+    out.write(b"\n" * (lines if in_tmux() else 1))
     out.flush()
 
 
