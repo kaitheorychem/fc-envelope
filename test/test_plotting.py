@@ -542,7 +542,8 @@ def test_in_tmux_the_image_is_passed_through(result, shown, monkeypatch, capfdbi
     plt.close(show(result, terminal=True))
 
     stream = capfdbinary.readouterr().out
-    assert stream.startswith(b"\033Ptmux;\033\033_Ga=T,f=100,q=2,C=1,")
+    assert stream.startswith(b"\033Ptmux;\033\033_Ga=T,f=100,q=2,U=1,i=")
+    assert "\U0010EEEE".encode() in stream.rsplit(b"\033\\", 1)[1]
     unwrapped = stream.replace(b"\033Ptmux;", b"").replace(b"\033\033", b"\033")
     png = base64.standard_b64decode(
         b"".join(payload for _, payload in KITTY_CHUNK.findall(unwrapped))
@@ -568,3 +569,16 @@ def test_the_terminal_resolution_matches_the_plot_scripts(name):
     text = resources.files("fcenvelope").joinpath("templates", f"{name}.py").read_text("utf-8")
     assert re.search(rf"^SHOW_SIZE = {fcenvelope.plotting.TERMINAL_SIZE}\b", text, re.M)
     assert re.search(rf"^SHOW_DPI = {fcenvelope.plotting.TERMINAL_DPI}\b", text, re.M)
+
+
+@pytest.mark.parametrize("name", ["envelope", "lines", "modes", "overlay"])
+def test_the_placeholder_diacritics_match_the_plot_scripts(name):
+    # tmux の中での置き方もライブラリと作図スクリプトの 2 か所にある（ADR-0085）。
+    from importlib import resources
+
+    import fcenvelope.plotting
+
+    text = resources.files("fcenvelope").joinpath("templates", f"{name}.py").read_text("utf-8")
+    block = text[text.index("PLACEHOLDER_DIACRITICS = ") : text.index(".split()]")]
+    codes = re.findall(r"\b[0-9A-F]{4,5}\b", block)
+    assert [chr(int(code, 16)) for code in codes] == fcenvelope.plotting.PLACEHOLDER_DIACRITICS
