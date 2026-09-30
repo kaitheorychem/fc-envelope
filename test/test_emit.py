@@ -390,17 +390,27 @@ def test_a_terminal_that_reports_no_pixels_falls_back_to_a_fixed_resolution(
     assert b"r=20," in KITTY_CHUNK.findall(stream)[0][0]
 
 
-def test_in_tmux_the_stream_is_passed_through_and_the_cursor_moved(envelope_script):
+def test_in_tmux_the_image_is_passed_through_and_placed_as_text(envelope_script):
     stream = run_script_on_a_terminal(envelope_script, xpixel=1600, tmux=True)
     assert b"\033Ptmux;\033\033_G" in stream, "tmux の中なのに包まれていない"
     assert b"\033_G" not in stream.replace(b"\033\033_G", b"")  # 素の列は流さない
     unwrapped = stream.replace(b"\033Ptmux;", b"").replace(b"\033\033", b"\033")
     png = reassemble(unwrapped)
-    control = KITTY_CHUNK.findall(unwrapped)[0][0]
-    assert b"C=1," in control
-    # 画像の高さ 450 px は 900 px / 40 行で 20 行ぶん。tmux のカーソルをその下へ送る。
-    assert png_size(png)[1] == 450
-    assert stream.endswith(b"\033\\" + b"\r\n" * 20)
+    control = KITTY_CHUNK.findall(unwrapped)[0][0].decode()
+    # 窓 1600x900 / 160 桁 x 40 行で、画像 750x450 px は 75 桁 x 20 行を占める。
+    assert png_size(png) == (750, 450)
+    fields = dict(item.split("=") for item in control.split(",") if "=" in item)
+    assert fields["U"] == "1" and fields["c"] == "75" and fields["r"] == "20"
+    image_id = int(fields["i"])
+
+    # 画像の後ろは、tmux が文字として扱う placeholder の格子になる。
+    grid = stream.rsplit(b"\033\\", 1)[1].decode("utf-8").splitlines()
+    assert len(grid) == 20
+    low = image_id & 0xFF
+    for line in grid:
+        assert line.startswith(f"\033[38;5;{low}m\U0010EEEE")
+        assert line.count("\U0010EEEE") == 75
+        assert line.endswith("\033[39m")
 
 
 def test_the_image_file_keeps_its_own_resolution_on_a_terminal(envelope_script):
