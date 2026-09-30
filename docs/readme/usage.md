@@ -702,8 +702,10 @@ set -g allow-passthrough on
 足したら `tmux source-file ~/.tmux.conf` で読み直す（次に起動する tmux には自動で効く）。
 本プログラムは環境変数 `TMUX` を見て、画像の列を tmux の passthrough に包んで送る。
 
-tmux は画像の存在を知らないので、ペインを切り替えたり画面を再描画させたりすると消える。
-一目見る用途では困らないが、残しておきたい図は画像ファイルで見る。
+tmux の中では、画像を文字（kitty の unicode placeholder）として置くので、スクロールすれば
+文字と一緒に動き、ペインを切り替えたり `clear` したりすれば消える。placeholder は kitty
+（0.28 以降）と Ghostty が対応している。WezTerm は対応していないので、tmux の中では図が出ない
+（tmux の外なら出る）。
 
 ## 線
 
