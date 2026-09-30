@@ -4,7 +4,8 @@
 
 正式な図は描かない。計算に添えて**作図スクリプト**を書き出し、図はそれを走らせて作る
 （ADR-0057, 0061）。図のつまみは CLI に置かない——調整はスクリプトを直して行う。
-保存済みの結果を既定の見た目で端末か窓に出して一目見るだけなら `show` を使う（ADR-0084）。
+保存済みの結果（や入力のモードの結合）を既定の見た目で端末か窓に出して一目見るだけなら `show` を
+使う（ADR-0084, 0086）。
 
 入力ファイルの項目を差し替えるつまみは `--override key=value` 1 つに畳んである
 （ADR-0064）。キーは入力ファイル中の項目の位置そのもので、CLI 側にその写しを持たない。
@@ -37,6 +38,7 @@ from .errors import FCEnvelopeError, NumericalQualityWarning
 from .inputs import FCEnvelopeInput, template_text
 from .io import JsonObject, JsonValue, kind_for, load_any, save_any
 from .lines import compute_fc_lines
+from .models import VibrationalSystem
 from .result import EnvelopeResult, FCLine, LinesResult, Result
 from .version import __version__
 
@@ -551,10 +553,12 @@ def show(
     result_paths: Annotated[
         list[Path],
         typer.Argument(
-            metavar="RESULT.json...",
+            metavar="FILE...",
             help=(
                 "Result JSON written by `fcenvelope run` or `fcenvelope lines`. "
-                "Pass one of each to overlay the envelope and the stick spectrum."
+                "Pass one of each to overlay the envelope and the stick spectrum. "
+                "An input file (TOML, or the effective settings JSON) shows the "
+                "coupling of its modes without computing anything."
             ),
         ),
     ],
@@ -576,7 +580,8 @@ def show(
     """Show stored results with the default look, for a quick look.
 
     Takes the same files as `script`: one result, one envelope and one FC line list
-    to overlay, or one result with `--modes`. The figure goes to the terminal when
+    to overlay, or one result with `--modes`. One input file instead shows the
+    coupling of its modes, as `--modes` does for a result (ADR-0086). The figure goes to the terminal when
     it speaks the kitty graphics protocol, and to a window otherwise. No script or
     image is written. The figure has no knobs; for a figure to keep, use `script`
     and edit the script (ADR-0084).
@@ -604,9 +609,15 @@ def show(
         raise typer.Exit(1)
 
     with _traced(log, result_paths[0]):
-        results = [load_any(result_path) for result_path in result_paths]
-        _check_combination(results, result_paths, modes=modes)
-        plotting.show(*results, modes=modes, terminal=terminal)
+        items = [plotting.load_shown(path) for path in result_paths]
+        if any(isinstance(item, VibrationalSystem) for item in items):
+            try:
+                plotting.check_shown(items)
+            except FCEnvelopeError as exc:
+                raise typer.BadParameter(str(exc), param_hint="FILE...") from exc
+        else:
+            _check_combination(items, result_paths, modes=modes)
+        plotting.show(*items, modes=modes, terminal=terminal)
 
 
 @app.command()

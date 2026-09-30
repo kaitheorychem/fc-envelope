@@ -484,6 +484,7 @@ uv run fcenvelope script --modes lines.json -o modes_plot.py
 uv run fcenvelope show result.json
 uv run fcenvelope show result.json lines.json    # 重ね描き
 uv run fcenvelope show --modes lines.json        # モードの結合
+uv run fcenvelope show mymolecule.toml           # 計算せずに入力のモードの結合を見る
 
 # 名前を変えながら掃引するときは作図スクリプトを作らせない
 uv run fcenvelope run mymolecule.toml -o T100.json --override temperature=100 --no-script
@@ -670,7 +671,13 @@ Y = "S"              # "g" なら sqrt(S)
 uv run fcenvelope show result.json
 uv run fcenvelope show result.json lines.json
 uv run fcenvelope show --modes lines.json
+uv run fcenvelope show mymolecule.toml
 ```
+
+結合の図は計算しなくても出せる。入力ファイル（TOML か実効設定の JSON）を 1 つだけ渡すと、
+`--modes` を付けなくてもそのモードの結合の図になる。流儀・単位・`modes.csv` の参照は計算する
+ときと同じに読むので、CSV の列の並びや単位の取り違えを計算の前に確かめられる（ADR-0086）。
+入力ファイルは結果と並べずに 1 つだけで渡す。
 
 見た目はライブラリの `plot_*` の既定のままで、つまみは持たない。スクリプトも画像も書き
 出さないので、残したい図は `script` で作る。
@@ -808,7 +815,8 @@ fig.savefig("spectrum.png", dpi=300)
 
 図を残さずに一目見るだけなら `show` を使う。既定の見た目で描いて、kitty 系の端末なら端末に、
 ほかは `plt.show()` の窓に出し、描いた `Figure` を返す。計算した結果そのものでも結果ファイルのパスでも渡せて、組み合わせの
-規則は CLI の `fcenvelope show` と同じである。
+規則は CLI の `fcenvelope show` と同じである。モードの系・読んだ入力・入力ファイルのパスを
+1 つだけ渡せば、計算せずにその結合の図になる（ADR-0086）。
 
 ```python
 from fcenvelope import show
@@ -816,6 +824,8 @@ from fcenvelope import show
 show(result)                        # その種類の図
 show("result.json", "lines.json")   # エンベロープと線の重ね描き（順序は問わない）
 show(lines, modes=True)             # 計算に使ったモードの結合
+show(system)                        # 自分で組んだ VibrationalSystem の結合（計算しない）
+show("mymolecule.toml")             # 入力ファイルのモードの結合（modes.csv も辿る）
 show(result, terminal=False)        # 端末が対応していても窓に出す（True なら常に端末）
 show(result, block=False)           # 窓を開いたまま先へ進む（plt.show にそのまま渡る）
 ```

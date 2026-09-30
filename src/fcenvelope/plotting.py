@@ -10,7 +10,8 @@ import os
 import sys
 import time
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
@@ -20,13 +21,15 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
 import numpy as np
 
 from .errors import InvalidInputError
-from .io import load_any
+from .inputs import FCEnvelopeInput
+from .io import any_from_dict, is_result, read_json
 from .logs import stage
 from .models import VibrationalSystem
 from .result import EnvelopeResult, LinesResult, Result
 
 __all__ = [
     "DRAWERS",
+    "load_shown",
     "plot_any",
     "plot_envelope",
     "plot_lines",
@@ -544,14 +547,64 @@ def _placeholders(image_id: int, low: int, cells: int, lines: int) -> bytes:
     return text.encode("utf-8")
 
 
+Shown = Result | VibrationalSystem
+"""`show` が描けるもの。結果か、モードの系（ADR-0086）。"""
+
+
+def load_shown(path: "str | os.PathLike[str]") -> Shown:
+    """`show` に渡されたファイルを読む。結果ファイルなら結果、入力ファイルならその系。
+
+    `.toml` は入力ファイルである。`.json` は結果ファイルと実効設定（入力）のどちらでも
+    ありうるので、結果ファイルが必ず持つ `kind` の有無で分ける（ADR-0086）。入力は
+    モード表を正準化した系にして返す。モード表の `csv` はそのファイルからの相対パスで
+    読む。
+    """
+    source = Path(path)
+    if source.suffix.lower() == ".toml":
+        return FCEnvelopeInput.from_path(source).to_system()
+    data = read_json(source)
+    if is_result(data):
+        return any_from_dict(data)
+    return FCEnvelopeInput.from_obj(data, base_dir=source.parent).to_system()
+
+
+def _as_shown(item: "Shown | FCEnvelopeInput | str | os.PathLike[str]") -> Shown:
+    """`show` の引数 1 つを、描けるもの（結果か系）にそろえる。"""
+    if isinstance(item, (EnvelopeResult, LinesResult, VibrationalSystem)):
+        return item
+    if isinstance(item, FCEnvelopeInput):
+        return item.to_system()
+    return load_shown(item)
+
+
+def check_shown(items: "Sequence[Shown]") -> None:
+    """系（入力から来たものを含む）は 1 つだけで渡されているかを確かめる（ADR-0086）。
+
+    系から描けるのは結合の図だけなので、`modes` を付けなくてもその図になる。結果と
+    並べても重ね描きにはならないので、ほかと一緒には取らない。結果どうしの組み合わせは
+    `_default_figure` が確かめる。
+    """
+    systems = sum(isinstance(item, VibrationalSystem) for item in items)
+    if systems and len(items) != 1:
+        raise InvalidInputError(
+            f"an input file or a system shows its modes alone (got {len(items)} items); "
+            "pass it by itself"
+        )
+
+
 def _default_figure(
-    results: "list[Result]", *, modes: bool
+    items: "list[Shown]", *, modes: bool
 ) -> "matplotlib.figure.Figure":
     """結果の並びから、既定の見た目の図を 1 枚描く。組み合わせの規則は `script` と同じ。
 
     1 つなら種類に応じた図、エンベロープと線リストを 1 つずつなら重ね描き、`modes`
-    なら結合の図（結果は 1 つ）。
+    なら結合の図（結果は 1 つ）。系（入力ファイルから読んだものを含む）は 1 つだけ取り、
+    `modes` によらず結合の図になる（ADR-0086）。
     """
+    check_shown(items)
+    if len(items) == 1 and isinstance(items[0], VibrationalSystem):
+        return plot_modes(items[0])
+    results: list[Result] = list(items)  # type: ignore[arg-type]  # 系は上で除いた
     if modes:
         if len(results) != 1:
             raise InvalidInputError(
@@ -574,7 +627,7 @@ def _default_figure(
 
 
 def show(
-    *results: "Result | str | os.PathLike[str]",
+    *results: "Result | VibrationalSystem | FCEnvelopeInput | str | os.PathLike[str]",
     modes: bool = False,
     terminal: bool | None = None,
     block: bool | None = None,
@@ -587,6 +640,10 @@ def show(
     エンベロープと線リストを 1 つずつなら重ね描き（順序は問わない）、`modes=True` なら
     その結果が使ったモードの結合の図になる。
 
+    結合の図は計算しなくても描ける。モードの系（`VibrationalSystem`）、読んだ入力
+    （`FCEnvelopeInput`）、入力ファイルのパス（`.toml`、または実効設定の `.json`）を
+    1 つだけ渡すと、`modes` を付けなくてもその結合の図になる（ADR-0086）。
+
     出し先は `terminal` で決まる。`None`（既定）なら、端末が kitty graphics protocol に
     対応していれば端末へ、そうでなければ `plt.show()` の窓へ出す。`True` / `False` で
     端末 / 窓に固定できる。端末に出した図は pyplot から外す（後の `plt.show()` で窓に
@@ -594,10 +651,7 @@ def show(
 
     `block` は窓に出すときだけ `plt.show` にそのまま渡す。既定では窓を閉じるまで戻らない。
     """
-    loaded = [
-        item if isinstance(item, (EnvelopeResult, LinesResult)) else load_any(item)
-        for item in results
-    ]
+    loaded = [_as_shown(item) for item in results]
     figure = _default_figure(loaded, modes=modes)
 
     import matplotlib.pyplot as plt
