@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import math
 import os
 import sys
 import time
@@ -344,13 +345,32 @@ DEVICE_ATTRIBUTES = b"\033[c"
 """どの端末も答える問い合わせ（DA1）。答えがここまでに来なければ非対応とみなす。"""
 
 KITTY_TIMEOUT = 0.5
-"""端末の答えを待つ上限の秒数。DA1 すら返さない端末で止まらないための保険。"""
+"""端末の答えを待つ上限の秒数。DA1 すら返さない端末で止まらないための保険。
 
-TERMINAL_WIDTH = 0.9
-"""端末に出すとき、窓の幅に対する図の幅の割合。作図スクリプトの `SHOW_WIDTH` と同じ。"""
+tmux の中では DA1 を tmux 自身が答えてしまうので送らない。対応していない端末の外では
+この秒数だけ待ってから窓に回る。"""
+
+TERMINAL_SIZE = 0.5
+"""端末に出すとき、窓の幅・高さに対する図の大きさの上限の割合。作図スクリプトの
+`SHOW_SIZE` と同じ。"""
 
 TERMINAL_DPI = 110
 """端末が画素数を返さないときの解像度。作図スクリプトの `SHOW_DPI` と同じ。"""
+
+
+def in_tmux() -> bool:
+    """tmux の中か。tmux は画像の列を素通しさせないので、包んで渡す必要がある。"""
+    return bool(os.environ.get("TMUX"))
+
+
+def _passthrough(sequence: bytes) -> bytes:
+    """tmux の中なら、外の端末へ届くように包む。tmux 側で allow-passthrough が要る。
+
+    作図スクリプトの `passthrough` と同じ。
+    """
+    if not in_tmux():
+        return sequence
+    return b"\033Ptmux;" + sequence.replace(b"\033", b"\033\033") + b"\033\\"
 
 
 def kitty_terminal() -> bool:
@@ -360,6 +380,11 @@ def kitty_terminal() -> bool:
     ファイルが必ず残る。`show` は端末に出せなければ窓に回したいので、端末に実際に
     尋ねる（ADR-0084）。問い合わせの後ろに DA1 を続けて送り、DA1 の答えより先に
     画像の答えが来れば対応している。SSH の先でも同じように働く。
+
+    tmux の中では問い合わせを包んで外の端末へ届ける。tmux は外の端末の答えを中へ
+    渡すが、DA1 には tmux 自身が即座に答えるので順序の判定に使えない。そこで DA1 は
+    送らず、画像の答えが来るのを `KITTY_TIMEOUT` まで待つ。tmux 側で
+    allow-passthrough が切られていれば問い合わせは届かず、窓に回る（ADR-0085）。
     """
     try:
         import select
@@ -376,11 +401,14 @@ def kitty_terminal() -> bool:
         # 標準入出力が差し替えられて fileno を持たない（pytest の捕捉など）場合も含む。
         return False
 
+    tmux = in_tmux()
     reply = b""
     try:
         tty.setcbreak(stdin)  # 答えを 1 バイトずつ読み、画面に出さない
         sys.stdout.flush()
-        os.write(stdout, KITTY_QUERY + DEVICE_ATTRIBUTES)
+        os.write(
+            stdout, _passthrough(KITTY_QUERY) + (b"" if tmux else DEVICE_ATTRIBUTES)
+        )
         deadline = time.monotonic() + KITTY_TIMEOUT
         while (left := deadline - time.monotonic()) > 0:
             ready, _, _ = select.select([stdin], [], [], left)
@@ -389,14 +417,16 @@ def kitty_terminal() -> bool:
             reply += os.read(stdin, 1024)
             if b"\033[?" in reply and reply.endswith(b"c"):
                 break
+            if tmux and b"\033_Gi=31;" in reply and reply.endswith(b"\033\\"):
+                break
     finally:
         termios.tcsetattr(stdin, termios.TCSAFLUSH, saved)
     answer = reply.split(b"\033[?", 1)[0]
     return b"\033_Gi=31;OK" in answer
 
 
-def _terminal_pixel_width() -> int | None:
-    """端末の窓の画素幅。返さない端末もあるので、その場合は None。"""
+def _terminal_size() -> tuple[int, int, int, int]:
+    """端末の窓の (行数, 桁数, 画素幅, 画素高さ)。分からない値は 0。"""
     try:
         import fcntl
         import struct
@@ -404,18 +434,31 @@ def _terminal_pixel_width() -> int | None:
 
         packed = fcntl.ioctl(sys.stdout, termios.TIOCGWINSZ, b"\0" * 8)
     except (ImportError, OSError, ValueError, AttributeError):
-        return None
-    return struct.unpack("HHHH", packed)[2] or None  # rows, cols, xpixel, ypixel
+        return 0, 0, 0, 0
+    return struct.unpack("HHHH", packed)
 
 
 def _to_terminal(figure: "matplotlib.figure.Figure") -> None:
     """kitty graphics protocol で端末に直に出す。作図スクリプトの `show` と同じ出し方。
 
-    解像度は窓の画素幅から逆算して、端末側で縮小させない（ADR-0061）。
+    図は窓の幅と高さの `TERMINAL_SIZE` 倍に収まる大きさで描く。窓の画素数が分かれば
+    解像度をそこから逆算して端末側で縮小させず（ADR-0061）、分からなければ
+    `TERMINAL_DPI` で描いて行数だけ指定する。tmux の中では画像の後ろで tmux の
+    カーソルが動かないので、画像の高さぶん改行する（ADR-0085）。
     """
-    pixels = _terminal_pixel_width()
-    width = figure.get_figwidth()
-    dpi = pixels * TERMINAL_WIDTH / width if pixels else TERMINAL_DPI
+    rows, columns, xpixel, ypixel = _terminal_size()
+    width, height = figure.get_size_inches()
+    if rows and columns and xpixel and ypixel:
+        dpi = TERMINAL_SIZE * min(xpixel / width, ypixel / height)
+        lines = math.ceil(height * dpi / (ypixel / rows))
+        placement = ""
+    else:
+        dpi = TERMINAL_DPI
+        lines = max(1, round(rows * TERMINAL_SIZE)) if rows else 1
+        placement = f"r={lines}," if rows else ""
+    tmux = in_tmux()
+    if tmux:
+        placement += "C=1,"  # カーソルは下の改行で動かす
 
     buffer = io.BytesIO()
     figure.savefig(buffer, format="png", dpi=dpi)
@@ -425,13 +468,15 @@ def _to_terminal(figure: "matplotlib.figure.Figure") -> None:
     out, first = sys.stdout.buffer, True
     while payload:  # 制御データは先頭のみ、以降は m= だけ
         head, payload = payload[:4096], payload[4096:]
-        control = "a=T,f=100,q=2," if first else ""
+        control = f"a=T,f=100,q=2,{placement}" if first else ""
         out.write(
-            b"\033_G" + f"{control}m={int(bool(payload))}".encode()
-            + b";" + head + b"\033\\"
+            _passthrough(
+                b"\033_G" + f"{control}m={int(bool(payload))}".encode()
+                + b";" + head + b"\033\\"
+            )
         )
         first = False
-    out.write(b"\n")
+    out.write(b"\n" * (lines if tmux else 1))
     out.flush()
 
 

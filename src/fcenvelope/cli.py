@@ -587,12 +587,17 @@ def show(
         # 計算や読み込みの失敗ではなく環境の話なので、痕跡のログは残さない。
         import matplotlib
 
+        hint = (
+            "; inside tmux, images need `set -g allow-passthrough on` in tmux.conf"
+            if plotting.in_tmux()
+            else ""
+        )
         typer.secho(
             "error: this terminal cannot show images and no window can be opened "
             f"(matplotlib backend {matplotlib.get_backend()!r}); use "
             "`fcenvelope script` to write a plot script, --terminal if the terminal "
             "does speak the kitty graphics protocol, or set MPLBACKEND to an "
-            "interactive backend",
+            f"interactive backend{hint}",
             fg=typer.colors.RED,
             err=True,
         )

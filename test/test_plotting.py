@@ -442,6 +442,7 @@ def test_show_draws_in_a_kitty_terminal_instead_of_a_window(result, shown, monke
     import fcenvelope.plotting
 
     monkeypatch.setattr(fcenvelope.plotting, "kitty_terminal", lambda: True)
+    monkeypatch.delenv("TMUX", raising=False)
     figure = show(result)
 
     stream = capfdbinary.readouterr().out
@@ -471,26 +472,39 @@ ASK = (
 )
 
 
-def ask_on_a_terminal(answer: bytes | None) -> str:
+def ask_on_a_terminal(answer: bytes | None, *, tmux: bool = False) -> str:
     """疑似端末に繋いだ子プロセスで `kitty_terminal` を呼び、端末役として `answer` を返す。
 
-    `answer` が None なら何も答えない端末になる。
+    `answer` が None なら何も答えない端末になる。`tmux` なら tmux の中のふりをする。
+    その場合この端末役は tmux と外の端末を兼ね、包まれた問い合わせを受けて外の端末の
+    答えを返す（tmux 3.3 以降が allow-passthrough のもとでするのと同じ）。
     """
     pty = pytest.importorskip("pty")
     import select
 
+    env = {key: value for key, value in os.environ.items() if key != "TMUX"}
+    if tmux:
+        env["TMUX"] = "/tmp/tmux-0/default,1,0"
+    end = b"\033\\" if tmux else b"\033[c"
+
     master, slave = pty.openpty()
     process = subprocess.Popen(
-        [sys.executable, "-c", ASK], stdin=slave, stdout=slave, stderr=subprocess.PIPE
+        [sys.executable, "-c", ASK], stdin=slave, stdout=slave, stderr=subprocess.PIPE,
+        env=env,
     )
     os.close(slave)
     try:
         asked = b""
-        while not asked.endswith(b"\033[c"):
+        while not asked.endswith(end):
             ready, _, _ = select.select([master], [], [], 10.0)
             assert ready, "端末に問い合わせが来ない"
             asked += os.read(master, 1024)
-        assert b"\033_G" in asked and b"a=q" in asked
+        if tmux:
+            # 包まれていて、tmux が自分で答えてしまう DA1 は送らない。
+            assert asked.startswith(b"\033Ptmux;\033\033_G") and b"a=q" in asked
+            assert b"\033[c" not in asked
+        else:
+            assert b"\033_G" in asked and b"a=q" in asked
         if answer is not None:
             os.write(master, answer)
         _, err = process.communicate(timeout=10.0)
@@ -514,6 +528,28 @@ def test_a_terminal_that_answers_nothing_is_not():
     assert ask_on_a_terminal(None) == "False"
 
 
+def test_in_tmux_the_query_is_passed_through_to_the_terminal_outside():
+    assert ask_on_a_terminal(b"\033_Gi=31;OK\033\\", tmux=True) == "True"
+
+
+def test_in_tmux_without_an_answer_it_is_not():
+    # allow-passthrough が切られている tmux や、外の端末が非対応の場合。
+    assert ask_on_a_terminal(None, tmux=True) == "False"
+
+
+def test_in_tmux_the_image_is_passed_through(result, shown, monkeypatch, capfdbinary):
+    monkeypatch.setenv("TMUX", "/tmp/tmux-0/default,1,0")
+    plt.close(show(result, terminal=True))
+
+    stream = capfdbinary.readouterr().out
+    assert stream.startswith(b"\033Ptmux;\033\033_Ga=T,f=100,q=2,C=1,")
+    unwrapped = stream.replace(b"\033Ptmux;", b"").replace(b"\033\033", b"\033")
+    png = base64.standard_b64decode(
+        b"".join(payload for _, payload in KITTY_CHUNK.findall(unwrapped))
+    )
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def test_a_stdout_that_is_not_a_terminal_is_never_asked():
     finished = subprocess.run(
         [sys.executable, "-c", ASK], capture_output=True, stdin=subprocess.DEVNULL
@@ -530,5 +566,5 @@ def test_the_terminal_resolution_matches_the_plot_scripts(name):
     import fcenvelope.plotting
 
     text = resources.files("fcenvelope").joinpath("templates", f"{name}.py").read_text("utf-8")
-    assert re.search(rf"^SHOW_WIDTH = {fcenvelope.plotting.TERMINAL_WIDTH}\b", text, re.M)
+    assert re.search(rf"^SHOW_SIZE = {fcenvelope.plotting.TERMINAL_SIZE}\b", text, re.M)
     assert re.search(rf"^SHOW_DPI = {fcenvelope.plotting.TERMINAL_DPI}\b", text, re.M)

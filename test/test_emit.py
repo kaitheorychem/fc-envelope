@@ -35,9 +35,15 @@ KITTY_CHUNK = re.compile(rb"\033_G([^;]*);([^\033]*)\033\\")
 
 
 def run_script_on_a_terminal(
-    script: Path, *, xpixel: int, ypixel: int = 900, columns: int = 160, rows: int = 40
+    script: Path,
+    *,
+    xpixel: int,
+    ypixel: int = 900,
+    columns: int = 160,
+    rows: int = 40,
+    tmux: bool = False,
 ) -> bytes:
-    """疑似端末に繋いで走らせ、端末に流れたバイト列を返す。"""
+    """疑似端末に繋いで走らせ、端末に流れたバイト列を返す。`tmux` なら tmux の中のふり。"""
     pty = pytest.importorskip("pty")
     import fcntl
     import termios
@@ -48,7 +54,11 @@ def run_script_on_a_terminal(
         [sys.executable, str(script)],
         stdout=slave,
         stderr=subprocess.PIPE,
-        env={**os.environ, "MPLBACKEND": "Agg"},
+        env={
+            **{key: value for key, value in os.environ.items() if key != "TMUX"},
+            "MPLBACKEND": "Agg",
+            **({"TMUX": "/tmp/tmux-0/default,1,0"} if tmux else {}),
+        },
     )
     os.close(slave)
 
@@ -166,7 +176,7 @@ def test_the_script_runs_on_its_own_and_writes_the_image(name, request):
 #: `fcenvelope` は入らない（ADR-0058）。増えたらここに足すかどうかを考える。
 ALLOWED_IMPORTS = {
     "__future__", "base64", "fcntl", "io", "json", "math",
-    "matplotlib", "pathlib", "struct", "sys", "termios",
+    "matplotlib", "os", "pathlib", "struct", "sys", "termios",
 }
 
 
@@ -354,22 +364,43 @@ def test_nothing_is_written_to_a_stdout_that_is_not_a_terminal(name, request):
 
 
 def test_the_figure_goes_to_a_terminal_as_a_kitty_graphics_stream(envelope_script):
-    png = reassemble(run_script_on_a_terminal(envelope_script, xpixel=1600))
-    assert png_size(png)[0] == round(1600 * 0.9)
+    stream = run_script_on_a_terminal(envelope_script, xpixel=1600)
+    png = reassemble(stream)
+    # 窓 1600x900 の半分に収まる。この窓では高さが先に効く: 900 * 0.5 / 4.2 dpi。
+    assert png_size(png) == (round(7.0 * 450 / 4.2), round(450))
+    assert b"\033Ptmux;" not in stream
 
 
-def test_the_figure_follows_the_width_of_the_terminal(envelope_script):
-    narrow = reassemble(run_script_on_a_terminal(envelope_script, xpixel=800))
-    wide = reassemble(run_script_on_a_terminal(envelope_script, xpixel=2400))
-    assert png_size(narrow)[0] == round(800 * 0.9)
-    assert png_size(wide)[0] == round(2400 * 0.9)
+@pytest.mark.parametrize("xpixel, ypixel", [(800, 900), (2400, 900), (2400, 2400)])
+def test_the_figure_fits_in_half_of_the_terminal(envelope_script, xpixel, ypixel):
+    png = reassemble(run_script_on_a_terminal(envelope_script, xpixel=xpixel, ypixel=ypixel))
+    width, height = png_size(png)
+    assert width <= xpixel * 0.5 + 1 and height <= ypixel * 0.5 + 1
+    # 狭い方の向きでちょうど半分になる。
+    assert max(width / (xpixel * 0.5), height / (ypixel * 0.5)) == pytest.approx(1.0, abs=0.01)
 
 
 def test_a_terminal_that_reports_no_pixels_falls_back_to_a_fixed_resolution(
     envelope_script,
 ):
-    png = reassemble(run_script_on_a_terminal(envelope_script, xpixel=0, ypixel=0))
+    stream = run_script_on_a_terminal(envelope_script, xpixel=0, ypixel=0)
+    png = reassemble(stream)
     assert png_size(png)[0] == round(7.0 * 110)  # FIGSIZE[0] * SHOW_DPI
+    # 大きさは端末に任せ、窓の行数の半分に収めさせる。
+    assert b"r=20," in KITTY_CHUNK.findall(stream)[0][0]
+
+
+def test_in_tmux_the_stream_is_passed_through_and_the_cursor_moved(envelope_script):
+    stream = run_script_on_a_terminal(envelope_script, xpixel=1600, tmux=True)
+    assert b"\033Ptmux;\033\033_G" in stream, "tmux の中なのに包まれていない"
+    assert b"\033_G" not in stream.replace(b"\033\033_G", b"")  # 素の列は流さない
+    unwrapped = stream.replace(b"\033Ptmux;", b"").replace(b"\033\033", b"\033")
+    png = reassemble(unwrapped)
+    control = KITTY_CHUNK.findall(unwrapped)[0][0]
+    assert b"C=1," in control
+    # 画像の高さ 450 px は 900 px / 40 行で 20 行ぶん。tmux のカーソルをその下へ送る。
+    assert png_size(png)[1] == 450
+    assert stream.endswith(b"\033\\" + b"\r\n" * 20)
 
 
 def test_the_image_file_keeps_its_own_resolution_on_a_terminal(envelope_script):

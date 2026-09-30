@@ -372,8 +372,9 @@ def test_show_takes_the_same_combinations_as_script(stored_pair, window):
     assert window == []
 
 
-def test_show_without_a_window_points_to_script(stored_pair, shown):
+def test_show_without_a_window_points_to_script(stored_pair, shown, monkeypatch):
     # テストは `Agg` で走る。画面のない環境と同じで、黙って何も出さずに終わらない。
+    monkeypatch.delenv("TMUX", raising=False)
     envelope, _ = stored_pair
     invocation = runner.invoke(app, ["show", str(envelope)])
 
@@ -381,6 +382,15 @@ def test_show_without_a_window_points_to_script(stored_pair, shown):
     assert "fcenvelope script" in invocation.output
     assert not envelope.with_suffix(".log").exists()
     assert shown == []
+
+
+def test_inside_tmux_the_error_names_allow_passthrough(stored_pair, shown, monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/tmux-0/default,1,0")
+    envelope, _ = stored_pair
+    invocation = runner.invoke(app, ["show", str(envelope)])
+
+    assert invocation.exit_code == 1
+    assert "allow-passthrough" in invocation.output
 
 
 def test_show_prefers_a_terminal_that_draws_images(stored_pair, shown, monkeypatch):
