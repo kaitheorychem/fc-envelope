@@ -42,6 +42,10 @@
   `modes.csv` の参照も辿る）を 1 つだけ渡すと、`--modes` なしでそのモードの結合の図になる。
   ライブラリの `show` は `VibrationalSystem` や読んだ `FCEnvelopeInput` もそのまま受ける
   （ADR-0086）。
+- 全モードの Huang-Rhys 因子 S を一様に倍にした系を返す `VibrationalSystem.scale_huang_rhys(factor)`。
+  結合の強さを経験的に補正するなど、物理的なモデル調整のためのライブラリの口で、振動数は
+  変えず、元の系も変えない。倍は S に掛かる（g を c 倍したいなら `c**2`）。入力ファイルと
+  CLI は変わらない（ADR-0087）。
 
 ### 修正
 

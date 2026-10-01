@@ -121,7 +121,8 @@ INPUT_FORMATS: dict[str, Callable[[str], object]]   # 拡張子 -> テキスト�
 
 - `VibrationalMode(frequency, huang_rhys)` — 正準形の振動モード
 - `VibrationalSystem(modes)` — 系。`.frequencies` / `.huang_rhys` / `.reorganization_energy` /
-  `.occupations(temperature)` を持つ（ADR-0044）
+  `.occupations(temperature)` を持つ（ADR-0044）。`.scale_huang_rhys(factor)` は全モードの S を
+  一様に `factor` 倍した新しい系を返す（ADR-0087）
 - `Broadening(sigma)` — 線形状。`.log_damping(tau)` / `.peak_height()` /
   `.truncation_indicator(tau_max)` / `MIN_TRUNCATION_INDICATOR` を持つ（ADR-0034）
 - `EnergyGrid(e_min, e_max, de, n_fft)` — エネルギーグリッド。持つのは**解決済み**の
