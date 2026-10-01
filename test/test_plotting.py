@@ -17,6 +17,7 @@ from conftest import compute_quietly, lines_quietly
 from fcenvelope import (
     Broadening,
     EnergyGrid,
+    FCEnvelopeInput,
     VibrationalMode,
     VibrationalSystem,
     plot_envelope,
@@ -27,7 +28,7 @@ from fcenvelope import (
     show,
 )
 from fcenvelope.errors import InvalidInputError
-from fcenvelope.plotting import opens_a_window
+from fcenvelope.plotting import load_shown, opens_a_window
 
 SYSTEM = VibrationalSystem([VibrationalMode(frequency=1200.0, huang_rhys=0.5)])
 
@@ -428,6 +429,77 @@ def test_show_rejects_a_combination_script_would_reject(overlay_pair, shown, pic
     with pytest.raises(InvalidInputError):
         show(*pick(*overlay_pair), modes=modes)
     assert shown == []
+
+
+# --- 入力や系から結合の図を一目見る（ADR-0086） ---
+
+
+MODES_TOML = """\
+schema_version = 4
+temperature = 300.0
+
+[modes]
+coupling_convention = "g"
+csv = { path = "modes.csv", columns = ["coupling", "frequency"] }
+"""
+
+
+@pytest.fixture
+def input_toml(tmp_path):
+    """結合を g で書いた CSV を参照する、計算前の入力ファイル。g の符号は図に残らない。"""
+    (tmp_path / "modes.csv").write_text("0.5,1200.0\n-0.8,450.0\n", encoding="utf-8")
+    path = tmp_path / "input.toml"
+    path.write_text(MODES_TOML, encoding="utf-8")
+    return path
+
+
+def test_show_draws_the_modes_of_a_system(shown):
+    figure = show(MODES)
+    try:
+        assert drawn_sticks(figure) == pytest.approx([(450.0, 0.8), (1200.0, 0.5)])
+        assert shown == [{"block": None}]
+    finally:
+        plt.close(figure)
+
+
+def test_show_draws_the_modes_of_an_input_file_and_its_csv(input_toml, shown):
+    figure = show(input_toml)
+    try:
+        assert drawn_sticks(figure) == pytest.approx([(450.0, 0.8), (1200.0, 0.5)])
+    finally:
+        plt.close(figure)
+
+
+def test_show_draws_the_modes_of_a_read_input_and_of_its_effective_settings(
+    input_toml, shown, tmp_path
+):
+    read = FCEnvelopeInput.from_path(input_toml)
+    settings = tmp_path / "input_config.json"
+    read.save(settings)
+    for item in (read, settings):
+        figure = show(item)
+        try:
+            assert drawn_sticks(figure) == pytest.approx([(450.0, 0.8), (1200.0, 0.5)])
+        finally:
+            plt.close(figure)
+
+
+@pytest.mark.parametrize("modes", [False, True])
+def test_a_system_is_shown_alone(overlay_pair, shown, modes):
+    _, lines = overlay_pair
+    with pytest.raises(InvalidInputError, match="alone"):
+        show(MODES, lines, modes=modes)
+    assert shown == []
+
+
+def test_load_shown_tells_a_result_from_an_input(result, input_toml, tmp_path):
+    path = tmp_path / "result.json"
+    save_envelope(result, path)
+    assert type(load_shown(path)).__name__ == "EnvelopeResult"
+    system = load_shown(input_toml)
+    assert isinstance(system, VibrationalSystem)
+    np.testing.assert_allclose(system.frequencies, [1200.0, 450.0])
+    np.testing.assert_allclose(system.huang_rhys, [0.25, 0.64])
 
 
 def test_opens_a_window_is_false_on_agg():

@@ -56,11 +56,14 @@ __all__ = [
     "ENVELOPE_KIND",
     "LINES_KIND",
     "RESULT_KINDS",
+    "any_from_dict",
+    "is_result",
     "kind_for",
     "kind_of",
     "load_any",
     "load_envelope",
     "load_lines",
+    "read_json",
     "save_any",
     "save_envelope",
     "save_lines",
@@ -539,13 +542,14 @@ def envelope_from_dict(data: JsonValue) -> EnvelopeResult:
     )
 
 
-def _read_json(path: str | Path) -> JsonValue:
+def read_json(path: str | Path) -> JsonValue:
+    """JSON ファイルを読む。読めない・壊れているときは `InvalidInputError`。"""
     source = Path(path)
     with stage(logger, f"read {source}"):
         try:
             text = source.read_text(encoding="utf-8")
         except OSError as exc:
-            raise InvalidInputError(f"cannot read result file {source}: {exc}") from exc
+            raise InvalidInputError(f"cannot read {source}: {exc}") from exc
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
@@ -554,7 +558,7 @@ def _read_json(path: str | Path) -> JsonValue:
 
 def load_envelope(path: str | Path) -> EnvelopeResult:
     """保存済み JSON からエンベロープの結果クラスを復元する。"""
-    return envelope_from_dict(_read_json(path))
+    return envelope_from_dict(read_json(path))
 
 
 def lines_to_dict(result: LinesResult) -> JsonObject:
@@ -674,7 +678,7 @@ def lines_from_dict(data: JsonValue) -> LinesResult:
 
 def load_lines(path: str | Path) -> LinesResult:
     """保存済み JSON から離散 FC 因子の結果クラスを復元する。"""
-    return lines_from_dict(_read_json(path))
+    return lines_from_dict(read_json(path))
 
 
 @dataclass(frozen=True, slots=True)
@@ -739,7 +743,19 @@ def save_any(result: Result, path: str | Path) -> None:
 
 def load_any(path: str | Path) -> Result:
     """`kind` を見てエンベロープ / 離散 FC 因子のどちらかを復元する。"""
-    data = _read_json(path)
+    return any_from_dict(read_json(path))
+
+
+def is_result(data: JsonValue) -> bool:
+    """読んだ JSON が結果ファイルのものか。結果ファイルは必ず `kind` を持つ（ADR-0036）。
+
+    実効設定（入力）も同じ `.json` で書かれるので、中身で見分ける口として置く（ADR-0086）。
+    """
+    return isinstance(data, dict) and "kind" in data
+
+
+def any_from_dict(data: JsonValue) -> Result:
+    """`kind` を見てエンベロープ / 離散 FC 因子のどちらかを JSON から復元する。"""
     kind = data.get("kind") if isinstance(data, dict) else None
     # `kind` は JSON から来るので、文字列とは限らない（辞書ならハッシュもできない）。
     spec = RESULT_KINDS.get(kind) if isinstance(kind, str) else None

@@ -372,6 +372,26 @@ def test_show_takes_the_same_combinations_as_script(stored_pair, window):
     assert window == []
 
 
+def test_show_draws_the_modes_of_an_input_file(tmp_path, input_file, window):
+    # 計算しなくても、入力ファイルから結合の図が出る（ADR-0086）。
+    before = sorted(tmp_path.iterdir())
+    invocation = runner.invoke(app, ["show", str(input_file)])
+
+    assert invocation.exit_code == 0, invocation.output
+    ((items, kwargs),) = window
+    assert [type(item).__name__ for item in items] == ["VibrationalSystem"]
+    assert kwargs == {"modes": False, "terminal": False}
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def test_show_takes_an_input_file_alone(stored_pair, input_file, window):
+    envelope, _ = stored_pair
+    invocation = runner.invoke(app, ["show", str(input_file), str(envelope)])
+
+    assert invocation.exit_code == 2 and "alone" in invocation.output
+    assert window == []
+
+
 def test_show_without_a_window_points_to_script(stored_pair, shown, monkeypatch):
     # テストは `Agg` で走る。画面のない環境と同じで、黙って何も出さずに終わらない。
     monkeypatch.delenv("TMUX", raising=False)
