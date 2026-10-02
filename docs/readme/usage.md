@@ -872,6 +872,55 @@ plot_lines(lines).savefig("sticks.png", dpi=300)
 ```python
 scaled = system.scale_huang_rhys(1.2)   # S を 1.2 倍。λ も 1.2 倍になる
 ```
+
+### 配列として取り出して保存する
+
+ライブラリには CSV などへ書き出す関数を置かない。表になる量はどれも ndarray で取れるので、
+ほかのプログラムへ渡すときは numpy で保存する。単位は常に正準単位で、ファイルには
+残らないので、受け取る側に伝える。
+
+| 対象 | 属性 | 単位 |
+|---|---|---|
+| `VibrationalSystem` | `frequencies` / `huang_rhys` | cm⁻¹ / 無次元 |
+| `EnvelopeResult` | `energy` / `density` | cm⁻¹ / 1/cm⁻¹ |
+| `LinesResult` | `energies` / `fc_factors` / `weights` | cm⁻¹ / 無次元 / 無次元 |
+
+```python
+import numpy as np
+
+# モード表。ヘッダ付きの CSV にすれば、そのまま入力ファイルの modes.csv として読める
+np.savetxt(
+    "modes.csv", np.column_stack([scaled.frequencies, scaled.huang_rhys]),
+    delimiter=",", header="frequency,coupling", comments="",
+)
+
+# エンベロープ F(E)
+np.savetxt(
+    "spectrum.csv", np.column_stack([result.energy, result.density]),
+    delimiter=",", header="energy,density", comments="",
+)
+
+# 線。遷移のラベル（量子数）は 1 本ごとに数が違うので表に入らない。要るなら lines.lines から取る
+np.savetxt(
+    "lines.csv", np.column_stack([lines.energies, lines.fc_factors, lines.weights]),
+    delimiter=",", header="energy,fc_factor,weight", comments="",
+)
+
+# Python から読むだけなら、numpy の形式のほうが手早い
+np.savez("spectrum.npz", energy=result.energy, density=result.density)
+```
+
+`comments=""` を付けないとヘッダの頭に `# ` が付き、入力ファイルの CSV としては読めない
+（コメント行は書けない）。書き出したモード表を読むときは、S を書いたので流儀を `"huang_rhys"` にする。
+
+```toml
+[modes]
+coupling_convention = "huang_rhys"
+csv = { path = "modes.csv" }
+```
+
+計算条件や単位まで含めて渡したいなら、配列ではなく結果ファイル（`save_envelope` /
+`save_lines`）を渡す。表は `columns` と `rows` の形なので、どの言語からでも列を名前で引ける。
 理論文書の行列そのものが要る場合は `fc_factor_matrix(S, m_max, n_max)` を使う。
 
 エンベロープと線を 1 枚に重ねるには `plot_overlay` を使う（CLI から作るときは
