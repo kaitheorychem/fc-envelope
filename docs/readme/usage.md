@@ -864,6 +864,14 @@ plot_lines(lines).savefig("sticks.png", dpi=300)
 
 `lines.energies` / `lines.fc_factors` / `lines.weights` で ndarray としても取れる。
 再配列エネルギー λ は系から決まるので `lines.system.reorganization_energy` から取る。
+
+結合の強さを経験的に補正するなど、全モードの S を一様に倍にした系が欲しいときは
+`scale_huang_rhys` を使う。振動数はそのままで、元の系は変わらない（ADR-0087）。
+倍は S に掛かるので、g を c 倍したいなら `c**2` を渡す。
+
+```python
+scaled = system.scale_huang_rhys(1.2)   # S を 1.2 倍。λ も 1.2 倍になる
+```
 理論文書の行列そのものが要る場合は `fc_factor_matrix(S, m_max, n_max)` を使う。
 
 エンベロープと線を 1 枚に重ねるには `plot_overlay` を使う（CLI から作るときは

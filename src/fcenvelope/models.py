@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar
 
 import numpy as np
@@ -122,6 +122,26 @@ class VibrationalSystem:
     def occupations(self, temperature: float) -> np.ndarray:
         """温度 T [K] での占有数 n_alpha。式そのものは `physics.py` にある。"""
         return occupation_numbers(self.frequencies, temperature)
+
+    def scale_huang_rhys(self, factor: float) -> "VibrationalSystem":
+        """全モードの S を一様に `factor` 倍した新しい系を返す。振動数は変えない。
+
+        物理的なモデル調整（結合の強さを経験的に補正する）のための口である。入力の
+        単位や桁の取り違えを直すものではなく、それは単位の倍率で書く（ADR-0078）。
+        倍は正準量 S に掛かる。g を c 倍したいなら S = g^2 なので `factor = c**2`、
+        lambda を k 倍したいなら S = lambda / omega なので `factor = k` である。
+        再配列エネルギーもちょうど `factor` 倍になる
+        （`docs/adr/0087-the-system-scales-its-huang-rhys-factors-uniformly.md`）。
+
+        `factor` は 0 以上の有限な数に限る。S が全部 0 の系でも負の倍は誤りにする。
+        """
+        if not (factor >= 0.0 and math.isfinite(factor)):
+            raise InvalidInputError(
+                f"factor must be a non-negative finite number (got {factor})"
+            )
+        return VibrationalSystem(
+            [replace(mode, huang_rhys=mode.huang_rhys * factor) for mode in self.modes]
+        )
 
 
 @dataclass(frozen=True, slots=True)
