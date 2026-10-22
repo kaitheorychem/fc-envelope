@@ -16,6 +16,12 @@
     >>> round(float(result.diagnostics.total_area), 9)
     1.0
 
+条件を変えた 2 つのエンベロープがどれだけ違うかは `envelope_distance` で数にする。
+
+    >>> from fcenvelope import envelope_distance
+    >>> envelope_distance(result, result, norm="L1")
+    0.0
+
 スペクトル全体ではなく主要な離散遷移だけを見たい場合は `compute_fc_lines` を使う。
 
     >>> from fcenvelope import compute_fc_lines
@@ -26,6 +32,7 @@
 
 from __future__ import annotations
 
+from .distance import envelope_distance
 from .envelope import compute_envelope
 from .errors import (
     FCEnvelopeError,
@@ -75,6 +82,8 @@ __all__ = [
     "plot_overlay",
     # 公開 API: 既定の見た目で窓に出して一目見る
     "show",
+    # 公開 API: 2 つのエンベロープの距離
+    "envelope_distance",
     # 計算用の値の型
     "Broadening",
     "EnergyGrid",

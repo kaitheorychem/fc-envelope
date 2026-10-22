@@ -873,6 +873,33 @@ plot_lines(lines).savefig("sticks.png", dpi=300)
 scaled = system.scale_huang_rhys(1.2)   # S を 1.2 倍。λ も 1.2 倍になる
 ```
 
+### 2 つのエンベロープの違いを数にする
+
+温度や結合を振ったときにスペクトルがどれだけ変わるか、グリッドを細かくして収束しているかは、
+`envelope_distance` で差 F₁ − F₂ のノルムとして数にできる（ADR-0088）。
+
+```python
+from fcenvelope import envelope_distance, load_envelope
+
+a = compute_envelope(system, temperature=300.0, broadening=broadening, grid=grid)
+b = compute_envelope(system, temperature=77.0, broadening=broadening, grid=grid)
+
+envelope_distance(a, b, norm="L1")     # ∫|F1 - F2| dE。無次元で 0〜2
+envelope_distance(a, b, norm="L2")     # (∫|F1 - F2|^2 dE)^(1/2)、(cm^-1)^(-1/2)
+envelope_distance(a, b, norm="Linf")   # max|F1 - F2|、1/cm^-1
+
+# 保存済みの結果どうしでもよい
+envelope_distance(load_envelope("300K.json"), load_envelope("77K.json"), norm="L1")
+```
+
+`norm` に既定値はない。どのノルムも E 軸上の積分として取るので、値はグリッドの細かさに
+よらない。L1 は 2 つの確率密度が重ならなければ 2、一致すれば 0 で、いちばん読みやすい。
+
+2 つは同じ出力グリッド（同じ `de` と同じ窓 `e_min` / `e_max`）で計算しておく。違えば補間
+せずに `InvalidInputError` で止まる。全域グリッドの点数 `n` だけが違うのは構わない。
+規格化はやり直さないので、窓の外へ逃げた面積の差も距離に入る。比べるのは本プログラムが
+計算したエンベロープ同士だけで、実験スペクトルとの比較には使えない。
+
 ### 配列として取り出して保存する
 
 ライブラリには CSV などへ書き出す関数を置かない。表になる量はどれも ndarray で取れるので、
