@@ -74,7 +74,16 @@ fc_factor_matrix(huang_rhys: float, m_max: int, n_max: int = 0) -> np.ndarray
 plot_overlay(envelope: EnvelopeResult, lines: LinesResult, *, ax=None,
              envelope_label="envelope", lines_label="FC lines",
              magnify=1.0, title=None) -> matplotlib.figure.Figure
+
+# 2 つのエンベロープの距離: 差 F_a - F_b の L1 / L2 / L∞ ノルム（ADR-0088）
+envelope_distance(a: EnvelopeResult, b: EnvelopeResult, *, norm: float) -> float
 ```
+
+`envelope_distance` の `norm` は `1`・`2`・`math.inf` のどれかで、既定値はない。ノルムは
+∫|F_a − F_b|^p dE の形で E 軸上の積分として取り（出力グリッドの和に ΔE を掛ける）、返す値の
+単位は L1 が無次元、L2 が (cm⁻¹)^−½、L∞ が 1/cm⁻¹ である。2 つの出力グリッドは同じ点で
+なければならず、ΔE か窓が違えば補間せずに `InvalidInputError` で止める（`n_fft` だけの違いは
+許す）。規格化はやり直さず、系・温度・線形状の違いは警告しない。
 
 両系統とも「共通の物理条件（`temperature`）＋自分に固有の数値条件（`grid` / `selection`）」
 という同じ形をしている（ADR-0035）。入力ファイルでも、固有のブロックはどちらも省略でき、
@@ -652,6 +661,7 @@ CLI は `--log FILE` が指定されたときだけ最初からファイルへ�
 | `result.py` | 結果クラス、`Provenance` | models |
 | `envelope.py` | グリッド構成・FFT | errors, logs, models, result |
 | `lines.py` | 漸化式・線の列挙 | errors, logs, models, physics, result |
+| `distance.py` | 2 つのエンベロープの距離（ADR-0088） | errors, result |
 | `io.py` | 保存・読み込み、`kind` の表 | errors, logs, models, result |
 | `plotting.py` | 描画、結果の型の表 | errors, logs, result |
 | `emit.py` | 作図スクリプトの生成、雛形の表。**描かない**（matplotlib に依存しない） | errors, io, logs, result |
