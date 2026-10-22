@@ -879,18 +879,17 @@ scaled = system.scale_huang_rhys(1.2)   # S を 1.2 倍。λ も 1.2 倍にな�
 `envelope_distance` で差 F₁ − F₂ のノルムとして数にできる（ADR-0088）。
 
 ```python
-import math
 from fcenvelope import envelope_distance, load_envelope
 
 a = compute_envelope(system, temperature=300.0, broadening=broadening, grid=grid)
 b = compute_envelope(system, temperature=77.0, broadening=broadening, grid=grid)
 
-envelope_distance(a, b, norm=1)          # ∫|F1 - F2| dE。無次元で 0〜2
-envelope_distance(a, b, norm=2)          # (∫|F1 - F2|^2 dE)^(1/2)、(cm^-1)^(-1/2)
-envelope_distance(a, b, norm=math.inf)   # max|F1 - F2|、1/cm^-1
+envelope_distance(a, b, norm="L1")     # ∫|F1 - F2| dE。無次元で 0〜2
+envelope_distance(a, b, norm="L2")     # (∫|F1 - F2|^2 dE)^(1/2)、(cm^-1)^(-1/2)
+envelope_distance(a, b, norm="Linf")   # max|F1 - F2|、1/cm^-1
 
 # 保存済みの結果どうしでもよい
-envelope_distance(load_envelope("300K.json"), load_envelope("77K.json"), norm=1)
+envelope_distance(load_envelope("300K.json"), load_envelope("77K.json"), norm="L1")
 ```
 
 `norm` に既定値はない。どのノルムも E 軸上の積分として取るので、値はグリッドの細かさに

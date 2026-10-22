@@ -19,7 +19,7 @@
 条件を変えた 2 つのエンベロープがどれだけ違うかは `envelope_distance` で数にする。
 
     >>> from fcenvelope import envelope_distance
-    >>> envelope_distance(result, result, norm=1)
+    >>> envelope_distance(result, result, norm="L1")
     0.0
 
 スペクトル全体ではなく主要な離散遷移だけを見たい場合は `compute_fc_lines` を使う。

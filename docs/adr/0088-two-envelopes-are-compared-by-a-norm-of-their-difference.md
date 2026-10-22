@@ -10,14 +10,14 @@
 ```python
 from fcenvelope import envelope_distance
 
-envelope_distance(result_300k, result_77k, norm=1)     # 1, 2, math.inf のどれか
+envelope_distance(result_300k, result_77k, norm="L1")   # "L1", "L2", "Linf" のどれか
 ```
 
 | `norm` | 定義 | 単位 | 値の範囲 |
 |---|---|---|---|
-| `1` | ∫\|F₁ − F₂\| dE | 無次元 | 0〜2 |
-| `2` | (∫\|F₁ − F₂\|² dE)^½ | (cm⁻¹)^−½ | 0 以上 |
-| `math.inf` | max \|F₁ − F₂\| | 1/cm⁻¹ | 0 以上 |
+| `"L1"` | ∫\|F₁ − F₂\| dE | 無次元 | 0〜2 |
+| `"L2"` | (∫\|F₁ − F₂\|² dE)^½ | (cm⁻¹)^−½ | 0 以上 |
+| `"Linf"` | max \|F₁ − F₂\| | 1/cm⁻¹ | 0 以上 |
 
 ## 決まりごと
 
@@ -27,8 +27,8 @@ envelope_distance(result_300k, result_77k, norm=1)     # 1, 2, math.inf のど�
   する（`total_area` の診断値と同じ和）。`np.linalg.norm(F1 - F2)` のままだと値がグリッドの
   細かさで変わる。L1 は被積分関数が交点で折れるので、長方形則の誤差が ΔE の 1 次で残る。
 - **`norm` に既定値を置かない。** ノルムごとに単位が違い、どれが「普通」とも言えないため。
-  受けるのは `1`・`2`・`math.inf`（numpy の `ord` と同じ書き方）で、ほかは
-  `InvalidInputError` にする。
+  受けるのは `"L1"`・`"L2"`・`"Linf"` の名前で、ほかは `InvalidInputError` にする。
+  ノルムごとの計算は名前から関数を引く表 `NORMS` に置く（ADR-0049 と同じ考え方）。
 - **2 つの出力グリッドは同じ点でなければならない。** ΔE か窓が違えば補間せずに
   `InvalidInputError` で止め、どちらが違うかを言う。`n_fft` だけが違う（ΔE と窓が同じ）
   なら出力の点は同じなので比べられ、全域グリッドの広さによる折り返しの影響を測るのに使える。
@@ -55,7 +55,7 @@ envelope_distance(result_300k, result_77k, norm=1)     # 1, 2, math.inf のど�
 
 **CLI に出さない。** 返すのはスカラー 1 つで、CLI にすると出力の形（端末に出す数の書式、
 ファイルに残すか）を新たに決めることになる。結果ファイル 2 つからでも
-`envelope_distance(load_envelope(a), load_envelope(b), norm=1)` の 1 行で済む。
+`envelope_distance(load_envelope(a), load_envelope(b), norm="L1")` の 1 行で済む。
 `scale_huang_rhys` をライブラリだけにした ADR-0087 と同じ判断である。シェルから繰り返し
 呼ぶ必要が出たら別の ADR で決める。
 
@@ -74,7 +74,12 @@ envelope_distance(result_300k, result_77k, norm=1)     # 1, 2, math.inf のど�
 - **相対ノルム ‖F₁ − F₂‖ / ‖F₁‖ も返す。** どちらを分母にするかの選択が入るうえ、1 行の
   割り算で書ける。
 - **ノルムを任意の p にする。** 使い道が思い当たらず、受ける値を増やすと検証が要る。必要に
-  なれば `NORMS` に足せばよい。
+  なれば `NORMS` に行を足せばよい。
+- **numpy の `ord` に倣って次数を数（`1`・`2`・`math.inf`）で渡す。** 一般の p で式が
+  共通になるように見えるが、L∞ は和を取らない別の式で、受けるのも 3 つだけなので、
+  内部は結局 3 通りに分かれる。数で受けると `True` が `1` と等しいことや `math.inf` を
+  書かせることへの手当てが要るうえ、呼び出し側では `norm=1` が何の 1 か読めない。
+  名前なら呼び出し側に意味が見え、型（`Literal`）で受ける値も閉じる。
 
 ## 帰結
 

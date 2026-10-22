@@ -76,10 +76,11 @@ plot_overlay(envelope: EnvelopeResult, lines: LinesResult, *, ax=None,
              magnify=1.0, title=None) -> matplotlib.figure.Figure
 
 # 2 つのエンベロープの距離: 差 F_a - F_b の L1 / L2 / L∞ ノルム（ADR-0088）
-envelope_distance(a: EnvelopeResult, b: EnvelopeResult, *, norm: float) -> float
+envelope_distance(a: EnvelopeResult, b: EnvelopeResult, *,
+                  norm: Literal["L1", "L2", "Linf"]) -> float
 ```
 
-`envelope_distance` の `norm` は `1`・`2`・`math.inf` のどれかで、既定値はない。ノルムは
+`envelope_distance` の `norm` は `"L1"`・`"L2"`・`"Linf"` のどれかで、既定値はない。ノルムは
 ∫|F_a − F_b|^p dE の形で E 軸上の積分として取り（出力グリッドの和に ΔE を掛ける）、返す値の
 単位は L1 が無次元、L2 が (cm⁻¹)^−½、L∞ が 1/cm⁻¹ である。2 つの出力グリッドは同じ点で
 なければならず、ΔE か窓が違えば補間せずに `InvalidInputError` で止める（`n_fft` だけの違いは

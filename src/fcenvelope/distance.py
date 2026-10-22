@@ -14,26 +14,48 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
+from typing import Literal
 
 import numpy as np
 
 from .errors import InvalidInputError
 from .result import EnvelopeResult
 
-__all__ = ["NORMS", "envelope_distance"]
+__all__ = ["NORMS", "Norm", "envelope_distance"]
 
-#: 受け付けるノルムの次数。numpy の `ord` と同じく L∞ は `math.inf` で書く。
-NORMS: tuple[float, ...] = (1, 2, math.inf)
+#: ノルムの名前。数学の書き方 L1・L2・L∞ に揃え、L∞ は "Linf" と書く。
+Norm = Literal["L1", "L2", "Linf"]
+
+
+def _l1(difference: np.ndarray, de: float) -> float:
+    return float(np.sum(difference) * de)
+
+
+def _l2(difference: np.ndarray, de: float) -> float:
+    return math.sqrt(float(np.sum(difference**2) * de))
+
+
+def _linf(difference: np.ndarray, de: float) -> float:
+    return float(np.max(difference))
+
+
+#: ノルムの名前 → |F_a - F_b| と ΔE から値を出す関数（ADR-0049 と同じく表で引く）。
+NORMS: dict[str, Callable[[np.ndarray, float], float]] = {
+    "L1": _l1,
+    "L2": _l2,
+    "Linf": _linf,
+}
 
 #: 2 つの出力グリッドを同じとみなす E のずれ。ΔE に対する比で表す。読み直した
 #: 結果のように、同じ点が丸めの分だけずれていても同じとみなすための緩衝である。
 _GRID_TOLERANCE = 1e-9
 
 
-def envelope_distance(a: EnvelopeResult, b: EnvelopeResult, *, norm: float) -> float:
+def envelope_distance(a: EnvelopeResult, b: EnvelopeResult, *, norm: Norm) -> float:
     """2 つのエンベロープの差 F_a - F_b のノルムを返す。
 
-    `norm` は 1・2・`math.inf` のどれかで、既定値はない（ノルムごとに単位が違うため）。
+    `norm` は "L1"・"L2"・"Linf" のどれかで、既定値はない（ノルムごとに単位が違うため）。
     返す値の単位は L1 が無次元、L2 が (cm^-1)^(-1/2)、L∞ が 1/cm^-1 である。
 
     2 つの出力グリッドは同じ点でなければならない。ΔE か窓が違えば補間せずに
@@ -42,26 +64,15 @@ def envelope_distance(a: EnvelopeResult, b: EnvelopeResult, *, norm: float) -> f
     窓の外へ逃げた面積の差が隠れる。系・温度・線形状は違っていてよい（それを比べる
     ための関数なので警告しない）。
 
-        distance = envelope_distance(result_300k, result_77k, norm=1)
+        distance = envelope_distance(result_300k, result_77k, norm="L1")
     """
-    order = _check_norm(norm)
+    measure = NORMS.get(norm) if isinstance(norm, str) else None
+    if measure is None:
+        raise InvalidInputError(
+            f"norm must be one of {', '.join(map(repr, NORMS))} (got {norm!r})"
+        )
     _check_same_grid(a, b)
-    difference = np.abs(a.density - b.density)
-    if order == math.inf:
-        return float(np.max(difference))
-    de = a.grid.de
-    return float((np.sum(difference**order) * de) ** (1.0 / order))
-
-
-def _check_norm(norm: object) -> float:
-    # bool は int の部分型なので、True を 1 と読まないよう先に弾く。
-    if (
-        isinstance(norm, bool)
-        or not isinstance(norm, (int, float))
-        or norm not in NORMS
-    ):
-        raise InvalidInputError(f"norm must be 1, 2 or math.inf (got {norm!r})")
-    return float(norm)
+    return measure(np.abs(a.density - b.density), a.grid.de)
 
 
 def _check_same_grid(a: EnvelopeResult, b: EnvelopeResult) -> None:

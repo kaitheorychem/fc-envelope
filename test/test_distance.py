@@ -75,9 +75,9 @@ def _analytic_linf(s1: float, s2: float) -> float:
 @pytest.mark.parametrize(
     ("norm", "expected", "rel"),
     [
-        (1, _analytic_l1(SIGMA_1, SIGMA_2), 1e-4),
-        (2, _analytic_l2(SIGMA_1, SIGMA_2), 1e-6),
-        (math.inf, _analytic_linf(SIGMA_1, SIGMA_2), 1e-6),
+        ("L1", _analytic_l1(SIGMA_1, SIGMA_2), 1e-4),
+        ("L2", _analytic_l2(SIGMA_1, SIGMA_2), 1e-6),
+        ("Linf", _analytic_linf(SIGMA_1, SIGMA_2), 1e-6),
     ],
 )
 def test_two_gaussians_match_the_analytic_norms(norm, expected, rel):
@@ -86,14 +86,14 @@ def test_two_gaussians_match_the_analytic_norms(norm, expected, rel):
     assert distance == pytest.approx(expected, rel=rel)
 
 
-@pytest.mark.parametrize("norm", [1, 2, math.inf])
+@pytest.mark.parametrize("norm", ["L1", "L2", "Linf"])
 def test_an_envelope_is_at_distance_zero_from_itself(norm):
     result = _envelope()
 
     assert envelope_distance(result, result, norm=norm) == 0.0
 
 
-@pytest.mark.parametrize("norm", [1, 2, math.inf])
+@pytest.mark.parametrize("norm", ["L1", "L2", "Linf"])
 def test_the_distance_is_symmetric(norm):
     a, b = _envelope(300.0), _envelope(77.0)
 
@@ -105,7 +105,7 @@ def test_the_distance_does_not_depend_on_the_spacing():
     coarse = EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=5.0)
     fine = EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=2.5)
 
-    for norm in (1, 2):
+    for norm in ("L1", "L2"):
         on_coarse = envelope_distance(
             _envelope(300.0, grid=coarse), _envelope(77.0, grid=coarse), norm=norm
         )
@@ -127,7 +127,7 @@ def test_separated_envelopes_are_at_l1_distance_two():
     distance = envelope_distance(
         _envelope(0.0, system=NO_COUPLING, grid=grid, sigma=100.0),
         _envelope(0.0, system=coupled, grid=grid, sigma=100.0),
-        norm=1,
+        norm="L1",
     )
 
     assert distance == pytest.approx(2.0 * (1.0 - math.exp(-4.0)), abs=1e-5)
@@ -144,7 +144,7 @@ def test_the_window_is_not_renormalized():
     narrow, wide = _gaussian(500.0, grid), _gaussian(1000.0, grid)
     kept = [float(np.sum(r.density) * grid.de) for r in (narrow, wide)]
 
-    distance = envelope_distance(narrow, wide, norm=1)
+    distance = envelope_distance(narrow, wide, norm="L1")
 
     assert distance == pytest.approx(kept[0] - kept[1], rel=1e-9)
     renormalized = (
@@ -158,7 +158,9 @@ def test_only_n_fft_may_differ():
     small = EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0, n_fft=2048)
     large = EnergyGrid(e_min=-4000.0, e_max=1000.0, de=5.0, n_fft=4096)
 
-    distance = envelope_distance(_envelope(grid=small), _envelope(grid=large), norm=1)
+    distance = envelope_distance(
+        _envelope(grid=small), _envelope(grid=large), norm="L1"
+    )
 
     assert distance == pytest.approx(0.0, abs=1e-9)
 
@@ -167,17 +169,17 @@ def test_a_different_spacing_is_refused():
     other = EnergyGrid.from_spacing(e_min=-4000.0, e_max=1000.0, de=2.5)
 
     with pytest.raises(InvalidInputError, match="spacings"):
-        envelope_distance(_envelope(), _envelope(grid=other), norm=1)
+        envelope_distance(_envelope(), _envelope(grid=other), norm="L1")
 
 
 def test_a_different_window_is_refused():
     other = EnergyGrid.from_spacing(e_min=-3000.0, e_max=1000.0, de=5.0)
 
     with pytest.raises(InvalidInputError, match="windows"):
-        envelope_distance(_envelope(), _envelope(grid=other), norm=1)
+        envelope_distance(_envelope(), _envelope(grid=other), norm="L1")
 
 
-@pytest.mark.parametrize("norm", [0, 3, 1.5, -math.inf, True, "1", None])
+@pytest.mark.parametrize("norm", [1, 2, math.inf, "l1", "L3", "inf", None])
 def test_an_unknown_norm_is_refused(norm):
     result = _envelope()
 
@@ -192,7 +194,7 @@ def test_different_conditions_are_compared_without_a_warning():
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert envelope_distance(a, b, norm=2) > 0.0
+        assert envelope_distance(a, b, norm="L2") > 0.0
 
 
 def test_a_reloaded_result_compares_like_the_original(tmp_path):
@@ -202,7 +204,7 @@ def test_a_reloaded_result_compares_like_the_original(tmp_path):
 
     reloaded = load_envelope(path)
 
-    for norm in (1, 2, math.inf):
+    for norm in ("L1", "L2", "Linf"):
         assert envelope_distance(reloaded, b, norm=norm) == pytest.approx(
             envelope_distance(a, b, norm=norm), rel=1e-12
         )
