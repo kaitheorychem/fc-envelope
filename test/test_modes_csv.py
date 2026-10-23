@@ -296,16 +296,15 @@ def test_an_alias_on_a_coupling_column_takes_the_convention_kind(tmp_path, input
 
 def test_a_unit_on_a_dimensionless_coupling_column_is_refused(tmp_path, input_payload):
     _write(tmp_path / "modes.csv", "1200.0,0.5\n")
-    parsed = FCEnvelopeInput.from_obj(
-        _csv_payload(
-            input_payload,
-            coupling_convention="g",
-            csv={"path": "modes.csv", "columns": ["frequency", ["coupling", "eV"]]},
-        ),
-        base_dir=tmp_path,
+    payload = _csv_payload(
+        input_payload,
+        coupling_convention="g",
+        csv={"path": "modes.csv", "columns": ["frequency", ["coupling", "eV"]]},
     )
-    with pytest.raises(InvalidInputError, match=r"modes\.rows\[0\]: .*dimensionless"):
-        parsed.to_system()
+    with pytest.raises(
+        InvalidInputError, match=r"modes\.csv\.columns: coupling: .*dimensionless"
+    ):
+        FCEnvelopeInput.from_obj(payload, base_dir=tmp_path)
 
 
 def test_the_effective_settings_carry_the_column_units(tmp_path, input_payload):

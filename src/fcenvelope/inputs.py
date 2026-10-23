@@ -196,7 +196,7 @@ def _coupling_unit(written: object) -> UnitForm:
 
     この欄の単位の種類は流儀が決めるので、ここでは名前を引き当てない。有次元の流儀
     なら `ModesSpec._read_rows` がすでに正式形へ置き換えている。無次元の流儀に
-    添えた単位は `to_system` が報告する。
+    添えた単位も `_read_rows` が報告する。
     """
     return unit_form(*split_unit(written))
 
@@ -210,7 +210,7 @@ def _quantity_with(
         """入力ファイルに書かれた有次元の値を `Quantity` にする（ADR-0072）。
 
         受けるのは検証前のファイルの値なので `object` で取る。単位と流儀の噛み合わせは
-        正準化で見る。
+        流儀の見える `ModesSpec` が見る。
         """
         if isinstance(written, Quantity):
             return written
@@ -548,8 +548,10 @@ class ModesSpec(_Spec):
         `hartree/(bohr*sqrt(m_e))` になる（ADR-0076）。フィールドの検証器からは流儀が
         見えないので、生の辞書の段階でここが置き換える。置き換えるのは形が分かる位置
         だけで、それ以外は触らずに残す。構造の誤りはフィールドの検証器が、流儀の名前の
-        誤りは `_check_coupling_convention` が、無次元の流儀に添えた単位は `to_system`
-        が報告する。
+        誤りは `_check_coupling_convention` が報告する。無次元の流儀に添えた単位は
+        ここで、書いた位置（`modes.coupling_unit` / `modes.rows[i].coupling` /
+        `modes.csv.columns`）を名指しして報告する。正準化まで待つと、通らない設定が実効設定
+        として書き出されてしまうためである。
 
         `csv` の相対パスは検証コンテキストの `base_dir`（`from_path` では入力ファイルの
         ディレクトリ）を基準に解決する。呼び出し側の辞書は書き換えず、写しを返す。
@@ -557,26 +559,34 @@ class ModesSpec(_Spec):
         if not isinstance(data, dict):
             return data
         try:
-            kind = coupling_convention(
+            convention: CouplingConvention | None = coupling_convention(
                 data.get("coupling_convention", DEFAULT_COUPLING_CONVENTION.name)
-            ).unit_kind
+            )
         except InvalidInputError:
-            kind = None
+            convention = None
 
-        def resolve(location: str, written: object) -> UnitForm:
-            if kind is None:
+        def resolve(location: str | None, written: object) -> UnitForm:
+            # 流儀が分かれば、単位が流儀に合うかもここで確かめる。無次元の流儀に単位を
+            # 添えた誤りは、正準化まで待たずに、単位を書いた位置を名指しして報告する。
+            if convention is None:
                 return _coupling_unit(written)
             try:
-                return kind.resolve(written).form
-            except UnsupportedUnitError as exc:
-                raise UnsupportedUnitError(f"{location}: {exc}") from exc
+                if convention.unit_kind is None:
+                    form = _coupling_unit(written)
+                    convention.check_coupling_unit(form)
+                    return form
+                return convention.unit_kind.resolve(written).form
+            except (InvalidInputError, UnsupportedUnitError) as exc:
+                if location is None:
+                    raise
+                raise type(exc)(f"{location}: {exc}") from exc
 
         resolved = dict(data)
         unit = resolved.get("coupling_unit")
-        if kind is not None and isinstance(unit, str | list):
+        if convention is not None and isinstance(unit, str | list):
             resolved["coupling_unit"] = resolve("modes.coupling_unit", unit)
         rows = resolved.get("rows")
-        if kind is not None and isinstance(rows, list):
+        if convention is not None and isinstance(rows, list):
             new_rows: list[object] = []
             for index, row in enumerate(rows):
                 coupling = row.get("coupling") if isinstance(row, dict) else None
@@ -617,7 +627,8 @@ class ModesSpec(_Spec):
                 reference["columns"],
                 {
                     "frequency": _energy_unit,
-                    "coupling": lambda written: resolve("coupling", written),
+                    # 位置は `csv_columns` が `modes.csv.columns: coupling` と添える
+                    "coupling": lambda written: resolve(None, written),
                 },
                 location="modes.csv.columns",
             )
@@ -641,7 +652,7 @@ class ModesSpec(_Spec):
     @field_validator("coupling_unit", mode="before")
     @classmethod
     def _check_coupling_unit(cls, value: object) -> UnitForm | None:
-        """単位の書き方だけを確かめる。流儀との噛み合わせは正準化で見る。
+        """単位の書き方だけを確かめる。流儀との噛み合わせは `_read_rows` が見ている。
 
         名前の引き当てと正式形への置き換えは `_read_rows` が済ませている（有次元の
         流儀のとき）。省略（`None`）はここでは通す。単位が要るかどうかは流儀が決める
@@ -650,6 +661,32 @@ class ModesSpec(_Spec):
         if value is None:
             return None
         return _coupling_unit(value)
+
+    @model_validator(mode="after")
+    def _check_units_are_given(self) -> "ModesSpec":
+        """有次元の流儀で、単位の無い coupling が残っていないかを確かめる。
+
+        無次元の流儀に添えた単位は `_read_rows` が書いた位置で報告する。こちらは逆の
+        誤り、すなわち有次元の流儀で単位を書き忘れたものを、正準化を待たずに報告する。
+        どの行にも単位が無ければ表の既定（`modes.coupling_unit`）を、一部の行にだけ
+        無ければその最初の行を指す。
+        """
+        convention = self.convention
+        if convention.is_dimensionless or self.coupling_unit is not None:
+            return self
+        missing = [i for i, row in enumerate(self.rows) if row.coupling.unit is None]
+        if not missing:
+            return self
+        location = (
+            "modes.coupling_unit"
+            if len(missing) == len(self.rows)
+            else f"modes.rows[{missing[0]}].coupling"
+        )
+        try:
+            convention.check_coupling_unit(None)
+        except UnsupportedUnitError as exc:
+            raise UnsupportedUnitError(f"{location}: {exc}") from exc
+        return self
 
     @property
     def convention(self) -> CouplingConvention:

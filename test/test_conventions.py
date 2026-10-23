@@ -184,6 +184,49 @@ def test_a_dimensionless_convention_refuses_a_coupling_unit(convention):
         FCEnvelopeInput.from_obj(payload).to_system()
 
 
+# --- 単位と流儀の噛み合わせは読み込み時に、書いた位置で報告される -----------------
+
+
+@pytest.mark.parametrize("convention", ["g", "delta", "huang_rhys"])
+def test_a_coupling_unit_on_a_dimensionless_convention_fails_when_read(convention):
+    """正準化を待たずに読み込みで落ち、単位を書いた欄を名指しする。
+
+    読み込みが通ると、通らない設定が実効設定として書き出されてしまう。
+    """
+    payload = _payload(convention, 0.5, coupling_unit="eV")
+    with pytest.raises(
+        InvalidInputError, match=r"^modes\.coupling_unit: .*dimensionless"
+    ):
+        FCEnvelopeInput.from_obj(payload)
+
+
+@pytest.mark.parametrize("convention", ["lambda", "vcc"])
+def test_a_missing_coupling_unit_fails_when_read(convention):
+    """有次元の流儀で単位が無ければ、読み込みで `modes.coupling_unit` を名指しする。"""
+    with pytest.raises(
+        UnsupportedUnitError, match=r"^modes\.coupling_unit: .*must be given"
+    ):
+        FCEnvelopeInput.from_obj(_payload(convention, 300.0))
+
+
+def test_a_missing_unit_on_one_value_names_that_row():
+    """一部の行にだけ単位が無ければ、その最初の行を名指しする。"""
+    payload = _payload("lambda", [300.0, "cm^-1"])
+    payload["modes"]["rows"].append({"frequency": 450.0, "coupling": 100.0})
+    with pytest.raises(
+        UnsupportedUnitError, match=r"^modes\.rows\[1\]\.coupling: .*must be given"
+    ):
+        FCEnvelopeInput.from_obj(payload)
+
+
+def test_a_scaled_unit_is_reported_the_way_it_is_written():
+    """倍率つきの単位は、入力ファイルの書き方 `[2.0, "eV"]` で報告に載る。"""
+    payload = _payload("g", 0.5, coupling_unit=[2.0, "eV"])
+    with pytest.raises(InvalidInputError) as excinfo:
+        FCEnvelopeInput.from_obj(payload)
+    assert '([2.0, "eV"])' in str(excinfo.value)
+
+
 def test_an_unknown_coupling_unit_is_rejected():
     with pytest.raises(UnsupportedUnitError, match="unsupported energy unit"):
         FCEnvelopeInput.from_obj(_payload("lambda", 300.0, coupling_unit="nm"))
@@ -234,9 +277,8 @@ def test_the_caller_s_dictionary_is_left_alone():
 
 def test_an_alias_on_a_dimensionless_coupling_is_still_refused():
     """無次元の流儀に `a.u.` を添えても、今までどおり拒否される。"""
-    parsed = FCEnvelopeInput.from_obj(_payload("g", 0.5, coupling_unit="a.u."))
     with pytest.raises(InvalidInputError, match="dimensionless"):
-        parsed.to_system()
+        FCEnvelopeInput.from_obj(_payload("g", 0.5, coupling_unit="a.u."))
 
 
 @pytest.mark.parametrize("unit", [[0.0, "a.u."], [-1.0, "a.u."], ["1e-4", "a.u."]])
