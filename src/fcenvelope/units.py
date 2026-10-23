@@ -31,6 +31,7 @@ coupling の単位の種類は流儀が持つ（`CouplingConvention.unit_kind`�
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -138,6 +139,18 @@ def split_unit(written: object) -> tuple[float | None, str]:
 def unit_form(scale: float | None, name: str) -> UnitForm:
     """倍率と名前から単位の書き方を作る。倍率が無ければ名前だけになる。"""
     return name if scale is None else (scale, name)
+
+
+def format_unit(form: UnitForm) -> str:
+    """単位を入力ファイルと同じ書き方の文字列にする。誤りの報告に使う。
+
+    `"eV"` / `[0.001, "eV"]` のように、利用者が書く形で見せる。Python の `repr` だと
+    倍率つきの単位が `(0.001, 'eV')` と出て、書き方の手本にならない。
+    """
+    if isinstance(form, str):
+        return json.dumps(form, ensure_ascii=False)
+    scale, name = form
+    return f"[{scale!r}, {json.dumps(name, ensure_ascii=False)}]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,14 +292,15 @@ class CouplingConvention:
             if unit is not None:
                 raise InvalidInputError(
                     f"coupling_convention {self.name!r} is dimensionless; "
-                    f"a coupling unit ({unit!r}) must not be given"
+                    f"a coupling unit ({format_unit(unit)}) must not be given"
                 )
             return
         if unit is None:
             assert self.unit_kind is not None  # is_dimensionless で分けた
             raise UnsupportedUnitError(
                 f"coupling_convention {self.name!r} carries units "
-                f"({self.unit_kind.name}); a coupling unit must be given"
+                f"({self.unit_kind.name}); a coupling unit must be given "
+                "(modes.coupling_unit, a unit on the csv column, or one on each value)"
             )
 
     def coupling_to_canonical(self, unit: UnitForm | None) -> float:

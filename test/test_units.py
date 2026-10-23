@@ -266,10 +266,10 @@ def test_a_unit_on_a_dimensionless_coupling_names_the_mode(input_payload):
         {"frequency": 1200.0, "coupling": 0.5},
         {"frequency": 450.0, "coupling": [0.8, "eV"]},
     ]
-    parsed = FCEnvelopeInput.from_obj(payload)
-
-    with pytest.raises(InvalidInputError, match=r"modes\.rows\[1\]: .*dimensionless"):
-        parsed.to_system()
+    with pytest.raises(
+        InvalidInputError, match=r"modes\.rows\[1\]\.coupling: .*dimensionless"
+    ):
+        FCEnvelopeInput.from_obj(payload)
 
 
 def test_an_unknown_unit_on_a_value_is_rejected(input_payload):

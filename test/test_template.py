@@ -89,3 +89,21 @@ def test_the_template_names_every_coupling_convention(name):
 def test_the_template_shows_how_to_read_the_rows_from_a_csv():
     """`csv` はフィールドではなく読み込み時に `rows` へ差し替わるので、別に確かめる。"""
     assert re.search(r"^#\s*csv\s*=.*columns", template_text(), re.MULTILINE)
+
+
+def test_the_csv_line_of_the_template_works_once_uncommented(tmp_path):
+    """コメントの `csv` の行は、外せばそのまま読めること。
+
+    雛形の流儀は無次元の g なので、例の列に coupling の単位を添えると読み込みで落ちる。
+    """
+    text = template_text()
+    text = re.sub(r"^#\s*(csv\s*=)", r"\1", text, count=1, flags=re.MULTILINE)
+    # 行を CSV から読むので、[[modes.rows]] の表は消す
+    text = re.sub(r"^\[\[modes\.rows\]\]\n(?:(?!\[).*\n)*", "", text, flags=re.MULTILINE)
+    (tmp_path / "modes.csv").write_text("1200.0,0.5\n450.0,0.8\n", encoding="utf-8")
+
+    parsed = FCEnvelopeInput.from_toml(text, base_dir=tmp_path)
+
+    assert [mode.huang_rhys for mode in parsed.to_system().modes] == pytest.approx(
+        [0.25, 0.64]
+    )
