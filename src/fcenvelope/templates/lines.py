@@ -53,7 +53,7 @@ GUIDE = {"color": "0.7", "linewidth": 0.8, "zorder": 0}
 X_UNIT = "cm$^{-1}$"
 X_SCALE = 1.0
 
-# 横軸の原点（ADR-0089）。REF_GAP が None なら E 軸（E = 0 が ZPL）のまま描く。
+# 横軸の原点（ADR-0090）。REF_GAP が None なら E 軸（E = 0 が ZPL）のまま描く。
 # 数を書くと、横軸を符号付きの遷移エネルギー ε = (終状態) − (始状態) にする。
 #   REF_GAP      参照構造での 終状態 − 始状態 のエネルギー差。符号付きで、X_UNIT で書く
 #   REF_MINIMUM  参照構造がどちらのポテンシャルの底か。"initial" か "final"

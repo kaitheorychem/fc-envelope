@@ -563,7 +563,7 @@ def test_an_existing_modes_script_is_kept(tmp_path, lines, modes_script):
     assert modes_script.read_text(encoding="utf-8") == "# 手で直した\n"
 
 
-# --- 参照構造のギャップで描く横軸（ADR-0089） ---
+# --- 参照構造のギャップで描く横軸（ADR-0090） ---
 
 
 def generated(script: Path, **settings):

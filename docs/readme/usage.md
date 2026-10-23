@@ -609,7 +609,7 @@ REF_MINIMUM = "initial"
 符号付きで書くと、横軸は ε = (終状態) − (始状態) になる。`REF_MINIMUM` には、参照構造が
 始状態（`"initial"`）と終状態（`"final"`）のどちらのポテンシャルの底かを書く。ZPL は
 ε00 = `REF_GAP` − λ（`"initial"`）か `REF_GAP` + λ（`"final"`）に立ち、λ は結果ファイルから
-読まれる。計算はやり直さない（ADR-0089）。
+読まれる。計算はやり直さない（ADR-0090）。
 
 ```python
 X_UNIT, X_SCALE = "eV", 1.0 / 8065.543937
