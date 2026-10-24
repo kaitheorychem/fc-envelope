@@ -392,6 +392,19 @@ def test_show_takes_an_input_file_alone(stored_pair, input_file, window):
     assert window == []
 
 
+def test_show_answers_a_csv_with_the_input_to_write(tmp_path, window):
+    # CSV は列の意味を持たないので、読まずに最小の入力ファイルを案内する（ADR-0091）。
+    path = tmp_path / "modes.csv"
+    path.write_text("1200.0,0.5\n", encoding="utf-8")
+    before = sorted(tmp_path.iterdir())
+    invocation = runner.invoke(app, ["show", "--modes", str(path)])
+
+    assert invocation.exit_code == 2
+    assert "[modes]" in invocation.output
+    assert window == []
+    assert sorted(tmp_path.iterdir()) == before  # 痕跡のログも書かない
+
+
 def test_show_without_a_window_points_to_script(stored_pair, shown, monkeypatch):
     # テストは `Agg` で走る。画面のない環境と同じで、黙って何も出さずに終わらない。
     monkeypatch.delenv("TMUX", raising=False)

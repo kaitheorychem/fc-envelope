@@ -805,10 +805,12 @@ class FCEnvelopeInput(BaseModel):
     """入力ファイル全体。
 
     `run` は `temperature` / `broadening` / `grid` を、`lines` は `temperature` /
-    `selection` を読む。どちらの副命令も同じファイルを使える（ADR-0005）。
+    `selection` を読む。どちらの副命令も同じファイルを使える（ADR-0005）。`show` は
+    `modes` だけを読む（ADR-0086）。
 
-    片方だけが読むブロックはどれも省略でき、読む命令に必要なものが無いことは
-    `to_broadening()` / `to_grid()` が言う（ADR-0075）。`lines` しか使わない入力に
+    `modes` 以外を読まない命令があるので、`modes` 以外はどれも省略でき、読む命令に
+    必要なものが無いことは `to_temperature()` / `to_broadening()` / `to_grid()` が言う
+    （ADR-0075, 0091）。`lines` しか使わない入力に
     使われないグリッドを書かせない、というのがこの形の狙いである。
     """
 
@@ -818,7 +820,11 @@ class FCEnvelopeInput(BaseModel):
     modes: ModesSpec
     """モード表。単位と流儀は表が自分で持つ（ADR-0079）。"""
 
-    temperature: float
+    temperature: float | None = None
+    """温度 [K]。`run` と `lines` が読み、`show` は読まない（ADR-0091）。
+
+    省略しても既定値では埋めない。無いことは `to_temperature()` が言う。
+    """
 
     broadening: BroadeningSpec | None = None
     """線形状のブロック。`run` だけが読む（ADR-0075）。"""
@@ -913,7 +919,16 @@ class FCEnvelopeInput(BaseModel):
             raise _at("selection", exc) from exc
 
     def to_temperature(self) -> float:
-        """温度を検証して返す。"""
+        """温度を検証して返す。
+
+        書かれていなければここで止める。温度は計算ごとに選ぶ条件で、分子によらない
+        既定値は無い（ADR-0035, 0091）。
+        """
+        if self.temperature is None:
+            raise InvalidInputError(
+                "temperature: required by `fcenvelope run` and `fcenvelope lines` "
+                "(add temperature = <T in K>; 0 is allowed)"
+            )
         try:
             return validate_temperature(self.temperature)
         except InvalidInputError as exc:

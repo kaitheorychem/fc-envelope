@@ -560,12 +560,36 @@ def load_shown(path: "str | os.PathLike[str]") -> Shown:
     読む。
     """
     source = Path(path)
+    if source.suffix.lower() == ".csv":
+        raise InvalidInputError(csv_hint(source))
     if source.suffix.lower() == ".toml":
         return FCEnvelopeInput.from_path(source).to_system()
     data = read_json(source)
     if is_result(data):
         return any_from_dict(data)
     return FCEnvelopeInput.from_obj(data, base_dir=source.parent).to_system()
+
+
+def csv_hint(path: "str | os.PathLike[str]") -> str:
+    """CSV を直接渡されたときの案内。CSV を辿る最小の入力ファイルを示す（ADR-0091）。
+
+    CSV には数しか書かれておらず、列の並び・単位・流儀は分からない。推測はせず、
+    それを書く入力ファイルを作ってもらう。`show` が読むのは `[modes]` だけなので、
+    案内するのもそのブロックだけである。
+    """
+    name = Path(path).name
+    return (
+        f"{path}: a CSV holds only numbers, so `show` reads it through an input file "
+        "that says what its columns are. The smallest one, next to the CSV, is\n"
+        "\n"
+        "    [modes]\n"
+        f'    csv = {{ path = "{name}", columns = ["frequency", "coupling"] }}\n'
+        "\n"
+        "and then `fcenvelope show` that file. Frequencies are read in cm^-1 and "
+        'couplings as g; write ["frequency", "eV"] for another unit, and '
+        'coupling_convention = "huang_rhys" (or "delta", ...) under [modes] for another '
+        "convention. `run` and `lines` also need temperature and more"
+    )
 
 
 def _as_shown(item: "Shown | FCEnvelopeInput | str | os.PathLike[str]") -> Shown:

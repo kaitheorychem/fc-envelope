@@ -93,7 +93,7 @@ uv run fcenvelope template -o mymolecule.toml   # ファイルに書いて、そ
 | `modes.rows[].frequency` | ω_α | > 0 |
 | `modes.rows[].coupling` | 流儀に従った値（キー名は流儀によらず `coupling`） | 流儀による |
 | `modes.csv` | 行を CSV から読むときの参照 | `rows` とは排他。[モードを CSV で渡す](#モードを-csv-で渡す) |
-| `temperature` | T [K] | ≥ 0（0 は許可） |
+| `temperature` | T [K] | ≥ 0（0 は許可）。`run` / `lines` では必須 |
 | `broadening.sigma` | 線形状の幅 σ | > 0。`run` では必須 |
 | `broadening.unit` | σ の既定の単位 | 既定 `"cm^-1"` |
 | `grid.e_min` / `e_max` | 出力窓 | `e_min` < `e_max`。`run` では必須 |
@@ -111,7 +111,8 @@ uv run fcenvelope template -o mymolecule.toml   # ファイルに書いて、そ
 
 | 位置 | 読む副命令 | 省いたら |
 |---|---|---|
-| `[modes]` / `temperature` | 両方 | エラー |
+| `[modes]` | 両方（`show` もここだけを読む） | エラー |
+| `temperature` | 両方 | エラー（`show` は読まないので通る） |
 | `[broadening]` / `[grid]` | `run` だけ | `run` はエラー、`lines` は通る |
 | `[selection]` | `lines` だけ | 既定値で埋まる |
 
@@ -700,6 +701,17 @@ uv run fcenvelope show mymolecule.toml
 `--modes` を付けなくてもそのモードの結合の図になる。流儀・単位・`modes.csv` の参照は計算する
 ときと同じに読むので、CSV の列の並びや単位の取り違えを計算の前に確かめられる（ADR-0086）。
 入力ファイルは結果と並べずに 1 つだけで渡す。
+
+結合の図に要るのは `[modes]` だけなので、温度などは書かなくてよい（ADR-0091）。手元の
+CSV（振動数 cm⁻¹、結合 g の 2 列）を見るだけなら、次の 2 行を CSV の隣に置けば足りる。
+
+```toml
+[modes]
+csv = { path = "modes.csv", columns = ["frequency", "coupling"] }
+```
+
+CSV そのものを `show` に渡すと、列の意味が分からないので読まずに止まり、この書き方を
+案内する。
 
 見た目はライブラリの `plot_*` の既定のままで、つまみは持たない。スクリプトも画像も書き
 出さないので、残したい図は `script` で作る。

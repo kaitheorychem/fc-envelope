@@ -288,7 +288,7 @@ max_lines = 10000
 | `modes.csv` | object | キーは `path` と `columns` | 行を CSV から読む。パース時に `rows` へ差し替わる |
 | `modes.csv.path` | str | 空でない | CSV のパス。相対パスは入力ファイルのディレクトリ基準 |
 | `modes.csv.columns` | list | 各列ちょうど 1 回。要素は `"列名"` / `["列名", "単位"]` / `["列名", 倍率, "単位"]` | 列の並びと列の単位。既定 `["frequency", "coupling"]` |
-| `temperature` | float | ≥ 0 | T [K]。0 は許可（n_α = 0）。単位の軸を持たない |
+| `temperature` | float \| 省略 | ≥ 0 | T [K]。0 は許可（n_α = 0）。単位の軸を持たない。省略すると `to_temperature()` が止める（ADR-0091） |
 | `broadening.sigma` | 有次元 | > 0 | σ。既定の単位は `broadening.unit` |
 | `broadening.unit` | str \| [倍率, str] | エネルギーの単位の正式名か別名。倍率は `[0.001, "eV"]` の組で書く | ブロックの既定。既定 `"cm^-1"` |
 | `grid.e_min` / `e_max` | 有次元 | `e_min` < `e_max` | 出力窓。既定の単位は `grid.unit` |
@@ -326,7 +326,9 @@ CSV の読み込みは表一般の `inputs.read_csv_table(path, columns, build, 
 ケースの参照データ（ADR-0082）も同じ 2 つで読む。
 
 `run` は `temperature` / `broadening` / `grid` を、`lines` は `temperature` / `selection` を
-読む。どちらの副命令も同じファイルを使える（ADR-0005）。
+読む。どちらの副命令も同じファイルを使える（ADR-0005）。`show` は `modes` だけを読む
+（ADR-0086）。`modes` 以外はどれも省略でき、無いことは読む側の `to_*` が言う（ADR-0075, 0091）。
+`show` に CSV を渡すと、読まずにそれを辿る最小の入力ファイルを案内する（ADR-0091）。
 
 実効設定の書き出し（`*_config.json`）は**常に JSON** である。省略した項目が既定値で埋まり、
 `modes.csv` が `modes.rows` に展開されているだけで、入力ファイルとして読み返せる（ADR-0065）。TOML には

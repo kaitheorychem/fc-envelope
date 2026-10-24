@@ -484,6 +484,32 @@ def test_show_draws_the_modes_of_a_read_input_and_of_its_effective_settings(
             plt.close(figure)
 
 
+def test_show_draws_an_input_with_only_modes(tmp_path, shown):
+    # 結合の図に温度は要らないので、`[modes]` だけの入力で足りる（ADR-0091）。
+    (tmp_path / "modes.csv").write_text("1200.0,0.5\n450.0,-0.8\n", encoding="utf-8")
+    path = tmp_path / "modes.toml"
+    path.write_text(
+        '[modes]\ncsv = { path = "modes.csv", columns = ["frequency", "coupling"] }\n',
+        encoding="utf-8",
+    )
+    figure = show(path)
+    try:
+        assert drawn_sticks(figure) == pytest.approx([(450.0, 0.8), (1200.0, 0.5)])
+    finally:
+        plt.close(figure)
+
+
+def test_a_csv_is_not_shown_but_answered_with_the_input_to_write(tmp_path, shown):
+    path = tmp_path / "modes.csv"
+    path.write_text("1200.0,0.5\n", encoding="utf-8")
+    with pytest.raises(InvalidInputError) as raised:
+        show(path)
+    message = str(raised.value)
+    assert "[modes]" in message
+    assert 'csv = { path = "modes.csv", columns = ["frequency", "coupling"] }' in message
+    assert shown == []
+
+
 @pytest.mark.parametrize("modes", [False, True])
 def test_a_system_is_shown_alone(overlay_pair, shown, modes):
     _, lines = overlay_pair

@@ -133,3 +133,64 @@ def test_override_can_raise_a_missing_block(tmp_path, lines_only_file):
 
     assert invocation.exit_code == 0, invocation.output
     assert output.exists()
+
+
+# --- temperature も読む命令にとってだけ必須（ADR-0091） ---
+
+#: `show` が読む位置だけを書いた入力。`[modes]` しか無い。
+MODES_ONLY = """\
+[modes]
+
+[[modes.rows]]
+frequency = 1200.0
+coupling = 0.5
+"""
+
+
+@pytest.fixture
+def modes_only_file(tmp_path):
+    path = tmp_path / "modes_only.toml"
+    path.write_text(MODES_ONLY, encoding="utf-8")
+    return path
+
+
+def test_parses_without_temperature():
+    parsed = FCEnvelopeInput.from_toml(MODES_ONLY)
+
+    assert parsed.temperature is None
+    assert parsed.to_system().modes[0].huang_rhys == 0.25
+
+
+def test_missing_temperature_is_reported_by_the_reader():
+    parsed = FCEnvelopeInput.from_toml(MODES_ONLY)
+
+    with pytest.raises(InvalidInputError) as raised:
+        parsed.to_temperature()
+
+    message = str(raised.value)
+    assert message.startswith("temperature: ")
+    assert "fcenvelope run" in message and "fcenvelope lines" in message
+
+
+@pytest.mark.parametrize("command", ["run", "lines"])
+def test_commands_without_temperature_fail_naming_it(tmp_path, modes_only_file, command):
+    output = tmp_path / "out.json"
+    invocation = runner.invoke(
+        app, [command, str(modes_only_file), "-o", str(output), "--no-script"]
+    )
+
+    assert invocation.exit_code == 1
+    assert "temperature: required by" in invocation.output
+    assert not output.exists()
+
+
+def test_override_can_supply_a_missing_temperature(tmp_path, modes_only_file):
+    output = tmp_path / "out.json"
+    invocation = runner.invoke(
+        app,
+        ["lines", str(modes_only_file), "-o", str(output), "--no-script",
+         "--override", "temperature=0"],
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    assert load_lines(output).temperature == 0.0

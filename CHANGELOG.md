@@ -79,6 +79,10 @@
 
 ### 変更
 
+- 入力ファイルの `temperature` を省略できるようになった。`show` で結合の図を見るだけなら
+  `[modes]` だけの入力で足りる。`run` / `lines` は無ければ `temperature: required by ...` で
+  止まる（`--override temperature=...` で補える）。`show` に CSV を直接渡すと、その CSV を辿る
+  最小の入力ファイルの書き方を案内して止まる（ADR-0091）。
 - **入力ファイルの形が変わり、`schema_version` が 4 になった。** 版 3 の入力ファイルは
   読めないので、次のように書き換える（ADR-0079）。
   - トップレベルの `frequency_unit` / `coupling_convention` / `coupling_unit` を、新しい

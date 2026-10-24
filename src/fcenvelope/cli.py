@@ -586,6 +586,10 @@ def show(
     image is written. The figure has no knobs; for a figure to keep, use `script`
     and edit the script (ADR-0084).
     """
+    for path in result_paths:
+        if path.suffix.lower() == ".csv":
+            # 読む前に分かる使い方の誤りなので、痕跡のログは残さない（ADR-0091）。
+            raise typer.BadParameter(plotting.csv_hint(path), param_hint="FILE...")
     if terminal is None:
         terminal = plotting.kitty_terminal()
     if not terminal and not plotting.opens_a_window():
