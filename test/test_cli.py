@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import warnings
 from pathlib import Path
 
@@ -432,7 +433,9 @@ def test_show_asks_for_modes_before_reading_a_csv(tmp_path, window):
     invocation = runner.invoke(app, ["show", str(path)])
 
     assert invocation.exit_code == 2
-    assert "--modes" in invocation.output
+    # 色付けと枠の折り返しを外してから見る（CI では rich が色を付ける）。
+    plain = re.sub(r"\x1b\[[0-9;]*m|[│\s]", "", invocation.output)
+    assert "with--modes" in plain
     assert window == []
     assert sorted(tmp_path.iterdir()) == before  # 痕跡のログも書かない
 
