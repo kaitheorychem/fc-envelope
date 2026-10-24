@@ -1,0 +1,47 @@
+# show --modes はモード表の CSV を直接読む
+
+- 日付: 2026-10-24
+- 状態: 受理（ADR-0086 の「入力ファイルからも結合の図を出す」はそのまま。入力ファイルの
+  形は変えない）
+
+振動数と結合を並べた CSV が手元にあるとき、その結合の図を見るには、CSV を参照する入力
+ファイルを書いて `show` に渡す必要があった（ADR-0086）。入力ファイルは `run` / `lines`
+の入力で、`temperature` などの計算の条件を必須にしている。結合を見るためだけに、使わない
+条件を書いた入力ファイルを作ることになる。
+
+**`fcenvelope show --modes modes.csv` は、入力ファイルなしでモード表の CSV から結合の図を
+出す。ライブラリでは `read_modes_csv(path, ...)` が CSV から `VibrationalSystem` を作り、
+`show(path, modes=True)` でも同じ図が出る。**
+
+```bash
+uv run fcenvelope show --modes modes.csv
+uv run fcenvelope show --modes --frequency-unit eV modes.csv
+uv run fcenvelope show --modes --coupling-convention lambda --coupling-unit eV modes.csv
+```
+
+## 決まりごと
+
+- **図の種類は `--modes` で決める。ファイルの種類からは決めない。** CSV から描けるのは結合の
+  図だけだが、`--modes` が無ければ使用法エラー（終了コード 2）で止めて `--modes` を促す。
+  これから描けるものの種類やファイルの種類が増えたとき、「何の図か」がファイルの形式に
+  依存していると組み合わせの規則が込み入るためである。
+- CSV の判定は拡張子 `.csv` で行う（ADR-0069 と同じく中身は見ない）。
+- 列の並びとヘッダの扱いは入力ファイルの `modes.csv` と同じである。ヘッダが無ければ振動数・
+  結合の順、1 行目が `frequency` と `coupling` の組ならその並びで読む。
+- 流儀と単位は `[modes]` の同名のキーに対応するオプション `--coupling-convention` /
+  `--frequency-unit` / `--coupling-unit` で与える。既定も `[modes]` と同じ（g、cm⁻¹）。
+  CSV を渡さずにこれらを付けると使用法エラーである。
+- 読み込みは `[modes]` と同じ `ModesSpec` を通す。換算の規則を二重に持たない。
+- CSV は結果や入力と並べずに 1 つだけで渡す（系と同じ扱い、ADR-0086）。
+- 作図スクリプト（`script --modes`）は CSV を読まない。ADR-0083 の理由がそのまま残る。
+
+## 検討した選択肢
+
+- **入力ファイルの `temperature` を省略可にして、`[modes]` だけの入力で見られるようにする**:
+  入力ファイルは `run` / `lines` のためのもので、`show` はそれを確かめるための口である。
+  結合を見るためだけの入力の書き方を作ると、入力ファイルの必須項目が目的ごとにばらばらに
+  なる。
+- **`.csv` なら `--modes` なしで結合の図にする**: 上の「図の種類は `--modes` で決める」に
+  反する。
+- **CSV の列の意味を推測する**: 単位や流儀の取り違えを確かめるための図なのに、取り違えた
+  まま「それらしい」図が出る。既定を明示し、違えばオプションで書いてもらう。

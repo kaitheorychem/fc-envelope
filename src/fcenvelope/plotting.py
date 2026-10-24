@@ -21,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - 型注釈のためだけの import
 import numpy as np
 
 from .errors import InvalidInputError
-from .inputs import FCEnvelopeInput
+from .inputs import FCEnvelopeInput, read_modes_csv
 from .io import any_from_dict, is_result, read_json
 from .logs import stage
 from .models import VibrationalSystem
@@ -557,15 +557,40 @@ def load_shown(path: "str | os.PathLike[str]") -> Shown:
     `.toml` は入力ファイルである。`.json` は結果ファイルと実効設定（入力）のどちらでも
     ありうるので、結果ファイルが必ず持つ `kind` の有無で分ける（ADR-0086）。入力は
     モード表を正準化した系にして返す。モード表の `csv` はそのファイルからの相対パスで
-    読む。
+    読む。`.csv` はモード表そのものとして、既定の流儀と単位で読む（ADR-0091）。
     """
     source = Path(path)
+    if is_csv(source):
+        return read_modes_csv(source)
     if source.suffix.lower() == ".toml":
         return FCEnvelopeInput.from_path(source).to_system()
     data = read_json(source)
     if is_result(data):
         return any_from_dict(data)
     return FCEnvelopeInput.from_obj(data, base_dir=source.parent).to_system()
+
+
+def is_csv(path: "str | os.PathLike[str]") -> bool:
+    """モード表の CSV として読むファイルか。拡張子だけで決める（ADR-0069, 0091）。"""
+    return Path(path).suffix.lower() == ".csv"
+
+
+def check_csv_is_shown_as_modes(
+    items: "Sequence[object]", *, modes: bool
+) -> None:
+    """CSV は結合の図（`modes`）でだけ受ける（ADR-0091）。
+
+    図の種類はファイルの種類からは決めず、`modes` で指定する。CSV から描けるのは
+    結合の図だけなので、`modes` が無ければその指定を促して止める。
+    """
+    if modes:
+        return
+    for item in items:
+        if isinstance(item, (str, os.PathLike)) and is_csv(item):
+            raise InvalidInputError(
+                f"{item}: a CSV of modes is drawn as the coupling of its modes; "
+                f"ask for that figure with --modes (modes=True in the library)"
+            )
 
 
 def _as_shown(item: "Shown | FCEnvelopeInput | str | os.PathLike[str]") -> Shown:
@@ -642,7 +667,10 @@ def show(
 
     結合の図は計算しなくても描ける。モードの系（`VibrationalSystem`）、読んだ入力
     （`FCEnvelopeInput`）、入力ファイルのパス（`.toml`、または実効設定の `.json`）を
-    1 つだけ渡すと、`modes` を付けなくてもその結合の図になる（ADR-0086）。
+    1 つだけ渡すと、`modes` を付けなくてもその結合の図になる（ADR-0086）。モード表の
+    CSV のパスも 1 つだけ受けるが、こちらは `modes=True` で図の種類を指定する。流儀や
+    単位が既定（振動数 cm^-1、結合 g）でなければ `read_modes_csv` で系にしてから渡す
+    （ADR-0091）。
 
     出し先は `terminal` で決まる。`None`（既定）なら、端末が kitty graphics protocol に
     対応していれば端末へ、そうでなければ `plt.show()` の窓へ出す。`True` / `False` で
@@ -651,6 +679,7 @@ def show(
 
     `block` は窓に出すときだけ `plt.show` にそのまま渡す。既定では窓を閉じるまで戻らない。
     """
+    check_csv_is_shown_as_modes(results, modes=modes)
     loaded = [_as_shown(item) for item in results]
     figure = _default_figure(loaded, modes=modes)
 

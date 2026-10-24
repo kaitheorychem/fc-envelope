@@ -11,6 +11,11 @@
 
 ### 追加
 
+- `fcenvelope show --modes modes.csv` で、振動数と結合を並べた CSV の結合の図を入力ファイル
+  なしで出せるようになった。列の並びとヘッダの扱いは入力ファイルの `modes.csv` と同じで、
+  流儀と単位は `--coupling-convention` / `--frequency-unit` / `--coupling-unit`（既定は g と
+  cm⁻¹）で与える。図の種類は `--modes` で指定し、付け忘れると案内して止まる。ライブラリでは
+  `read_modes_csv(path, ...)` が CSV から `VibrationalSystem` を作る（ADR-0091）。
 - 作図スクリプトの `REF_GAP` / `REF_MINIMUM`。参照構造での 終状態 − 始状態 のエネルギー差を
   符号付きで書くと、横軸を遷移エネルギー ε = ε00 − E で描く。ε00 は λ を引く（参照構造が
   始状態の底）か足す（終状態の底）かで決まる。計算は変わらない（ADR-0090）。

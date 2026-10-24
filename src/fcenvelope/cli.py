@@ -35,7 +35,7 @@ import typer
 from . import emit, logs, plotting
 from .envelope import compute_envelope
 from .errors import FCEnvelopeError, NumericalQualityWarning
-from .inputs import FCEnvelopeInput, template_text
+from .inputs import FCEnvelopeInput, read_modes_csv, template_text
 from .io import JsonObject, JsonValue, kind_for, load_any, save_any
 from .lines import compute_fc_lines
 from .models import VibrationalSystem
@@ -562,7 +562,44 @@ def show(
             ),
         ),
     ],
-    modes: ModesFlag = False,
+    modes: Annotated[
+        bool,
+        typer.Option(
+            "--modes",
+            help=(
+                "Draw the coupling of the modes (g against the frequency) instead of "
+                "the spectrum: of the modes a result was computed from, or of a CSV "
+                "of modes (frequency, coupling) given alone."
+            ),
+        ),
+    ] = False,
+    frequency_unit: Annotated[
+        Optional[str],
+        typer.Option(
+            "--frequency-unit",
+            metavar="UNIT",
+            help="Unit of the frequency column of a CSV, as modes.frequency_unit (default cm^-1).",
+            show_default=False,
+        ),
+    ] = None,
+    coupling_convention: Annotated[
+        Optional[str],
+        typer.Option(
+            "--coupling-convention",
+            metavar="NAME",
+            help="Convention of the coupling column of a CSV, as modes.coupling_convention (default g).",
+            show_default=False,
+        ),
+    ] = None,
+    coupling_unit: Annotated[
+        Optional[str],
+        typer.Option(
+            "--coupling-unit",
+            metavar="UNIT",
+            help="Unit of the coupling column of a CSV, as modes.coupling_unit (lambda and vcc only).",
+            show_default=False,
+        ),
+    ] = None,
     terminal: Annotated[
         Optional[bool],
         typer.Option(
@@ -581,11 +618,32 @@ def show(
 
     Takes the same files as `script`: one result, one envelope and one FC line list
     to overlay, or one result with `--modes`. One input file instead shows the
-    coupling of its modes, as `--modes` does for a result (ADR-0086). The figure goes to the terminal when
+    coupling of its modes, as `--modes` does for a result (ADR-0086). With `--modes`, a
+    CSV of modes (frequency, coupling) can be shown alone, without an input file; the
+    --frequency-unit / --coupling-convention / --coupling-unit options say how to read
+    its columns (ADR-0091). The figure goes to the terminal when
     it speaks the kitty graphics protocol, and to a window otherwise. No script or
     image is written. The figure has no knobs; for a figure to keep, use `script`
     and edit the script (ADR-0084).
     """
+    # CSV の扱いは読む前に分かる使い方の誤りなので、痕跡のログを残さずに止める（ADR-0091）。
+    csv_options = {
+        "--frequency-unit": frequency_unit,
+        "--coupling-convention": coupling_convention,
+        "--coupling-unit": coupling_unit,
+    }
+    given = [name for name, value in csv_options.items() if value is not None]
+    if given and not any(plotting.is_csv(path) for path in result_paths):
+        raise typer.BadParameter(
+            f"{', '.join(given)} describe the columns of a CSV of modes; "
+            "no CSV was given",
+            param_hint="FILE...",
+        )
+    try:
+        plotting.check_csv_is_shown_as_modes(result_paths, modes=modes)
+    except FCEnvelopeError as exc:
+        raise typer.BadParameter(str(exc), param_hint="FILE...") from exc
+
     if terminal is None:
         terminal = plotting.kitty_terminal()
     if not terminal and not plotting.opens_a_window():
@@ -609,7 +667,21 @@ def show(
         raise typer.Exit(1)
 
     with _traced(log, result_paths[0]):
-        items = [plotting.load_shown(path) for path in result_paths]
+        csv_reading = {
+            key: value
+            for key, value in (
+                ("frequency_unit", frequency_unit),
+                ("coupling_convention", coupling_convention),
+                ("coupling_unit", coupling_unit),
+            )
+            if value is not None
+        }
+        items = [
+            read_modes_csv(path, **csv_reading)
+            if plotting.is_csv(path)
+            else plotting.load_shown(path)
+            for path in result_paths
+        ]
         if any(isinstance(item, VibrationalSystem) for item in items):
             try:
                 plotting.check_shown(items)

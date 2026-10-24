@@ -725,6 +725,34 @@ class ModesSpec(_Spec):
         return VibrationalSystem(modes)
 
 
+def read_modes_csv(
+    path: str | Path,
+    *,
+    coupling_convention: str = DEFAULT_COUPLING_CONVENTION.name,
+    frequency_unit: object = CANONICAL_ENERGY_UNIT,
+    coupling_unit: object | None = None,
+) -> VibrationalSystem:
+    """モード表の CSV だけから系を作る。入力ファイルは要らない（ADR-0091）。
+
+    結合の図を見るための口で、計算の条件（温度など）は持たない。列の並びとヘッダの
+    扱いは入力ファイルの `modes.csv` と同じで、ヘッダが無ければ振動数・結合の順で
+    ある。流儀と単位は `[modes]` の同名のキーと同じ意味で、読み方も `[modes]` と同じ
+    `ModesSpec` を通す。換算の規則を二重に持たないためである。
+    """
+    data: dict[str, object] = {
+        "coupling_convention": coupling_convention,
+        "frequency_unit": frequency_unit,
+        "csv": {"path": str(path)},
+    }
+    if coupling_unit is not None:
+        data["coupling_unit"] = coupling_unit
+    try:
+        spec = ModesSpec.model_validate(data, context={"base_dir": None})
+    except ValidationError as exc:
+        raise InvalidInputError(str(exc)) from exc
+    return spec.to_system()
+
+
 #: `[modes]` に行をどう書くかの案内。どちらも無い・両方あるときに出す。
 _ROWS_OR_CSV: Final = (
     "modes: give the rows either inline ([[modes.rows]]) "
