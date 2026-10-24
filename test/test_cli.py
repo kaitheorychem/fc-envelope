@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import warnings
 from pathlib import Path
 
@@ -389,6 +390,73 @@ def test_show_takes_an_input_file_alone(stored_pair, input_file, window):
     invocation = runner.invoke(app, ["show", str(input_file), str(envelope)])
 
     assert invocation.exit_code == 2 and "alone" in invocation.output
+    assert window == []
+
+
+# --- モード表の CSV を --modes で直接見る（ADR-0091） ---
+
+
+def test_show_modes_reads_a_csv_directly(tmp_path, window):
+    path = tmp_path / "modes.csv"
+    path.write_text("0.14878,0.5\n0.05579,-0.8\n", encoding="utf-8")
+    before = sorted(tmp_path.iterdir())
+    invocation = runner.invoke(
+        app, ["show", "--modes", "--frequency-unit", "eV", str(path)]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    ((items, kwargs),) = window
+    (system,) = items
+    assert system.frequencies == pytest.approx([1200.0, 450.0], rel=1e-4)
+    assert system.huang_rhys == pytest.approx([0.25, 0.64])
+    assert kwargs == {"modes": True, "terminal": False}
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def test_show_reads_the_coupling_convention_of_a_csv(tmp_path, window):
+    path = tmp_path / "modes.csv"
+    path.write_text("coupling,frequency\n0.25,1200\n", encoding="utf-8")
+    invocation = runner.invoke(
+        app, ["show", "--modes", "--coupling-convention", "huang_rhys", str(path)]
+    )
+
+    assert invocation.exit_code == 0, invocation.output
+    ((items, _),) = window
+    assert items[0].huang_rhys == pytest.approx([0.25])
+
+
+def test_show_asks_for_modes_before_reading_a_csv(tmp_path, window):
+    # 図の種類はファイルの種類からは決めない。CSV でも --modes で指定する。
+    path = tmp_path / "modes.csv"
+    path.write_text("1200.0,0.5\n", encoding="utf-8")
+    before = sorted(tmp_path.iterdir())
+    invocation = runner.invoke(app, ["show", str(path)])
+
+    assert invocation.exit_code == 2
+    # 色付けと枠の折り返しを外してから見る（CI では rich が色を付ける）。
+    plain = re.sub(r"\x1b\[[0-9;]*m|[│\s]", "", invocation.output)
+    assert "with--modes" in plain
+    assert window == []
+    assert sorted(tmp_path.iterdir()) == before  # 痕跡のログも書かない
+
+
+def test_show_takes_a_csv_alone(tmp_path, stored_pair, window):
+    envelope, _ = stored_pair
+    path = tmp_path / "modes.csv"
+    path.write_text("1200.0,0.5\n", encoding="utf-8")
+    invocation = runner.invoke(app, ["show", "--modes", str(path), str(envelope)])
+
+    assert invocation.exit_code == 2 and "alone" in invocation.output
+    assert window == []
+
+
+def test_csv_options_need_a_csv(stored_pair, window):
+    envelope, _ = stored_pair
+    invocation = runner.invoke(
+        app, ["show", "--modes", "--frequency-unit", "eV", str(envelope)]
+    )
+
+    assert invocation.exit_code == 2 and "no CSV" in invocation.output
     assert window == []
 
 

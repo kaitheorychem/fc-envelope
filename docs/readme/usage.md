@@ -701,6 +701,20 @@ uv run fcenvelope show mymolecule.toml
 ときと同じに読むので、CSV の列の並びや単位の取り違えを計算の前に確かめられる（ADR-0086）。
 入力ファイルは結果と並べずに 1 つだけで渡す。
 
+振動数と結合を並べた CSV しか無いなら、入力ファイルを書かずに `--modes` で直接見られる
+（ADR-0091）。列の並びとヘッダの扱いは入力ファイルの `modes.csv` と同じで、ヘッダが無ければ
+振動数・結合の順である。流儀と単位は `[modes]` の同名のキーに対応するオプションで与え、
+既定は g と cm⁻¹ である。
+
+```bash
+uv run fcenvelope show --modes modes.csv
+uv run fcenvelope show --modes --frequency-unit eV modes.csv
+uv run fcenvelope show --modes --coupling-convention lambda --coupling-unit eV modes.csv
+```
+
+図の種類は `--modes` で指定する。CSV を `--modes` なしで渡すと、何も描かずに `--modes` を
+促して止まる。CSV も結果と並べずに 1 つだけで渡す。
+
 見た目はライブラリの `plot_*` の既定のままで、つまみは持たない。スクリプトも画像も書き
 出さないので、残したい図は `script` で作る。
 
@@ -841,13 +855,15 @@ fig.savefig("spectrum.png", dpi=300)
 1 つだけ渡せば、計算せずにその結合の図になる（ADR-0086）。
 
 ```python
-from fcenvelope import show
+from fcenvelope import read_modes_csv, show
 
 show(result)                        # その種類の図
 show("result.json", "lines.json")   # エンベロープと線の重ね描き（順序は問わない）
 show(lines, modes=True)             # 計算に使ったモードの結合
 show(system)                        # 自分で組んだ VibrationalSystem の結合（計算しない）
 show("mymolecule.toml")             # 入力ファイルのモードの結合（modes.csv も辿る）
+show("modes.csv", modes=True)       # モード表の CSV の結合（既定の g と cm^-1 で読む）
+show(read_modes_csv("modes.csv", frequency_unit="eV"))   # 単位や流儀が違う CSV
 show(result, terminal=False)        # 端末が対応していても窓に出す（True なら常に端末）
 show(result, block=False)           # 窓を開いたまま先へ進む（plt.show にそのまま渡る）
 ```

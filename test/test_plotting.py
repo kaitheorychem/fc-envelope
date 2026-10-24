@@ -21,6 +21,7 @@ from fcenvelope import (
     VibrationalMode,
     VibrationalSystem,
     plot_envelope,
+    read_modes_csv,
     plot_lines,
     plot_modes,
     plot_overlay,
@@ -482,6 +483,36 @@ def test_show_draws_the_modes_of_a_read_input_and_of_its_effective_settings(
             assert drawn_sticks(figure) == pytest.approx([(450.0, 0.8), (1200.0, 0.5)])
         finally:
             plt.close(figure)
+
+
+def test_show_draws_a_csv_of_modes_with_modes(tmp_path, shown):
+    # 入力ファイルを書かずに、モード表の CSV から結合の図を出す（ADR-0091）。
+    path = tmp_path / "modes.csv"
+    path.write_text("1200.0,0.5\n450.0,-0.8\n", encoding="utf-8")
+    figure = show(path, modes=True)
+    try:
+        assert drawn_sticks(figure) == pytest.approx([(450.0, 0.8), (1200.0, 0.5)])
+    finally:
+        plt.close(figure)
+
+
+def test_a_csv_is_not_shown_without_modes(tmp_path, shown):
+    path = tmp_path / "modes.csv"
+    path.write_text("1200.0,0.5\n", encoding="utf-8")
+    with pytest.raises(InvalidInputError, match="modes=True"):
+        show(path)
+    assert shown == []
+
+
+def test_read_modes_csv_takes_the_units_and_convention_of_modes(tmp_path):
+    path = tmp_path / "modes.csv"
+    path.write_text("frequency,coupling\n0.14878,0.025\n", encoding="utf-8")
+    system = read_modes_csv(
+        path, frequency_unit="eV", coupling_convention="lambda", coupling_unit="eV"
+    )
+    # lambda = S * omega なので S = 0.025 / 0.14878
+    assert system.huang_rhys == pytest.approx([0.025 / 0.14878])
+    assert system.frequencies == pytest.approx([1200.0], rel=1e-4)
 
 
 @pytest.mark.parametrize("modes", [False, True])

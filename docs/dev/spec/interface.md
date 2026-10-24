@@ -119,6 +119,9 @@ FCEnvelopeInput.to_broadening()  -> Broadening
 FCEnvelopeInput.to_grid()        -> EnergyGrid
 FCEnvelopeInput.to_selection()   -> Selection
 
+read_modes_csv(path, *, coupling_convention="g", frequency_unit="cm^-1",
+               coupling_unit=None) -> VibrationalSystem   # CSV だけから系（ADR-0091）
+
 FCEnvelopeInput.to_json()        -> str    # 実効設定。単位・流儀は入力ファイルのまま
 FCEnvelopeInput.save(path)       -> None   # from_path で読み返せる形（ADR-0065）
 
