@@ -561,3 +561,102 @@ def test_an_existing_modes_script_is_kept(tmp_path, lines, modes_script):
 
     assert not write_modes_script(lines, tmp_path / "lines.json", modes_script)
     assert modes_script.read_text(encoding="utf-8") == "# 手で直した\n"
+
+
+# --- 参照構造のギャップで描く横軸（ADR-0090） ---
+
+
+def generated(script: Path, **settings):
+    """生成されたスクリプトを import し、設定を差し替えたモジュールを返す。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("generated", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for name, value in settings.items():
+        setattr(module, name, value)
+    return module
+
+
+@pytest.mark.parametrize(("minimum", "sign"), [("initial", -1.0), ("final", 1.0)])
+def test_the_lines_are_drawn_at_the_signed_transition_energy(
+    lines_script, lines, multi_mode, minimum, sign
+):
+    """ε = ε00 − E で、ε00 は参照構造のギャップから λ を引く（始状態の底）か足す（終状態の底）。"""
+    gap = 20000.0
+    sticks, xlabel, _ = draw_with(
+        lines_script, lines_script.parent / "lines.json", REF_GAP=gap, REF_MINIMUM=minimum
+    )
+
+    origin = gap + sign * multi_mode.reorganization_energy
+    expected = sorted((origin - e, w) for e, w in zip(lines.energies, lines.weights))
+    assert sticks == pytest.approx(expected)
+    assert "varepsilon" in xlabel
+
+
+def test_a_negative_gap_puts_the_axis_on_the_negative_side(lines_script, lines, multi_mode):
+    """終状態のほうが低ければ ε は負で、サイドバンドは ZPL より絶対値の大きい側に立つ。"""
+    gap = -20000.0
+    sticks, _, _ = draw_with(
+        lines_script, lines_script.parent / "lines.json", REF_GAP=gap, REF_MINIMUM="final"
+    )
+
+    origin = gap + multi_mode.reorganization_energy
+    assert all(x < 0.0 for x, _ in sticks)
+    assert min(x for x, _ in sticks) < origin
+
+
+def test_the_envelope_is_centred_on_the_gap_at_the_initial_minimum(envelope_script):
+    """⟨E⟩ = −λ なので、参照構造が始状態の底なら重心はちょうど REF_GAP に来る。"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    module = generated(envelope_script, REF_GAP=2.5, REF_MINIMUM="initial",
+                       X_UNIT="eV", X_SCALE=1.0 / 8065.543937)
+    figure, ax = plt.subplots()
+    try:
+        module.draw(ax, module.load(envelope_script.parent / "result.json", module.KIND))
+        x, density = (np.asarray(v) for v in ax.lines[0].get_data())
+    finally:
+        plt.close(figure)
+
+    order = np.argsort(x)
+    x, density = x[order], density[order]
+    step = np.diff(x)
+
+    def integral(y):
+        return float(np.sum(0.5 * (y[1:] + y[:-1]) * step))
+
+    assert integral(density) == pytest.approx(1.0, abs=1e-3)
+    assert integral(x * density) == pytest.approx(2.5, abs=1e-4)
+
+
+def test_the_overlay_keeps_the_axis_increasing_with_a_gap(overlay_script):
+    import matplotlib.pyplot as plt
+
+    module = generated(overlay_script, REF_GAP=20000.0)
+    figure, ax = plt.subplots()
+    try:
+        module.draw(
+            ax,
+            module.load(overlay_script.parent / "result.json", module.ENVELOPE_KIND),
+            module.load(overlay_script.parent / "lines.json", module.LINES_KIND),
+        )
+        low, high = ax.get_xlim()
+    finally:
+        plt.close(figure)
+
+    assert low < high
+
+
+def test_an_unknown_reference_minimum_stops_with_a_message(lines_script):
+    with pytest.raises(SystemExit, match="REF_MINIMUM"):
+        draw_with(lines_script, lines_script.parent / "lines.json",
+                  REF_GAP=1.0, REF_MINIMUM="absorption")
+
+
+def test_without_a_gap_the_axis_stays_e(lines_script, lines):
+    sticks, xlabel, _ = draw_with(lines_script, lines_script.parent / "lines.json")
+
+    assert sticks == pytest.approx(sorted(zip(lines.energies, lines.weights)))
+    assert xlabel.startswith("$E$")

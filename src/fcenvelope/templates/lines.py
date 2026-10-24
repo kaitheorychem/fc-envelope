@@ -53,6 +53,15 @@ GUIDE = {"color": "0.7", "linewidth": 0.8, "zorder": 0}
 X_UNIT = "cm$^{-1}$"
 X_SCALE = 1.0
 
+# 横軸の原点（ADR-0090）。REF_GAP が None なら E 軸（E = 0 が ZPL）のまま描く。
+# 数を書くと、横軸を符号付きの遷移エネルギー ε = (終状態) − (始状態) にする。
+#   REF_GAP      参照構造での 終状態 − 始状態 のエネルギー差。符号付きで、X_UNIT で書く
+#   REF_MINIMUM  参照構造がどちらのポテンシャルの底か。"initial" か "final"
+# ZPL は ε00 = REF_GAP − λ（"initial"）か REF_GAP + λ（"final"）に立ち、ε = ε00 − E で描く。
+# λ は結果ファイルの derived.reorganization_energy から読む。
+REF_GAP = None
+REF_MINIMUM = "initial"
+
 
 def beside(path: Path | str) -> Path:
     """スクリプトの中に書いたファイル名を、このスクリプトの隣として読む。
@@ -226,15 +235,42 @@ def image_for(source: Path) -> Path:
     return source.with_name(f"{IMAGE_PREFIX}{source.stem}.png")
 
 
+def zero_phonon(data: dict) -> float | None:
+    """横軸の上での ZPL の位置 ε00 [X_UNIT]。REF_GAP が None なら None（E 軸のまま）。
+
+    参照構造が始状態の底なら、そこでの終状態は自分の底より λ 高い。終状態の底なら、
+    始状態のほうが λ 高い。どちらも結果の λ（cm^-1）を X_UNIT に直して足し引きする。
+    """
+    if REF_GAP is None:
+        return None
+    signs = {"initial": -1.0, "final": 1.0}
+    if REF_MINIMUM not in signs:
+        raise SystemExit(f"REF_MINIMUM must be 'initial' or 'final' (got {REF_MINIMUM!r})")
+    reorganization = data["derived"]["reorganization_energy"][0]    # [値, "cm^-1"]
+    return REF_GAP + signs[REF_MINIMUM] * reorganization * X_SCALE
+
+
+def axis(energies: list, data: dict) -> list:
+    """E [cm^-1] を横軸の座標へ移す。REF_GAP があれば ε = ε00 − E、なければ E のまま。"""
+    origin = zero_phonon(data)
+    if origin is None:
+        return [e * X_SCALE for e in energies]
+    return [origin - e * X_SCALE for e in energies]
+
+
+def axis_symbol() -> str:
+    return "$E$" if REF_GAP is None else r"$\varepsilon$"
+
+
 def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> None:
     """離散 FC 因子を底辺 0 の棒として描く。図の中身はここだけ。"""
-    energy = [e * X_SCALE for e in column(data["lines"], "energy")]
+    energy = axis(column(data["lines"], "energy"), data)
     weight = column(data["lines"], "weight")
 
     ax.vlines(energy, 0.0, weight, colors=color, linewidth=LINEWIDTH, label=label)
-    ax.axvline(0.0, **GUIDE)             # E = 0 は ZPL
+    ax.axvline(axis([0.0], data)[0], **GUIDE)    # E = 0 は ZPL
     ax.axhline(0.0, **GUIDE)
-    ax.set_xlabel(f"$E$ / {X_UNIT}")
+    ax.set_xlabel(f"{axis_symbol()} / {X_UNIT}")
     ax.set_ylabel("weight")              # 熱占有を含む確率質量。総和が 1
 
 
