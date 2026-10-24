@@ -401,6 +401,7 @@ def test_show_answers_a_csv_with_the_input_to_write(tmp_path, window):
 
     assert invocation.exit_code == 2
     assert "[modes]" in invocation.output
+    assert "does not take a CSV" in " ".join(invocation.output.split())
     assert window == []
     assert sorted(tmp_path.iterdir()) == before  # 痕跡のログも書かない
 

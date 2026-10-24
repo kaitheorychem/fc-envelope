@@ -505,7 +505,9 @@ def test_a_csv_is_not_shown_but_answered_with_the_input_to_write(tmp_path, shown
     with pytest.raises(InvalidInputError) as raised:
         show(path)
     message = str(raised.value)
+    assert "does not take a CSV file directly" in message
     assert "[modes]" in message
+    assert "fcenvelope show" in message and "modes.toml" in message
     assert 'csv = { path = "modes.csv", columns = ["frequency", "coupling"] }' in message
     assert shown == []
 

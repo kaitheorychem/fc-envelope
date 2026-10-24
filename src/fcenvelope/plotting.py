@@ -577,15 +577,17 @@ def csv_hint(path: "str | os.PathLike[str]") -> str:
     それを書く入力ファイルを作ってもらう。`show` が読むのは `[modes]` だけなので、
     案内するのもそのブロックだけである。
     """
-    name = Path(path).name
+    source = Path(path)
+    toml = source.with_suffix(".toml")
     return (
-        f"{path}: a CSV holds only numbers, so `show` reads it through an input file "
-        "that says what its columns are. The smallest one, next to the CSV, is\n"
+        f"{source}: `show` does not take a CSV file directly, because a CSV holds only "
+        "numbers and not what its columns are. Pass an input file that points to the "
+        f"CSV instead: save the two lines below as {toml.name} next to the CSV\n"
         "\n"
         "    [modes]\n"
-        f'    csv = {{ path = "{name}", columns = ["frequency", "coupling"] }}\n'
+        f'    csv = {{ path = "{source.name}", columns = ["frequency", "coupling"] }}\n'
         "\n"
-        "and then `fcenvelope show` that file. Frequencies are read in cm^-1 and "
+        f"and run `fcenvelope show {toml}`. Frequencies are read in cm^-1 and "
         'couplings as g; write ["frequency", "eV"] for another unit, and '
         'coupling_convention = "huang_rhys" (or "delta", ...) under [modes] for another '
         "convention. `run` and `lines` also need temperature and more"
