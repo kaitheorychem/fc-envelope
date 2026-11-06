@@ -48,6 +48,7 @@ ENVELOPE_COLOR = "C0"
 LINES_COLOR = "C1"
 LINEWIDTH = 1.2
 MAGNIFY = 1.0        # 棒だけを拡大する。倍率は凡例に出る
+MERGE = True         # 横軸がぴったり同じ線は重みを足して 1 本に描く。False なら 1 本ずつ
 XLIM = None          # None ならエンベロープの E 窓。(-3000.0, 500.0) と書ける
 YLIM = None
 GUIDE = {"color": "0.7", "linewidth": 0.8, "zorder": 0}
@@ -241,7 +242,7 @@ def image_for(source: Path) -> Path:
     return source.with_name(f"{IMAGE_PREFIX}{source.stem}-overlay.png")
 
 
-def stick_heights(envelope: dict, lines: dict) -> list[float]:
+def stick_heights(envelope: dict, weights: list) -> list[float]:
     """線の重み w を F(E) と同じ縦軸へ移す。
 
     w に規格化した線形状の頂点値 L(0) を掛けたものが「その線が F(E) に立てる山の
@@ -251,7 +252,7 @@ def stick_heights(envelope: dict, lines: dict) -> list[float]:
     """
     sigma = envelope["conditions"]["broadening"]["sigma"][0]    # [値, "cm^-1"]
     peak = 1.0 / (sigma * math.sqrt(2.0 * math.pi))
-    return [w * peak * MAGNIFY / X_SCALE for w in column(lines["lines"], "weight")]
+    return [w * peak * MAGNIFY / X_SCALE for w in weights]
 
 
 def check(envelope: dict, lines: dict) -> None:
@@ -274,6 +275,22 @@ def check(envelope: dict, lines: dict) -> None:
             f"the E window [{low:g}, {high:g}] cm^-1 and are not drawn",
             file=sys.stderr,
         )
+
+
+def stack(energies: list, weights: list) -> tuple[list, list]:
+    """横軸がぴったり同じ線の重みを足し、1 か所に 1 本にする。MERGE が False なら素通し。
+
+    熱占有のある温度では、量子数の差が同じ遷移（n → n+k の系列）が同じエネルギーに何本も
+    立つ。1 本ずつ描くと最大のものしか見えないので、描く直前に足す。結果ファイルの線は
+    1 本ずつのまま残る（ADR-0025, 0092）。比べるのは cm^-1 の生の値どうしで、X_SCALE や
+    REF_GAP で座標を移す前に行う。移した後では丸めで一致が崩れることがあるためである。
+    """
+    if not MERGE:
+        return list(energies), list(weights)
+    total: dict[float, float] = {}
+    for energy, weight in zip(energies, weights):
+        total[energy] = total.get(energy, 0.0) + weight
+    return list(total), list(total.values())
 
 
 def zero_phonon(data: dict) -> float | None:
@@ -314,8 +331,11 @@ def draw(ax, envelope: dict, lines: dict) -> None:
 
     ax.plot(energy, density, color=ENVELOPE_COLOR, linewidth=LINEWIDTH,
             label=ENVELOPE_LABEL, zorder=2.2)
-    ax.vlines(axis(column(lines["lines"], "energy"), envelope), 0.0,
-              stick_heights(envelope, lines), colors=LINES_COLOR,
+    stick_energy, stick_weight = stack(
+        column(lines["lines"], "energy"), column(lines["lines"], "weight")
+    )
+    ax.vlines(axis(stick_energy, envelope), 0.0,
+              stick_heights(envelope, stick_weight), colors=LINES_COLOR,
               linewidth=LINEWIDTH, label=lines_label, zorder=2.1)
     ax.axvline(axis([0.0], envelope)[0], **GUIDE)    # E = 0 は ZPL
     ax.axhline(0.0, **GUIDE)

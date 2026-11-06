@@ -93,13 +93,37 @@ def lines_result():
     return lines_quietly(SYSTEM, temperature=300.0, min_weight=1e-4)
 
 
-def test_fc_lines_draws_one_stick_per_line(lines_result):
+def _summed(energies, weights) -> list[tuple[float, float]]:
+    total: dict[float, float] = {}
+    for energy, weight in zip(energies, weights):
+        total[float(energy)] = total.get(float(energy), 0.0) + float(weight)
+    return sorted(total.items())
+
+
+def _sticks(figure) -> list[tuple[float, float]]:
+    (collection,) = figure.axes[0].collections
+    return sorted((s[0][0], s[1][1]) for s in collection.get_segments())
+
+
+def test_fc_lines_sums_the_lines_that_share_an_energy(lines_result):
+    """300 K では熱占有のある n → n の線が E = 0 に重なる。高さはその重みの和（ADR-0092）。"""
     figure = plot_lines(lines_result)
+    try:
+        expected = _summed(lines_result.energies, lines_result.weights)
+        assert len(expected) < lines_result.diagnostics.n_lines
+        np.testing.assert_allclose(_sticks(figure), expected)
+        # 結果の線そのものはまとめない（ADR-0025）。
+        assert len(lines_result.lines) == lines_result.diagnostics.n_lines
+    finally:
+        plt.close(figure)
+
+
+def test_fc_lines_draws_one_stick_per_line_without_merge(lines_result):
+    figure = plot_lines(lines_result, merge=False)
     try:
         (collection,) = figure.axes[0].collections
         segments = collection.get_segments()
         assert len(segments) == lines_result.diagnostics.n_lines
-        # エネルギーが縮退した線もまとめずに 1 本ずつ描く。
         drawn = sorted((segment[0][0], segment[1][1]) for segment in segments)
         expected = sorted(
             (line.energy, line.weight) for line in lines_result.lines
@@ -245,6 +269,36 @@ def test_overlay_stick_tips_touch_the_envelope_for_isolated_lines(overlay_pair):
                 continue
             peak = np.interp(energy, envelope.energy, envelope.density)
             np.testing.assert_allclose(height, peak, rtol=1e-9)
+    finally:
+        plt.close(figure)
+
+
+def test_overlay_sums_the_lines_that_share_an_energy():
+    """熱占有のある温度でも、足した棒の先端は孤立した山の頂点に一致する。"""
+    envelope = compute_quietly(
+        SYSTEM, temperature=1000.0, broadening=OVERLAY_BROADENING, grid=OVERLAY_GRID
+    )
+    lines = lines_quietly(SYSTEM, temperature=1000.0, min_weight=1e-8)
+    figure = plot_overlay(envelope, lines)
+    try:
+        scale = 1.0 / (OVERLAY_BROADENING.sigma * np.sqrt(2.0 * np.pi))
+        expected = [(e, w * scale) for e, w in _summed(lines.energies, lines.weights)]
+        assert len(expected) < len(lines.lines)
+        sticks = _sticks(figure)
+        np.testing.assert_allclose(sticks, expected)
+        for energy, height in sticks:
+            if -4000.0 <= energy <= 1500.0 and height > 1e-3 * max(h for _, h in sticks):
+                peak = np.interp(energy, envelope.energy, envelope.density)
+                np.testing.assert_allclose(height, peak, rtol=1e-3)
+    finally:
+        plt.close(figure)
+
+
+def test_overlay_draws_one_stick_per_line_without_merge(overlay_pair):
+    envelope, lines = overlay_pair
+    figure = plot_overlay(envelope, lines, merge=False)
+    try:
+        assert len(_sticks(figure)) == len(lines.lines)
     finally:
         plt.close(figure)
 

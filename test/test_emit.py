@@ -585,7 +585,8 @@ def test_the_lines_are_drawn_at_the_signed_transition_energy(
     """ε = ε00 − E で、ε00 は参照構造のギャップから λ を引く（始状態の底）か足す（終状態の底）。"""
     gap = 20000.0
     sticks, xlabel, _ = draw_with(
-        lines_script, lines_script.parent / "lines.json", REF_GAP=gap, REF_MINIMUM=minimum
+        lines_script, lines_script.parent / "lines.json", REF_GAP=gap, REF_MINIMUM=minimum,
+        MERGE=False,
     )
 
     origin = gap + sign * multi_mode.reorganization_energy
@@ -656,7 +657,74 @@ def test_an_unknown_reference_minimum_stops_with_a_message(lines_script):
 
 
 def test_without_a_gap_the_axis_stays_e(lines_script, lines):
-    sticks, xlabel, _ = draw_with(lines_script, lines_script.parent / "lines.json")
+    sticks, xlabel, _ = draw_with(lines_script, lines_script.parent / "lines.json", MERGE=False)
 
     assert sticks == pytest.approx(sorted(zip(lines.energies, lines.weights)))
     assert xlabel.startswith("$E$")
+
+
+# --- 横軸がぴったり同じ線は足して描く（ADR-0092） ---
+
+
+def summed(energies, weights) -> list[tuple[float, float]]:
+    """同じエネルギーの重みを足した (E, Σw) の組を E の昇順で。"""
+    total: dict[float, float] = {}
+    for energy, weight in zip(energies, weights):
+        total[float(energy)] = total.get(float(energy), 0.0) + float(weight)
+    return sorted(total.items())
+
+
+def test_the_lines_script_sums_lines_that_share_an_energy(lines_script, lines):
+    """300 K では n → n+k の系列が同じ E に重なる。棒は 1 か所 1 本で、高さは重みの和。"""
+    sticks, _, _ = draw_with(lines_script, lines_script.parent / "lines.json")
+
+    expected = summed(lines.energies, lines.weights)
+    assert len(expected) < len(lines.lines)     # 重なりがあることを確かめておく
+    assert sticks == pytest.approx(expected)
+    assert sum(w for _, w in sticks) == pytest.approx(float(lines.weights.sum()))
+
+
+def test_the_lines_script_sums_before_it_moves_the_axis(lines_script, lines, multi_mode):
+    """REF_GAP と eV に移しても、足し合わせる組は cm^-1 で決まったものと変わらない。"""
+    scale = 1.0 / 8065.543937
+    sticks, _, _ = draw_with(
+        lines_script, lines_script.parent / "lines.json",
+        REF_GAP=3.1, X_UNIT="eV", X_SCALE=scale,
+    )
+
+    origin = 3.1 - multi_mode.reorganization_energy * scale
+    expected = sorted((origin - e * scale, w) for e, w in summed(lines.energies, lines.weights))
+    assert sticks == pytest.approx(expected)
+
+
+def test_the_lines_script_draws_one_stick_per_line_without_merge(lines_script, lines):
+    sticks, _, _ = draw_with(lines_script, lines_script.parent / "lines.json", MERGE=False)
+
+    assert len(sticks) == len(lines.lines)
+
+
+@pytest.mark.parametrize("merge", [True, False])
+def test_the_overlay_script_sums_lines_that_share_an_energy(overlay_script, envelope, lines, merge):
+    import math
+
+    import matplotlib.pyplot as plt
+
+    module = generated(overlay_script, MERGE=merge)
+    figure, ax = plt.subplots()
+    try:
+        module.draw(
+            ax,
+            module.load(overlay_script.parent / "result.json", module.ENVELOPE_KIND),
+            module.load(overlay_script.parent / "lines.json", module.LINES_KIND),
+        )
+        (collection,) = ax.collections
+        sticks = sorted((s[0][0], s[1][1]) for s in collection.get_segments())
+    finally:
+        plt.close(figure)
+
+    peak = 1.0 / (envelope.broadening.sigma * math.sqrt(2.0 * math.pi))
+    pairs = (
+        summed(lines.energies, lines.weights) if merge
+        else sorted(zip(lines.energies, lines.weights))
+    )
+    assert sticks == pytest.approx([(e, w * peak) for e, w in pairs])

@@ -43,6 +43,7 @@ TITLE = None
 LABEL = None
 COLOR = "C0"
 LINEWIDTH = 1.2
+MERGE = True         # 横軸がぴったり同じ線は重みを足して 1 本に描く。False なら 1 本ずつ
 XLIM = None          # None なら線の立つ範囲いっぱい。(-3000.0, 500.0) と書ける
 YLIM = None
 GUIDE = {"color": "0.7", "linewidth": 0.8, "zorder": 0}
@@ -235,6 +236,22 @@ def image_for(source: Path) -> Path:
     return source.with_name(f"{IMAGE_PREFIX}{source.stem}.png")
 
 
+def stack(energies: list, weights: list) -> tuple[list, list]:
+    """横軸がぴったり同じ線の重みを足し、1 か所に 1 本にする。MERGE が False なら素通し。
+
+    熱占有のある温度では、量子数の差が同じ遷移（n → n+k の系列）が同じエネルギーに何本も
+    立つ。1 本ずつ描くと最大のものしか見えないので、描く直前に足す。結果ファイルの線は
+    1 本ずつのまま残る（ADR-0025, 0092）。比べるのは cm^-1 の生の値どうしで、X_SCALE や
+    REF_GAP で座標を移す前に行う。移した後では丸めで一致が崩れることがあるためである。
+    """
+    if not MERGE:
+        return list(energies), list(weights)
+    total: dict[float, float] = {}
+    for energy, weight in zip(energies, weights):
+        total[energy] = total.get(energy, 0.0) + weight
+    return list(total), list(total.values())
+
+
 def zero_phonon(data: dict) -> float | None:
     """横軸の上での ZPL の位置 ε00 [X_UNIT]。REF_GAP が None なら None（E 軸のまま）。
 
@@ -264,14 +281,14 @@ def axis_symbol() -> str:
 
 def draw(ax, data: dict, *, label: str | None = LABEL, color: str = COLOR) -> None:
     """離散 FC 因子を底辺 0 の棒として描く。図の中身はここだけ。"""
-    energy = axis(column(data["lines"], "energy"), data)
-    weight = column(data["lines"], "weight")
+    energy, weight = stack(column(data["lines"], "energy"), column(data["lines"], "weight"))
+    energy = axis(energy, data)
 
     ax.vlines(energy, 0.0, weight, colors=color, linewidth=LINEWIDTH, label=label)
     ax.axvline(axis([0.0], data)[0], **GUIDE)    # E = 0 は ZPL
     ax.axhline(0.0, **GUIDE)
     ax.set_xlabel(f"{axis_symbol()} / {X_UNIT}")
-    ax.set_ylabel("weight")              # 熱占有を含む確率質量。総和が 1
+    ax.set_ylabel("weight")              # 熱占有を含む確率質量。総和が 1。重なる線は足してある
 
 
 def main() -> None:
