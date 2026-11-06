@@ -127,6 +127,20 @@ def _draw_sticks(
     ax.vlines(energies, 0.0, heights, label=label, **style)
 
 
+def _stack(energies, weights, *, merge: bool = True):
+    """横軸がぴったり同じ線の重みを足し、1 か所に 1 本にする（ADR-0092）。
+
+    量子数の差が同じ遷移は計算の順序が同じなのでビット単位で同じエネルギーを持つ。
+    許容誤差は置かず、完全に一致するものだけを足す。結果の線そのものはまとめない（ADR-0025）。
+    """
+    energies = np.asarray(energies, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    if not merge:
+        return energies, weights
+    unique, inverse = np.unique(energies, return_inverse=True)
+    return unique, np.bincount(inverse.ravel(), weights=weights, minlength=unique.size)
+
+
 def plot_envelope(
     result: EnvelopeResult,
     *,
@@ -154,16 +168,22 @@ def plot_lines(
     ax: "matplotlib.axes.Axes | None" = None,
     label: str | None = None,
     title: str | None = None,
+    merge: bool = True,
 ) -> "matplotlib.figure.Figure":
     """離散 FC 因子を棒スペクトルとして描画し `Figure` を返す。
 
     縦軸は熱占有を掛けた重み（無次元）で、エンベロープ F(E)（1/cm^-1）とは
     次元が異なる。エンベロープと 1 枚に重ねる場合は `plot_overlay` を使う。
+
+    エネルギーがぴったり同じ線は重みを足して 1 本に描く（ADR-0092）。熱占有のある温度では
+    n → n+k の系列が同じ位置に何本も立ち、1 本ずつでは最大のものしか見えないため。
+    `merge=False` なら 1 本ずつ重ねて描く。`result` の線はどちらでも変わらない。
     """
     with stage(logger, f"plot lines ({len(result.lines)} lines)"):
         figure, ax = _resolve_axes(ax)
 
-        _draw_sticks(ax, result.energies, result.weights, label=label)
+        energies, weights = _stack(result.energies, result.weights, merge=merge)
+        _draw_sticks(ax, energies, weights, label=label)
         _energy_axis(ax)
         ax.set_ylabel("weight")
         ax.axhline(0.0, **_GUIDE)
@@ -241,6 +261,7 @@ def plot_overlay(
     lines_label: str | None = "FC lines",
     magnify: float = 1.0,
     title: str | None = None,
+    merge: bool = True,
 ) -> "matplotlib.figure.Figure":
     """エンベロープ F(E) と離散 FC 因子を 1 枚に重ねて描画する。
 
@@ -256,6 +277,10 @@ def plot_overlay(
     凡例に `(×N)` として出るので、拡大したことが図の上で失われない。
 
     横軸は `envelope` の E 窓に合わせる。窓の外に立つ線は描かれない。
+
+    エネルギーがぴったり同じ線は `plot_lines` と同じく重みを足して 1 本に描く
+    （`merge=False` で 1 本ずつ）。F(E) はその位置に重なった線の和なので、孤立した位置では
+    足した棒の先端が曲線の山に一致する。
     """
     if not magnify > 0.0:
         raise InvalidInputError(f"magnify must be positive (got {magnify})")
@@ -276,10 +301,11 @@ def plot_overlay(
         _draw_envelope(
             ax, envelope, label=envelope_label, color=ENVELOPE_COLOR, zorder=2.2
         )
+        energies, weights = _stack(lines.energies, lines.weights, merge=merge)
         _draw_sticks(
             ax,
-            lines.energies,
-            lines.weights * scale,
+            energies,
+            weights * scale,
             label=lines_label,
             color=LINES_COLOR,
             zorder=2.1,
