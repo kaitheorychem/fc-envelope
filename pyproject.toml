@@ -1,6 +1,6 @@
 [project]
 name = "fcenvelope"
-version = "0.1.0"
+version = "0.2.0"
 description = "Franck-Condon envelope calculation from vibronic couplings, frequencies and temperature"
 readme = "README.md"
 license = { file = "LICENSE" }
